@@ -8,15 +8,18 @@ packages in this monorepo.
 Run from `packages/synth-optimizers/`:
 
 ```bash
-python -m build
+uv run --group dev ruff check src
+uv run --group dev ty check src
+uv build
 ```
 
 ## Publish
 
-After confirming the version and inspecting the generated artifacts:
+After confirming the version, inspecting the generated artifacts, and confirming
+that the required `synth-containers` version is already available on PyPI:
 
 ```bash
-python -m twine upload dist/*
+uv publish dist/*
 ```
 
 Publish automation is intentionally TBD until the repository-level packaging

@@ -1,16 +1,55 @@
+[project]
+name = "synth-optimizers"
+version = "0.1.1"
+description = "Public Synth MIPROv2 optimizer package."
+authors = [{name = "Synth Laboratories", email = "josh@usesynth.ai"}]
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "httpx>=0.24.0",
+    "synth-containers>=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2.1",
+    "twine>=5.0.0",
+    "ruff>=0.6.0",
+    "ty>=0.0.32",
+]
+
+[dependency-groups]
+dev = [
+    "build>=1.2.1",
+    "twine>=5.0.0",
+    "ruff>=0.6.0",
+    "ty>=0.0.32",
+]
+
+[project.urls]
+Homepage = "https://github.com/synth-laboratories/synth-cookbooks-public/tree/main/packages/synth-optimizers"
+Repository = "https://github.com/synth-laboratories/synth-cookbooks-public"
+Issues = "https://github.com/synth-laboratories/synth-cookbooks-public/issues"
+
 [build-system]
 requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[project]
-name = "synth-optimizers"
-version = "0.0.0"
-description = "Public Synth optimizer package source."
-readme = "README.md"
-requires-python = ">=3.10"
-license = { text = "MIT" }
-authors = [{ name = "Synth" }]
-dependencies = []
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+synth-containers = { path = "../synth-containers" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = [
+    "synth_optimizers",
+    "synth_optimizers.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src"]

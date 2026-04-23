@@ -1,0 +1,14 @@
+{
+  "baseline_score": 0.495,
+  "best_score": 0.57,
+  "lift": 0.07499999999999996,
+  "snapshots": [
+    {
+      "baseline_score": 0.495,
+      "best_candidate_id": "candidate_096d0d4cc3b6",
+      "best_score": 0.57,
+      "lift": 0.07499999999999996,
+      "round_idx": 16
+    }
+  ]
+}

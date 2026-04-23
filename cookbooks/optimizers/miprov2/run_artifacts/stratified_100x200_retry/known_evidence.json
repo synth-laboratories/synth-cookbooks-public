@@ -1,0 +1,15 @@
+{
+  "baseline_train": 0.7666666667,
+  "best_train": 0.8333333333,
+  "dataset": "banking77",
+  "evidence_status": "archived_private_draft_result_needs_public_rerun",
+  "heldout_baseline": 0.79,
+  "heldout_best": 0.82,
+  "heldout_lift": 0.03,
+  "heldout_seeds": 100,
+  "result_status": "positive",
+  "slice": "confusable_20_label",
+  "target_total_train_rollouts": 300,
+  "target_train_candidates": 10,
+  "train_seeds": 30
+}

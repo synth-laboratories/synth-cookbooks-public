@@ -1,0 +1,20 @@
+{
+  "artifacts": {
+    "best_candidate": "artifacts/best_candidate.json",
+    "heldout_eval": "artifacts/heldout_eval.json",
+    "proposer_traces": "artifacts/proposer_traces",
+    "result_manifest": "artifacts/result_manifest.json",
+    "run_events": "artifacts/run_events.jsonl",
+    "run_read_model": "artifacts/run_read_model.json",
+    "run_summary": "artifacts/miprov2_run_summary.json"
+  },
+  "baseline_score": 0.495,
+  "best_candidate_id": "candidate_096d0d4cc3b6",
+  "best_score": 0.57,
+  "heldout_score": 0.57,
+  "lift": 0.07499999999999996,
+  "mode": "native_phase3_openenv",
+  "run_id": "banking77_openai_split_confusable_30x300_100heldout_native",
+  "task_id": "banking77",
+  "train_score": 0.51
+}
