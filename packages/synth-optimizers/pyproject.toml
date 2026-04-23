@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "synth-optimizers"
+version = "0.0.0"
+description = "Public Synth optimizer package source."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Synth" }]
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
