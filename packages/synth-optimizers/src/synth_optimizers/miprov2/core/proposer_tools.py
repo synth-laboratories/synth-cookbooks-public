@@ -13,14 +13,17 @@ from synth_optimizers.miprov2.core.proposer_memory import (
     MiproHypothesis,
     MiproHypothesisAdjustment,
     MiproHypothesisStatus,
+    MiproOpenEndednessScoreSource,
     MiproRolloutLabel,
     MiproRolloutLabelAssignmentSource,
     MiproRolloutLabelDefinition,
     MiproRolloutLabelDefinitionStatus,
+    MiproRolloutOpenEndednessScore,
     bet_id_for,
     empty_memory_state,
     hypothesis_adjustment_id_for,
     hypothesis_id_for,
+    open_endedness_score_id_for,
     normalize_memory_state,
     proposer_memory_summary,
     rollout_label_definition_id_for,
@@ -102,6 +105,8 @@ _MEMORY_TOOLS = {
     "query_rollout_label_definitions",
     "assign_rollout_label",
     "query_rollouts_by_label",
+    "score_rollout_open_endedness",
+    "query_open_ended_rollouts",
 }
 
 
@@ -130,6 +135,7 @@ def tool_mutates_state(name: str) -> bool:
         "resolve_bet",
         "register_rollout_label_definition",
         "assign_rollout_label",
+        "score_rollout_open_endedness",
     }
 
 
@@ -143,6 +149,7 @@ def _memory_maps(memory_state: dict[str, Any]) -> dict[str, dict[str, dict[str, 
         "bets": normalized["bets"],
         "label_definitions": normalized["label_definitions"],
         "rollout_labels": normalized["rollout_labels"],
+        "open_endedness_scores": normalized["open_endedness_scores"],
     }
 
 
@@ -222,6 +229,7 @@ def _memory_tool_result(action: Any, state: MiproProposerToolState) -> dict[str,
     bets = maps["bets"]
     label_definitions = maps["label_definitions"]
     rollout_labels = maps["rollout_labels"]
+    open_endedness_scores = maps["open_endedness_scores"]
 
     if name == "register_hypothesis":
         summary = str(args.get("summary") or "").strip()
@@ -633,6 +641,155 @@ def _memory_tool_result(action: Any, state: MiproProposerToolState) -> dict[str,
             "status": "ok",
             "action": name,
             "matches": enriched[: max(0, limit)],
+            "memory_summary": proposer_memory_summary(state.memory_state),
+        }
+
+    if name == "score_rollout_open_endedness":
+        rollout_id = str(args.get("rollout_id") or "").strip()
+        if not rollout_id:
+            return {"status": "error", "action": name, "reason": "rollout_id is required"}
+        missing_scores = [
+            key
+            for key in ("novelty_score", "unexpectedness_score", "learnability_score")
+            if args.get(key) is None
+        ]
+        if missing_scores:
+            return {
+                "status": "error",
+                "action": name,
+                "reason": "novelty_score, unexpectedness_score, and learnability_score are required",
+                "missing": missing_scores,
+            }
+        linked_hypothesis_refs = [
+            str(item)
+            for item in list(args.get("linked_hypothesis_refs") or [])
+            if str(item).strip()
+        ]
+        linked_bet_refs = [
+            str(item) for item in list(args.get("linked_bet_refs") or []) if str(item).strip()
+        ]
+        linked_label_refs = [
+            str(item)
+            for item in list(args.get("linked_label_refs") or [])
+            if str(item).strip()
+        ]
+        ref_error = _require_known_memory_refs(
+            memory_state=state.memory_state,
+            hypothesis_refs=linked_hypothesis_refs,
+            bet_refs=linked_bet_refs,
+        )
+        if ref_error is not None:
+            return {"action": name, **ref_error}
+        unknown_label_refs = [item for item in linked_label_refs if item not in rollout_labels]
+        if unknown_label_refs:
+            return {
+                "status": "error",
+                "action": name,
+                "reason": "unknown label refs",
+                "missing_refs": {"linked_label_refs": unknown_label_refs},
+            }
+        score_payload = {
+            **args,
+            "rollout_id": rollout_id,
+            "score_source": str(
+                args.get("score_source") or MiproOpenEndednessScoreSource.PROPOSER.value
+            ),
+            "linked_hypothesis_refs": linked_hypothesis_refs,
+            "linked_bet_refs": linked_bet_refs,
+            "linked_label_refs": linked_label_refs,
+        }
+        score_payload["score_id"] = str(
+            args.get("score_id") or open_endedness_score_id_for(score_payload)
+        )
+        try:
+            score = MiproRolloutOpenEndednessScore.from_dict(score_payload)
+        except ValueError as exc:
+            return {"status": "error", "action": name, "reason": str(exc)}
+        maps = _memory_maps(state.memory_state)
+        open_endedness_scores = maps["open_endedness_scores"]
+        open_endedness_scores[score.score_id] = score.to_dict()
+        return {
+            "status": "ok",
+            "action": name,
+            "open_endedness_score": score.to_dict(),
+            "memory_summary": proposer_memory_summary(state.memory_state),
+        }
+
+    if name == "query_open_ended_rollouts":
+        min_score = (
+            float(args["min_open_endedness_score"])
+            if args.get("min_open_endedness_score") is not None
+            else None
+        )
+        rollout_id = str(args.get("rollout_id") or "").strip()
+        candidate_id = str(args.get("candidate_id") or "").strip()
+        hypothesis_id = str(args.get("hypothesis_id") or "").strip()
+        bet_id = str(args.get("bet_id") or "").strip()
+        label_id = str(args.get("label_id") or "").strip()
+        label_name = str(args.get("name") or "").strip()
+        task_id = str(args.get("task_id") or "").strip()
+        limit = int(args.get("limit") or 20)
+        definition = _definition_by_id_or_name(
+            label_definitions,
+            label_id=label_id,
+            name=label_name,
+        )
+        resolved_label_id = str(definition.get("label_id") or "") if definition else label_id
+        label_refs_for_definition = {
+            str(item.get("rollout_label_id") or "")
+            for item in rollout_labels.values()
+            if str(item.get("label_id") or "") == resolved_label_id
+        }
+        rollout_lookup = _rollout_lookup_from_context(state)
+        rows = list(open_endedness_scores.values())
+        if min_score is not None:
+            rows = [
+                item
+                for item in rows
+                if float(item.get("open_endedness_score") or 0.0) >= min_score
+            ]
+        if rollout_id:
+            rows = [item for item in rows if str(item.get("rollout_id") or "") == rollout_id]
+        if candidate_id:
+            rows = [
+                item for item in rows if str(item.get("candidate_id") or "") == candidate_id
+            ]
+        if task_id:
+            rows = [item for item in rows if str(item.get("task_id") or "") == task_id]
+        if hypothesis_id:
+            rows = [
+                item
+                for item in rows
+                if hypothesis_id in list(item.get("linked_hypothesis_refs") or [])
+            ]
+        if bet_id:
+            rows = [
+                item for item in rows if bet_id in list(item.get("linked_bet_refs") or [])
+            ]
+        if resolved_label_id:
+            rows = [
+                item
+                for item in rows
+                if bool(
+                    set(str(ref) for ref in list(item.get("linked_label_refs") or []))
+                    & label_refs_for_definition
+                )
+            ]
+        rows = sorted(
+            rows,
+            key=lambda item: float(item.get("open_endedness_score") or 0.0),
+            reverse=True,
+        )
+        return {
+            "status": "ok",
+            "action": name,
+            "matches": [
+                {
+                    "open_endedness_score": dict(item),
+                    "rollout": dict(rollout_lookup.get(str(item.get("rollout_id") or "")) or {}),
+                }
+                for item in rows[: max(0, limit)]
+            ],
             "memory_summary": proposer_memory_summary(state.memory_state),
         }
 

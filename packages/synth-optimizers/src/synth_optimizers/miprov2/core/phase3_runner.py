@@ -51,9 +51,12 @@ from synth_optimizers.miprov2.core.proposer_environment import (
     tool_state_from_dict,
 )
 from synth_optimizers.miprov2.core.proposer_memory import (
+    MiproOpenEndednessScoreSource,
     MiproRolloutLabel,
     MiproRolloutLabelAssignmentSource,
     MiproRolloutLabelDefinitionStatus,
+    MiproRolloutOpenEndednessScore,
+    open_endedness_score_id_for,
     normalize_memory_state,
     proposer_memory_summary,
     rollout_label_id_for,
@@ -90,6 +93,11 @@ LabelCompletedRolloutsOutcome: TypeAlias = list[Mapping[str, Any]]
 LabelCompletedRolloutsFn: TypeAlias = Callable[
     [MiproTrialResult, MiproProgramCandidate, list[Mapping[str, Any]]],
     LabelCompletedRolloutsOutcome | Awaitable[LabelCompletedRolloutsOutcome],
+]
+ScoreCompletedRolloutsOutcome: TypeAlias = list[Mapping[str, Any]]
+ScoreCompletedRolloutsFn: TypeAlias = Callable[
+    [MiproTrialResult, MiproProgramCandidate, Mapping[str, Any]],
+    ScoreCompletedRolloutsOutcome | Awaitable[ScoreCompletedRolloutsOutcome],
 ]
 
 
@@ -1200,6 +1208,7 @@ async def run_phase3_loop(
     evaluate_train: EvaluateCandidateFn,
     evaluate_queued_rollout: EvaluateQueuedRolloutFn | None = None,
     label_completed_rollouts: LabelCompletedRolloutsFn | None = None,
+    score_completed_rollouts: ScoreCompletedRolloutsFn | None = None,
     evaluate_heldout: EvaluateCandidateFn | None = None,
     grounding_hooks: MiproGroundingHooksLike | None = None,
     config: MiproPhase3Config | None = None,
@@ -1458,6 +1467,79 @@ async def run_phase3_loop(
             )
         return accepted
 
+    async def maybe_score_completed_rollouts(
+        *,
+        trial: MiproTrialResult,
+        candidate: MiproProgramCandidate,
+    ) -> list[dict[str, Any]]:
+        nonlocal proposer_memory_state
+        if score_completed_rollouts is None:
+            return []
+        raw = score_completed_rollouts(
+            trial,
+            candidate,
+            proposer_memory_summary(proposer_memory_state),
+        )
+        if inspect.isawaitable(raw):
+            raw = await cast(Awaitable[ScoreCompletedRolloutsOutcome], raw)
+        normalized = normalize_memory_state(proposer_memory_state)
+        accepted: list[dict[str, Any]] = []
+        warnings: list[dict[str, Any]] = []
+        for item in list(raw or []):
+            if not isinstance(item, Mapping):
+                warnings.append({"reason": "score payload is not an object", "payload": str(item)})
+                continue
+            payload = dict(item)
+            missing = [
+                key
+                for key in ("rollout_id", "novelty_score", "unexpectedness_score", "learnability_score")
+                if payload.get(key) is None or (key == "rollout_id" and not str(payload.get(key)).strip())
+            ]
+            if missing:
+                warnings.append({"reason": "missing required open-endedness fields", "missing": missing})
+                continue
+            label_refs = [
+                str(ref) for ref in list(payload.get("linked_label_refs") or []) if str(ref).strip()
+            ]
+            unknown_label_refs = [
+                ref for ref in label_refs if ref not in normalized["rollout_labels"]
+            ]
+            if unknown_label_refs:
+                warnings.append(
+                    {
+                        "reason": "unknown linked_label_refs",
+                        "missing_refs": unknown_label_refs,
+                    }
+                )
+                continue
+            score_payload = {
+                **payload,
+                "candidate_id": str(payload.get("candidate_id") or candidate.candidate_id or ""),
+                "score_source": str(
+                    payload.get("score_source") or MiproOpenEndednessScoreSource.SCORER.value
+                ),
+                "linked_label_refs": label_refs,
+            }
+            score_payload["score_id"] = str(
+                payload.get("score_id") or open_endedness_score_id_for(score_payload)
+            )
+            try:
+                score = MiproRolloutOpenEndednessScore.from_dict(score_payload)
+            except (TypeError, ValueError) as exc:
+                warnings.append({"reason": str(exc), "rollout_id": str(payload.get("rollout_id") or "")})
+                continue
+            normalized["open_endedness_scores"][score.score_id] = score.to_dict()
+            accepted.append(score.to_dict())
+        proposer_memory_state = normalized
+        if accepted or warnings:
+            trial.details["open_endedness_scores"] = (
+                list(trial.details.get("open_endedness_scores") or []) + accepted
+            )
+            trial.details["open_endedness_warnings"] = (
+                list(trial.details.get("open_endedness_warnings") or []) + warnings
+            )
+        return accepted
+
     async def run_train_wave(
         *,
         wave_round_idx: int,
@@ -1569,6 +1651,7 @@ async def run_phase3_loop(
         out.train_observations.extend(list(evaluated))
         for trial, (_, candidate) in zip(evaluated, decoded_pairs, strict=False):
             await maybe_label_completed_rollouts(trial=trial, candidate=candidate)
+            await maybe_score_completed_rollouts(trial=trial, candidate=candidate)
             observation_seq = await persist_train_trial(
                 seq=observation_seq,
                 round_idx_value=wave_round_idx,
@@ -1602,7 +1685,9 @@ async def run_phase3_loop(
                 },
             )
         await refresh_train_read_model()
-        if active_label_definitions():
+        if active_label_definitions() or normalize_memory_state(proposer_memory_state)[
+            "open_endedness_scores"
+        ]:
             ledger.upsert_proposer_memory(
                 memory_state=proposer_memory_state,
                 round_idx=proposer_round_idx,
@@ -2449,6 +2534,8 @@ __all__ = [
     "EvaluateQueuedRolloutFn",
     "LabelCompletedRolloutsOutcome",
     "LabelCompletedRolloutsFn",
+    "ScoreCompletedRolloutsOutcome",
+    "ScoreCompletedRolloutsFn",
     "MiproPhase3Config",
     "MiproGroundingHooksLike",
     "MiproGroundingHooks",

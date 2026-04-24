@@ -442,6 +442,7 @@ class SQLiteMiproRunLedger:
             ("bets", "bet_id"),
             ("label_definitions", "label_id"),
             ("rollout_labels", "rollout_label_id"),
+            ("open_endedness_scores", "score_id"),
         ):
             records = memory_state.get(kind)
             if not isinstance(records, dict):

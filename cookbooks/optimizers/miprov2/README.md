@@ -80,6 +80,7 @@ session state. The proposer flow is:
 ```text
 read evidence -> register/refine hypothesis -> register bet
 -> curate labels -> label completed rollouts -> query labels
+-> score open-endedness -> query informative rollouts
 -> preview_tpe_rollout_queue -> optionally override_rollout_queue
 -> commit_rollout_queue -> add candidate edits -> commit session -> resume
 -> resolve_bet after evidence exists
@@ -104,6 +105,11 @@ Labels are also durable proposer memory. Use
 `query_rollouts_by_label` before planning queue overrides. Phase-3 can accept an
 optional caller-owned labeller hook; if there are no active label definitions,
 the labeller pass is skipped and no free-form labels are invented.
+
+Open-endedness scores are proposer memory too. Use
+`score_rollout_open_endedness` and `query_open_ended_rollouts` to track novelty,
+unexpectedness, and learnability for high-signal rollouts. These scores are not
+task reward; they describe information value for future search.
 
 Resume a committed session with:
 

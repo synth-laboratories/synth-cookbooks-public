@@ -62,6 +62,12 @@ class MiproRolloutLabelAssignmentSource(StrEnum):
     MANUAL = "manual"
 
 
+class MiproOpenEndednessScoreSource(StrEnum):
+    PROPOSER = "proposer"
+    SCORER = "scorer"
+    MANUAL = "manual"
+
+
 @dataclass(slots=True)
 class MiproHypothesis:
     hypothesis_id: str
@@ -400,6 +406,104 @@ class MiproRolloutLabel:
         )
 
 
+@dataclass(slots=True)
+class MiproRolloutOpenEndednessScore:
+    score_id: str
+    rollout_id: str
+    novelty_score: float
+    unexpectedness_score: float
+    learnability_score: float
+    open_endedness_score: float
+    candidate_id: str | None = None
+    task_id: str | None = None
+    scored_by: str | None = None
+    score_source: MiproOpenEndednessScoreSource = MiproOpenEndednessScoreSource.PROPOSER
+    scored_at: float = field(default_factory=_now)
+    relation_to_bets: str | None = None
+    relation_to_hypotheses: str | None = None
+    relation_to_labels: str | None = None
+    lesson: str | None = None
+    linked_hypothesis_refs: list[str] = field(default_factory=list)
+    linked_bet_refs: list[str] = field(default_factory=list)
+    linked_label_refs: list[str] = field(default_factory=list)
+    followup_refs: list[str] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "score_id": self.score_id,
+            "rollout_id": self.rollout_id,
+            "candidate_id": self.candidate_id,
+            "task_id": self.task_id,
+            "scored_by": self.scored_by,
+            "score_source": self.score_source.value,
+            "scored_at": float(self.scored_at),
+            "novelty_score": float(self.novelty_score),
+            "unexpectedness_score": float(self.unexpectedness_score),
+            "learnability_score": float(self.learnability_score),
+            "open_endedness_score": float(self.open_endedness_score),
+            "relation_to_bets": self.relation_to_bets,
+            "relation_to_hypotheses": self.relation_to_hypotheses,
+            "relation_to_labels": self.relation_to_labels,
+            "lesson": self.lesson,
+            "linked_hypothesis_refs": list(self.linked_hypothesis_refs),
+            "linked_bet_refs": list(self.linked_bet_refs),
+            "linked_label_refs": list(self.linked_label_refs),
+            "followup_refs": list(self.followup_refs),
+            "evidence_refs": list(self.evidence_refs),
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "MiproRolloutOpenEndednessScore":
+        novelty = float(payload.get("novelty_score") or 0.0)
+        unexpectedness = float(payload.get("unexpectedness_score") or 0.0)
+        learnability = float(payload.get("learnability_score") or 0.0)
+        overall = payload.get("open_endedness_score")
+        if overall is None:
+            overall = (novelty + unexpectedness + learnability) / 3.0
+        return cls(
+            score_id=str(payload.get("score_id") or ""),
+            rollout_id=str(payload.get("rollout_id") or ""),
+            candidate_id=(
+                str(payload["candidate_id"]) if payload.get("candidate_id") is not None else None
+            ),
+            task_id=str(payload["task_id"]) if payload.get("task_id") is not None else None,
+            scored_by=str(payload["scored_by"]) if payload.get("scored_by") is not None else None,
+            score_source=MiproOpenEndednessScoreSource(
+                str(payload.get("score_source") or "proposer")
+            ),
+            scored_at=float(payload.get("scored_at") or _now()),
+            novelty_score=novelty,
+            unexpectedness_score=unexpectedness,
+            learnability_score=learnability,
+            open_endedness_score=float(overall),
+            relation_to_bets=(
+                str(payload["relation_to_bets"])
+                if payload.get("relation_to_bets") is not None
+                else None
+            ),
+            relation_to_hypotheses=(
+                str(payload["relation_to_hypotheses"])
+                if payload.get("relation_to_hypotheses") is not None
+                else None
+            ),
+            relation_to_labels=(
+                str(payload["relation_to_labels"])
+                if payload.get("relation_to_labels") is not None
+                else None
+            ),
+            lesson=str(payload["lesson"]) if payload.get("lesson") is not None else None,
+            linked_hypothesis_refs=_str_list(payload.get("linked_hypothesis_refs")),
+            linked_bet_refs=_str_list(payload.get("linked_bet_refs")),
+            linked_label_refs=_str_list(payload.get("linked_label_refs")),
+            followup_refs=_str_list(payload.get("followup_refs")),
+            evidence_refs=_str_list(payload.get("evidence_refs")),
+            metadata=_dict(payload.get("metadata")),
+        )
+
+
 def hypothesis_id_for(payload: dict[str, Any]) -> str:
     return _stable_id(
         "hyp",
@@ -463,6 +567,22 @@ def rollout_label_id_for(payload: dict[str, Any]) -> str:
     )
 
 
+def open_endedness_score_id_for(payload: dict[str, Any]) -> str:
+    return _stable_id(
+        "oes",
+        {
+            "rollout_id": str(payload.get("rollout_id") or ""),
+            "candidate_id": payload.get("candidate_id"),
+            "novelty_score": payload.get("novelty_score"),
+            "unexpectedness_score": payload.get("unexpectedness_score"),
+            "learnability_score": payload.get("learnability_score"),
+            "linked_hypothesis_refs": _str_list(payload.get("linked_hypothesis_refs")),
+            "linked_bet_refs": _str_list(payload.get("linked_bet_refs")),
+            "linked_label_refs": _str_list(payload.get("linked_label_refs")),
+        },
+    )
+
+
 def empty_memory_state() -> dict[str, Any]:
     return {
         "hypotheses": {},
@@ -470,6 +590,7 @@ def empty_memory_state() -> dict[str, Any]:
         "bets": {},
         "label_definitions": {},
         "rollout_labels": {},
+        "open_endedness_scores": {},
     }
 
 
@@ -501,6 +622,11 @@ def normalize_memory_state(memory_state: dict[str, Any] | None) -> dict[str, Any
             for key, value in _dict(payload.get("rollout_labels")).items()
             if isinstance(value, dict)
         },
+        "open_endedness_scores": {
+            str(key): dict(value)
+            for key, value in _dict(payload.get("open_endedness_scores")).items()
+            if isinstance(value, dict)
+        },
     }
 
 
@@ -518,6 +644,7 @@ def proposer_memory_summary(memory_state: dict[str, Any] | None) -> dict[str, An
     ]
     label_definitions = normalized["label_definitions"]
     rollout_labels = normalized["rollout_labels"]
+    open_endedness_scores = normalized["open_endedness_scores"]
     active_label_definitions = [
         item
         for item in label_definitions.values()
@@ -533,7 +660,13 @@ def proposer_memory_summary(memory_state: dict[str, Any] | None) -> dict[str, An
         "label_definition_count": len(label_definitions),
         "active_label_definition_count": len(active_label_definitions),
         "rollout_label_count": len(rollout_labels),
+        "open_endedness_score_count": len(open_endedness_scores),
         "active_hypotheses": active_hypotheses[:10],
         "open_bets": open_bets[:10],
         "active_label_definitions": active_label_definitions[:10],
+        "top_open_endedness_scores": sorted(
+            open_endedness_scores.values(),
+            key=lambda item: float(item.get("open_endedness_score") or 0.0),
+            reverse=True,
+        )[:10],
     }

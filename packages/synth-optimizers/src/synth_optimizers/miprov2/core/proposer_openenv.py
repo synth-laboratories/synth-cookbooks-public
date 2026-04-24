@@ -926,6 +926,68 @@ def build_openenv_tool_catalog(
             "source": "mipro_proposer_memory",
         },
         {
+            "name": "score_rollout_open_endedness",
+            "description": (
+                "Score a completed rollout for novelty, unexpectedness, and learnability. "
+                "This measures information value, not task reward."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "score_id": {"type": "string"},
+                    "rollout_id": {"type": "string"},
+                    "candidate_id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "scored_by": {"type": "string"},
+                    "score_source": {"type": "string"},
+                    "novelty_score": {"type": "number"},
+                    "unexpectedness_score": {"type": "number"},
+                    "learnability_score": {"type": "number"},
+                    "open_endedness_score": {"type": "number"},
+                    "relation_to_bets": {"type": "string"},
+                    "relation_to_hypotheses": {"type": "string"},
+                    "relation_to_labels": {"type": "string"},
+                    "lesson": {"type": "string"},
+                    "linked_hypothesis_refs": {"type": "array", "items": {"type": "string"}},
+                    "linked_bet_refs": {"type": "array", "items": {"type": "string"}},
+                    "linked_label_refs": {"type": "array", "items": {"type": "string"}},
+                    "followup_refs": {"type": "array", "items": {"type": "string"}},
+                    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+                    "metadata": {"type": "object"},
+                },
+                "required": [
+                    "rollout_id",
+                    "novelty_score",
+                    "unexpectedness_score",
+                    "learnability_score",
+                ],
+                "additionalProperties": False,
+            },
+            "source": "mipro_proposer_memory",
+        },
+        {
+            "name": "query_open_ended_rollouts",
+            "description": (
+                "Query rollouts scored as novel, unexpected, or learnable. Use this to find informative evidence."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "min_open_endedness_score": {"type": "number"},
+                    "rollout_id": {"type": "string"},
+                    "candidate_id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "hypothesis_id": {"type": "string"},
+                    "bet_id": {"type": "string"},
+                    "label_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            "source": "mipro_proposer_memory",
+        },
+        {
             "name": "preview_tpe_rollout_queue",
             "description": (
                 "Inspect the tentative next TPE rollout queue. This shows the candidate configs "
@@ -2269,6 +2331,10 @@ def _build_openenv_research_prompt(
         "  - Curate a small label set with register_rollout_label_definition when repeated rollout patterns matter for decisions.\n"
         "  - Assign labels only from active definitions; do not invent free-form tags.\n"
         "  - Query labels before planning queue overrides, and retire/deprecate labels that stop affecting decisions.\n"
+        "OPEN-ENDEDNESS:\n"
+        "  - Score rollouts tied to resolved bets, surprising labels, high-impact queue overrides, or new failure modes.\n"
+        "  - Open-endedness is information value, not reward: score novelty, unexpectedness, and learnability.\n"
+        "  - Use query_open_ended_rollouts when choosing what to investigate or which queue rows are worth budget.\n"
         "QUEUE PLANNING:\n"
         "  - preview_tpe_rollout_queue shows the default TPE schedule. TPE is the default scheduler, not the final authority.\n"
         "  - If you override the queue, cite linked_hypothesis_refs or linked_bet_refs and explain expected information gain.\n"

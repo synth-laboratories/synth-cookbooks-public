@@ -41,12 +41,14 @@ Implemented:
   - assign labels only from active proposer-curated definitions
   - query_rollouts_by_label
   - optional labeller hook skipped when no active definitions exist
-
-Remaining:
-
 - open-endedness scoring:
   - score_rollout_open_endedness
   - query_open_ended_rollouts
+  - optional scorer hook skipped when no scorer is supplied
+  - open-endedness scores persisted under proposer_memory/open_endedness_scores/
+
+Remaining:
+
 - proposer runbook enforcement:
   - read state before writing
   - resolve completed bets and update memory after rollouts
@@ -56,9 +58,9 @@ Remaining:
 
 Recommended next chunk:
 
-Implement open-endedness scoring. Queues decide what to run, hypotheses and bets
-explain why, and labels index completed evidence. Open-endedness should now
-score novelty, unexpectedness, and learnability over labelled/resolved evidence.
+Implement proposer runbook enforcement. The nouns and tools now exist; the next
+step is making proposer behavior reliably follow the evidence -> hypotheses ->
+bets -> labels -> open-endedness -> queue planning loop.
 
 Purpose
 -------
