@@ -343,6 +343,79 @@ class SQLiteMiproRunLedger:
         )
         self._conn.commit()
 
+    def upsert_rollout_queue(
+        self,
+        *,
+        queue_id: str,
+        round_idx: int,
+        queue_kind: str,
+        queue_payload: dict[str, Any],
+        artifact_path: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_queue_id = str(queue_id).strip()
+        if not normalized_queue_id:
+            raise ValueError("queue_id must be non-empty")
+        artifact_dir = self.workspace_root / "rollout_queues"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        resolved_artifact_path = (
+            Path(artifact_path)
+            if artifact_path is not None and str(artifact_path).strip()
+            else artifact_dir / f"{_safe_path_component(normalized_queue_id)}.json"
+        )
+        payload = dict(queue_payload)
+        payload.setdefault("queue_id", normalized_queue_id)
+        payload.setdefault("round_idx", int(round_idx))
+        resolved_artifact_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+            encoding="utf-8",
+        )
+        self._conn.execute(
+            """
+            INSERT INTO rollout_queues(
+                run_id, queue_id, round_idx, queue_kind, queue_json, artifact_path, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, queue_id) DO UPDATE SET
+                round_idx=excluded.round_idx,
+                queue_kind=excluded.queue_kind,
+                queue_json=excluded.queue_json,
+                artifact_path=excluded.artifact_path
+            """,
+            (
+                self.run_id,
+                normalized_queue_id,
+                int(round_idx),
+                str(queue_kind),
+                _json_dumps(payload),
+                str(resolved_artifact_path),
+                float(time.time()),
+            ),
+        )
+        self._conn.commit()
+        return {"queue": payload, "artifact_path": str(resolved_artifact_path)}
+
+    def query_rollout_queues(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT queue_id, round_idx, queue_kind, queue_json, artifact_path, created_at
+            FROM rollout_queues
+            WHERE run_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (self.run_id, int(limit)),
+        ).fetchall()
+        return [
+            {
+                "queue_id": str(row["queue_id"]),
+                "round_idx": int(row["round_idx"]),
+                "queue_kind": str(row["queue_kind"]),
+                "queue": dict(_json_loads(str(row["queue_json"]))),
+                "artifact_path": str(row["artifact_path"]),
+                "created_at": float(row["created_at"]),
+            }
+            for row in rows
+        ]
+
     def upsert_state(self, *, key: str, value: Any) -> None:
         state_key = str(key).strip()
         if not state_key:
@@ -1778,6 +1851,17 @@ class SQLiteMiproRunLedger:
                 metadata_json TEXT NOT NULL,
                 created_at REAL NOT NULL,
                 PRIMARY KEY (run_id, checkpoint_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS rollout_queues (
+                run_id TEXT NOT NULL,
+                queue_id TEXT NOT NULL,
+                round_idx INTEGER NOT NULL,
+                queue_kind TEXT NOT NULL,
+                queue_json TEXT NOT NULL,
+                artifact_path TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                PRIMARY KEY (run_id, queue_id)
             );
 
             CREATE TABLE IF NOT EXISTS run_state (

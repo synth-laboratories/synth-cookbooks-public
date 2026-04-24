@@ -160,8 +160,11 @@ class MiproProposerEnvironment:
         context: MiproOpenEnvProposerContext,
         config: MiproOpenEnvProposerConfig | None = None,
         variant: MiproOpenEnvProposerVariant | dict[str, Any] | None = None,
+        queue_state: dict[str, Any] | None = None,
     ) -> "MiproProposerEnvironment":
         variant_model = _coerce_variant(variant)
+        initial_queue_state = dict(queue_state or {})
+        initial_queue_state["variant"] = variant_model.to_dict()
         session = MiproProposerSession(
             session_id=new_session_id(),
             run_id=str(context.run_metadata.get("run_id") or "") or None,
@@ -174,7 +177,7 @@ class MiproProposerEnvironment:
             compiled_space=clone_compiled_space(compiled_space),
             context=context,
             config=config or MiproOpenEnvProposerConfig(),
-            queue_state={"variant": variant_model.to_dict()},
+            queue_state=initial_queue_state,
         )
         return cls(session=session, state=state, store=None, variant=variant_model)
 
@@ -187,15 +190,22 @@ class MiproProposerEnvironment:
         source_ref: str | None = None,
         config: MiproOpenEnvProposerConfig | None = None,
         variant: MiproOpenEnvProposerVariant | dict[str, Any] | None = None,
+        queue_state: dict[str, Any] | None = None,
         actor_id: str = "interactive",
     ) -> "MiproProposerEnvironment":
         variant_model = _coerce_variant(variant)
         context = proposer_context_from_dict(dict(checkpoint.get("proposer_context") or {}))
+        initial_queue_state = dict(
+            queue_state
+            or (context.read_model_payload.get("rollout_queue_state") if isinstance(context.read_model_payload, dict) else {})
+            or {}
+        )
+        initial_queue_state["variant"] = variant_model.to_dict()
         state = MiproProposerToolState(
             compiled_space=compiled_space_from_snapshot(dict(checkpoint.get("compiled_space") or {})),
             context=context,
             config=config or MiproOpenEnvProposerConfig(),
-            queue_state={"variant": variant_model.to_dict()},
+            queue_state=initial_queue_state,
         )
         store = MiproProposerSessionStore(session_root)
         session = MiproProposerSession(

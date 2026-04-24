@@ -56,6 +56,13 @@ from synth_optimizers.miprov2.core.run_ledger import (
     load_resume_state,
     open_sqlite_run_ledger,
 )
+from synth_optimizers.miprov2.core.rollout_queue import (
+    MiproCandidateInterventionRef,
+    MiproQueuedRollout,
+    MiproRolloutQueue,
+    queue_id_for,
+    rollout_id_for,
+)
 
 SampleTrainRowsOutcome: TypeAlias = list[Mapping[str, Any]]
 SampleTrainRowsFn: TypeAlias = Callable[
@@ -66,6 +73,10 @@ SummarizeRecentTrialsOutcome: TypeAlias = Mapping[str, Any]
 SummarizeRecentTrialsFn: TypeAlias = Callable[
     [list[MiproTrialResult], int],
     SummarizeRecentTrialsOutcome | Awaitable[SummarizeRecentTrialsOutcome],
+]
+EvaluateQueuedRolloutFn: TypeAlias = Callable[
+    [MiproProgramCandidate, MiproQueuedRollout],
+    EvaluateCandidateOutcome | Awaitable[EvaluateCandidateOutcome],
 ]
 
 
@@ -382,6 +393,7 @@ def _interactive_outcome_from_committed_session(
         read_tools_used=tuple(sorted(read_tools)),
         stop_reason=stop_reason,
         tool_call_count=len(tool_events),
+        queue_state=dict(state.queue_state),
     )
     summary = {
         "session_id": session.session_id,
@@ -395,8 +407,126 @@ def _interactive_outcome_from_committed_session(
         "event_count": int(session.event_count),
         "current_version": int(session.current_version),
         "status": session.status,
+        "queue_state": dict(state.queue_state),
     }
     return outcome, summary
+
+
+def _candidate_intervention_ref(candidate: MiproProgramCandidate) -> MiproCandidateInterventionRef:
+    return MiproCandidateInterventionRef(
+        candidate_id=str(candidate.candidate_id or ""),
+        parent_candidate_id=candidate.parent_candidate_id,
+        lever_bundle_hash=str(candidate.lever_bundle_hash or ""),
+        source_config=dict(candidate.source_config),
+        plugin_kind=str(candidate.active_execution_mode or "prompt"),
+        plugin_id=candidate.active_model_transform_id,
+        prompt_intervention={
+            "selected_instructions": dict(candidate.selected_instructions),
+            "selected_instruction_base_option_ids": dict(
+                candidate.selected_instruction_base_option_ids
+            ),
+            "selected_instruction_transform_ids": {
+                key: list(value)
+                for key, value in candidate.selected_instruction_transform_ids.items()
+            },
+            "selected_demos": {
+                module_id: {
+                    slot_id: demo.to_dict() for slot_id, demo in slot_map.items()
+                }
+                for module_id, slot_map in candidate.selected_demos.items()
+            },
+        },
+        sft_intervention={
+            "active_finetune_ref": candidate.active_finetune_ref,
+            "active_model_transform_id": candidate.active_model_transform_id,
+        },
+        metadata={"program_id": candidate.program_id},
+    )
+
+
+def _row_ref(row: Mapping[str, Any], idx: int) -> tuple[str, int | None, str | None]:
+    row_id = str(
+        row.get("row_id")
+        or row.get("id")
+        or row.get("task_instance_id")
+        or row.get("seed")
+        or f"row_{idx:04d}"
+    )
+    seed_value = row.get("seed")
+    seed = int(seed_value) if seed_value is not None and str(seed_value).strip() else None
+    task_instance_id = (
+        str(row["task_instance_id"]) if row.get("task_instance_id") is not None else None
+    )
+    return row_id, seed, task_instance_id
+
+
+async def _build_rollout_queue(
+    *,
+    optimizer: DiscreteMiproOptimizer,
+    compiled_space: CompiledMiproSpace,
+    run_id: str,
+    round_idx: int,
+    sampled_rows: list[dict[str, Any]],
+    top_k: int,
+    split: str = "train",
+    created_by: str = "tpe",
+    queue_kind: str = "tentative",
+    suffix: str = "",
+) -> MiproRolloutQueue:
+    configs = await optimizer.preview_suggest(top_k=max(1, int(top_k)))
+    queue_id = queue_id_for(
+        run_id=run_id,
+        round_idx=int(round_idx),
+        kind=queue_kind,
+        suffix=suffix or created_by,
+    )
+    candidates: list[MiproCandidateInterventionRef] = []
+    rollouts: list[MiproQueuedRollout] = []
+    rows = list(sampled_rows or [{}])
+    for candidate_index, trial_config in enumerate(configs):
+        candidate = decode_config(compiled_space, trial_config)
+        candidate_ref = _candidate_intervention_ref(candidate)
+        candidates.append(candidate_ref)
+        for row_index, row in enumerate(rows):
+            row_id, seed, task_instance_id = _row_ref(row, row_index)
+            rollout_id = rollout_id_for(
+                queue_id=queue_id,
+                candidate_id=str(candidate.candidate_id or ""),
+                row_id=row_id,
+                index=(candidate_index * len(rows)) + row_index,
+            )
+            rollouts.append(
+                MiproQueuedRollout(
+                    rollout_id=rollout_id,
+                    candidate_id=str(candidate.candidate_id or ""),
+                    candidate_interventions=[candidate_ref],
+                    split=split,
+                    row_id=row_id,
+                    seed=seed,
+                    task_instance_id=task_instance_id,
+                    evaluator_config={
+                        "row": dict(row),
+                        "row_index": row_index,
+                        "candidate_index": candidate_index,
+                    },
+                    priority=float(len(rollouts)),
+                    created_by=created_by,
+                )
+            )
+    return MiproRolloutQueue(
+        queue_id=queue_id,
+        queue_kind=queue_kind,
+        task_id=None,
+        split=split,
+        created_by=created_by,
+        candidates=candidates,
+        rollouts=rollouts,
+        metadata={
+            "round_idx": int(round_idx),
+            "top_k": int(top_k),
+            "sampled_row_count": len(rows),
+        },
+    )
 
 
 def _coerce_eval_outcome(
@@ -1052,6 +1182,7 @@ async def run_phase3_loop(
     optimizer: DiscreteMiproOptimizer,
     agent: MiproOpenEnvReactAgent,
     evaluate_train: EvaluateCandidateFn,
+    evaluate_queued_rollout: EvaluateQueuedRolloutFn | None = None,
     evaluate_heldout: EvaluateCandidateFn | None = None,
     grounding_hooks: MiproGroundingHooksLike | None = None,
     config: MiproPhase3Config | None = None,
@@ -1227,9 +1358,25 @@ async def run_phase3_loop(
         *,
         wave_round_idx: int,
         proposer_round_idx: int | None,
+        rollout_queue: Mapping[str, Any] | None = None,
     ) -> None:
         nonlocal observation_seq
-        configs = await optimizer.suggest(top_k=int(cfg.top_k))
+        queue_payload = dict(rollout_queue or {})
+        queue_candidate_rows = [
+            dict(item)
+            for item in list(queue_payload.get("candidates") or [])
+            if isinstance(item, Mapping)
+        ]
+        if queue_candidate_rows:
+            configs = [
+                {
+                    str(key): str(value)
+                    for key, value in dict(item.get("source_config") or {}).items()
+                }
+                for item in queue_candidate_rows
+            ]
+        else:
+            configs = await optimizer.suggest(top_k=int(cfg.top_k))
         if not configs:
             return
         decoded_pairs: list[tuple[dict[str, str], MiproProgramCandidate]] = []
@@ -1242,9 +1389,23 @@ async def run_phase3_loop(
             decoded_pairs.append((trial_config, candidate))
         if not decoded_pairs:
             return
-        evaluated = await asyncio.gather(
-            *[
-                evaluate_candidate_trial(
+        queue_rollouts = [
+            MiproQueuedRollout.from_dict(dict(item))
+            for item in list(queue_payload.get("rollouts") or [])
+            if isinstance(item, Mapping)
+        ]
+
+        async def evaluate_pair(
+            trial_cfg: dict[str, str],
+            candidate: MiproProgramCandidate,
+        ) -> MiproTrialResult:
+            candidate_rollouts = [
+                item
+                for item in queue_rollouts
+                if str(item.candidate_id) == str(candidate.candidate_id or "")
+            ]
+            if evaluate_queued_rollout is None or not candidate_rollouts:
+                return await evaluate_candidate_trial(
                     evaluate=evaluate_train,
                     trial_config=trial_cfg,
                     candidate=candidate,
@@ -1253,10 +1414,52 @@ async def run_phase3_loop(
                     extra_details={
                         "phase3_tabu_prefilter": True,
                         "proposer_round_idx": proposer_round_idx,
+                        "rollout_queue_id": queue_payload.get("queue_id"),
+                        "queued_rollout_ids": [
+                            str(item.rollout_id) for item in candidate_rollouts
+                        ],
                     },
                 )
-                for trial_cfg, candidate in decoded_pairs
-            ]
+            rollout_results: list[dict[str, Any]] = []
+            latencies: list[float] = []
+            for queued_rollout in candidate_rollouts:
+                start = time.perf_counter()
+                async with semaphore:
+                    raw = evaluate_queued_rollout(candidate, queued_rollout)
+                    if inspect.isawaitable(raw):
+                        raw = await cast(Awaitable[EvaluateCandidateOutcome], raw)
+                score, details = _coerce_eval_outcome(raw)
+                latencies.append((time.perf_counter() - start) * 1000.0)
+                rollout_results.append(
+                    {
+                        "rollout_id": queued_rollout.rollout_id,
+                        "candidate_id": queued_rollout.candidate_id,
+                        "row_id": queued_rollout.row_id,
+                        "seed": queued_rollout.seed,
+                        "score": float(score),
+                        "details": dict(details),
+                    }
+                )
+            scores = [float(item["score"]) for item in rollout_results]
+            return MiproTrialResult(
+                config=trial_cfg,
+                score=(sum(scores) / len(scores)) if scores else 0.0,
+                details={
+                    "candidate_id": candidate.candidate_id,
+                    "lever_bundle_hash": candidate.lever_bundle_hash,
+                    "round_idx": wave_round_idx,
+                    "split": "train",
+                    "proposer_round_idx": proposer_round_idx,
+                    "rollout_queue_id": queue_payload.get("queue_id"),
+                    "queued_rollout_results": rollout_results,
+                },
+                latency_ms=sum(latencies),
+                candidate_id=candidate.candidate_id,
+                lever_bundle_hash=candidate.lever_bundle_hash,
+            )
+
+        evaluated = await asyncio.gather(
+            *[evaluate_pair(trial_cfg, candidate) for trial_cfg, candidate in decoded_pairs]
         )
         await optimizer.observe_batch(list(evaluated))
         out.train_observations.extend(list(evaluated))
@@ -1276,6 +1479,23 @@ async def run_phase3_loop(
             if out.best_train_score is None or trial.score > out.best_train_score:
                 out.best_train_score = float(trial.score)
                 out.best_train_candidate = candidate
+        if queue_payload.get("queue_id"):
+            ledger.upsert_rollout_queue(
+                queue_id=str(queue_payload["queue_id"]),
+                round_idx=wave_round_idx,
+                queue_kind=str(queue_payload.get("queue_kind") or "committed"),
+                queue_payload={
+                    **queue_payload,
+                    "execution": {
+                        "wave_round_idx": wave_round_idx,
+                        "proposer_round_idx": proposer_round_idx,
+                        "candidate_scores": {
+                            str(trial.candidate_id or ""): float(trial.score)
+                            for trial in evaluated
+                        },
+                    },
+                },
+            )
         await refresh_train_read_model()
         persist_common_state()
 
@@ -1556,6 +1776,29 @@ async def run_phase3_loop(
                 round_idx=proposer_round_idx,
                 limit=grounding_limit,
             )
+            tentative_queue = await _build_rollout_queue(
+                optimizer=optimizer,
+                compiled_space=working_space,
+                run_id=str(out.run_id or run_id or ledger.run_id),
+                round_idx=proposer_round_idx,
+                sampled_rows=sampled_rows,
+                top_k=int(cfg.top_k),
+                created_by="tpe",
+                queue_kind="tentative",
+            )
+            tentative_queue_payload = tentative_queue.to_dict()
+            ledger.upsert_rollout_queue(
+                queue_id=tentative_queue.queue_id,
+                round_idx=proposer_round_idx,
+                queue_kind=tentative_queue.queue_kind,
+                queue_payload=tentative_queue_payload,
+            )
+            rollout_queue_state = {
+                "tentative_queue_id": tentative_queue.queue_id,
+                "active_queue_id": tentative_queue.queue_id,
+                "queues": {tentative_queue.queue_id: tentative_queue_payload},
+                "overrides": [],
+            }
             recent_trial_summary = await _resolve_recent_trial_summary(
                 hooks,
                 observations=out.train_observations,
@@ -1620,6 +1863,7 @@ async def run_phase3_loop(
                     "observation_count": len(out.train_observations),
                     "tabu_hash_count": len(tabu_lever_bundle_hashes),
                     "skipped_tabu_candidates": out.skipped_tabu_candidates,
+                    "tentative_rollout_queue_id": tentative_queue.queue_id,
                 },
                 candidate_summary_counts={
                     "candidate_count": len(candidate_rows),
@@ -1653,6 +1897,7 @@ async def run_phase3_loop(
                     **dict(train_read_model),
                     "sampled_train_rows": sampled_rows,
                     "recent_trial_rows": recent_trial_rows,
+                    "rollout_queue_state": rollout_queue_state,
                 },
             )
             run_identifier = out.run_id or run_id or ledger.run_id
@@ -1750,6 +1995,7 @@ async def run_phase3_loop(
                         session_root=session_root,
                         source_ref=checkpoint_id,
                         config=cfg.proposer_config,
+                        queue_state=rollout_queue_state,
                     )
                     pending_interactive_proposer = {
                         "run_id": str(run_identifier),
@@ -1760,6 +2006,7 @@ async def run_phase3_loop(
                         "session_root": str(Path(session_root).expanduser().resolve()),
                         "session_dir": environment.session.session_dir,
                         "event_log_path": environment.session.event_log_path,
+                        "tentative_rollout_queue_id": tentative_queue.queue_id,
                         "train_rounds_completed": train_rounds_completed,
                         "proposer_rounds_completed": proposer_rounds_completed,
                         "ledger_path": str(ledger.ledger_path),
@@ -1779,6 +2026,7 @@ async def run_phase3_loop(
                     agent=agent,
                     context=proposer_context,
                     config=cfg.proposer_config,
+                    queue_state=rollout_queue_state,
                 )
             stop_reason = str(proposer_outcome.stop_reason)
             out.stop_reason_frequency[stop_reason] = (
@@ -1829,11 +2077,73 @@ async def run_phase3_loop(
                 )
             out.proposer_sessions.append(proposer_session)
 
-            for _ in range(int(cfg.train_rounds_per_proposer_round)):
+            queue_state = dict(proposer_outcome.queue_state or {})
+            queue_map = {
+                str(key): dict(value)
+                for key, value in dict(queue_state.get("queues") or {}).items()
+                if isinstance(value, Mapping)
+            }
+            committed_queue_id = str(queue_state.get("committed_queue_id") or "").strip()
+            committed_queue_payload = (
+                queue_map.get(committed_queue_id) if committed_queue_id else None
+            )
+            if committed_queue_payload is None:
+                default_queue = await _build_rollout_queue(
+                    optimizer=optimizer,
+                    compiled_space=working_space,
+                    run_id=str(run_identifier),
+                    round_idx=proposer_round_idx,
+                    sampled_rows=sampled_rows,
+                    top_k=int(cfg.top_k),
+                    created_by="tpe",
+                    queue_kind="committed",
+                    suffix="post_proposer_default",
+                )
+                committed_queue_payload = default_queue.to_dict()
+                committed_queue_id = default_queue.queue_id
+                queue_state = {
+                    **queue_state,
+                    "committed_queue_id": committed_queue_id,
+                    "commit": {
+                        "commit_id": f"commit_{committed_queue_id}",
+                        "queue_id": tentative_queue.queue_id,
+                        "committed_queue_id": committed_queue_id,
+                        "accept_tpe_defaults": True,
+                        "proposer_override_refs": [],
+                        "reason": "auto-committed TPE default queue",
+                    },
+                    "queues": {
+                        **queue_map,
+                        committed_queue_id: committed_queue_payload,
+                    },
+                }
+                proposer_outcome.queue_state = dict(queue_state)
+                proposer_summary["committed_rollout_queue_id"] = committed_queue_id
+            ledger.upsert_rollout_queue(
+                queue_id=committed_queue_id,
+                round_idx=proposer_round_idx,
+                queue_kind=str(committed_queue_payload.get("queue_kind") or "committed"),
+                queue_payload={
+                    **committed_queue_payload,
+                    "commit": (
+                        dict(cast(Mapping[str, Any], queue_state.get("commit")))
+                        if isinstance(queue_state.get("commit"), Mapping)
+                        else {}
+                    ),
+                    "original_queue": tentative_queue_payload,
+                },
+            )
+            ledger.upsert_state(
+                key="latest_rollout_queue_state",
+                value=dict(queue_state),
+            )
+
+            for wave_index in range(int(cfg.train_rounds_per_proposer_round)):
                 train_rounds_completed += 1
                 await run_train_wave(
                     wave_round_idx=train_rounds_completed,
                     proposer_round_idx=proposer_round_idx,
+                    rollout_queue=committed_queue_payload if wave_index == 0 else None,
                 )
                 should_snapshot = (
                     evaluate_heldout is not None
@@ -2006,6 +2316,7 @@ __all__ = [
     "SampleTrainRowsFn",
     "SummarizeRecentTrialsOutcome",
     "SummarizeRecentTrialsFn",
+    "EvaluateQueuedRolloutFn",
     "MiproPhase3Config",
     "MiproGroundingHooksLike",
     "MiproGroundingHooks",

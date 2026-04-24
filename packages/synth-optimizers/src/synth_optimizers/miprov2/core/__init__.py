@@ -76,6 +76,7 @@ from synth_optimizers.miprov2.core.phase3_runner import (
     MiproPhase3Config,
     MiproPhase3Outcome,
     MiproProposerStepInput,
+    EvaluateQueuedRolloutFn,
     SampleTrainRowsFn,
     SampleTrainRowsOutcome,
     SummarizeRecentTrialsFn,
@@ -158,6 +159,16 @@ from synth_optimizers.miprov2.core.run_ledger import (
     load_resume_state,
     open_sqlite_run_ledger,
 )
+from synth_optimizers.miprov2.core.rollout_queue import (
+    MiproCandidateInterventionRef,
+    MiproQueuedRollout,
+    MiproQueuedRolloutResult,
+    MiproRolloutQueue,
+    MiproRolloutQueueCommit,
+    MiproRolloutQueueOverride,
+    queue_id_for,
+    rollout_id_for,
+)
 
 __all__ = [
     "NONE_TRANSFORM",
@@ -201,6 +212,7 @@ __all__ = [
     "EvaluateCandidateFn",
     "EvaluateCandidateOutcome",
     "EvaluateCandidateWithDetails",
+    "EvaluateQueuedRolloutFn",
     "MiproHeldoutSnapshot",
     "MiproPhase2Config",
     "MiproPhase2Outcome",
@@ -253,6 +265,14 @@ __all__ = [
     "SQLiteMiproRunLedger",
     "open_sqlite_run_ledger",
     "load_resume_state",
+    "MiproCandidateInterventionRef",
+    "MiproQueuedRollout",
+    "MiproQueuedRolloutResult",
+    "MiproRolloutQueue",
+    "MiproRolloutQueueCommit",
+    "MiproRolloutQueueOverride",
+    "queue_id_for",
+    "rollout_id_for",
     "DemoMessage",
     "StaticFewShotDemo",
     "TrajectorySnippetDemo",

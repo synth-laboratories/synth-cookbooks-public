@@ -92,6 +92,23 @@ class _SyncDiscreteTpeCore:
             return [config for _score, config in ranked[:top_k]]
         return self._sample_random_configs(top_k=top_k, exclude_keys=exclude)
 
+    def preview_ask(
+        self, *, top_k: int, exclude_keys: set[str] | None = None
+    ) -> list[dict[str, str]]:
+        clone = _SyncDiscreteTpeCore(config=self.config, rng=random.Random())
+        clone.rng.setstate(self.rng.getstate())
+        clone.search_space = {key: list(values) for key, values in self.search_space.items()}
+        clone.observations = [
+            TpeObservation(
+                config=dict(item.config),
+                score=float(item.score),
+                timestamp=float(item.timestamp),
+            )
+            for item in self.observations
+        ]
+        clone.tabu_config_keys = set(self.tabu_config_keys)
+        return clone.ask(top_k=top_k, exclude_keys=exclude_keys)
+
     def _sample_random_config(self) -> dict[str, str]:
         sampled: dict[str, str] = {}
         for component, values in self.search_space.items():
@@ -251,6 +268,12 @@ class AsyncDiscreteTpeOptimizer:
     ) -> list[dict[str, str]]:
         async with self._lock:
             return self._core.ask(top_k=top_k, exclude_keys=exclude_keys)
+
+    async def preview_ask(
+        self, *, top_k: int, exclude_keys: set[str] | None = None
+    ) -> list[dict[str, str]]:
+        async with self._lock:
+            return self._core.preview_ask(top_k=top_k, exclude_keys=exclude_keys)
 
     def snapshot_state(self) -> dict[str, Any]:
         """Read-only snapshot without locking; for debugging only (may be slightly stale)."""

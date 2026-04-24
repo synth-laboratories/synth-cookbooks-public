@@ -702,6 +702,74 @@ def build_openenv_tool_catalog(
             "source": "mipro_openenv_action",
         },
         {
+            "name": "preview_tpe_rollout_queue",
+            "description": (
+                "Inspect the tentative next TPE rollout queue. This shows the candidate configs "
+                "and candidate x row rollouts that would run if the proposer made no queue edits."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "queue_id": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            "source": "mipro_rollout_queue",
+        },
+        {
+            "name": "get_rollout_queue",
+            "description": "Read a tentative, edited, or committed rollout queue by id.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "queue_id": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            "source": "mipro_rollout_queue",
+        },
+        {
+            "name": "override_rollout_queue",
+            "description": (
+                "Edit a rollout queue by removing, replacing, inserting, or reordering queued rollouts. "
+                "Use this when a smaller or different queue would better test the active uncertainty."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "queue_id": {"type": "string"},
+                    "committed_queue_id": {"type": "string"},
+                    "overrides": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                    },
+                    "metadata": {"type": "object"},
+                },
+                "required": ["overrides"],
+                "additionalProperties": False,
+            },
+            "source": "mipro_rollout_queue",
+        },
+        {
+            "name": "commit_rollout_queue",
+            "description": (
+                "Commit the rollout queue to run after this proposer session. "
+                "If omitted, the orchestrator commits the TPE default queue."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "queue_id": {"type": "string"},
+                    "commit_id": {"type": "string"},
+                    "accept_tpe_defaults": {"type": "boolean"},
+                    "reason": {"type": "string"},
+                    "metadata": {"type": "object"},
+                },
+                "additionalProperties": False,
+            },
+            "source": "mipro_rollout_queue",
+        },
+        {
             "name": "get_sampled_train_row",
             "description": (
                 "Read the full details of one training example by index. "
@@ -1280,6 +1348,7 @@ class MiproOpenEnvProposerOutcome:
     archive_spill_count: int = 0
     archived_message_count: int = 0
     archive_path: str | None = None
+    queue_state: dict[str, Any] = field(default_factory=dict)
 
 
 def _cached_prompt_tokens_from_usage(usage: Mapping[str, Any]) -> int:
@@ -3475,6 +3544,7 @@ async def run_openenv_react_proposer(
     context: MiproOpenEnvProposerContext,
     config: MiproOpenEnvProposerConfig | None = None,
     variant: MiproOpenEnvProposerVariant | Mapping[str, Any] | None = None,
+    queue_state: Mapping[str, Any] | None = None,
 ) -> MiproOpenEnvProposerOutcome:
     """Run one bounded OpenEnv-style proposer session and return an expanded space."""
 
@@ -3487,6 +3557,7 @@ async def run_openenv_react_proposer(
         context=context,
         config=cfg,
         variant=variant_model,
+        queue_state=dict(queue_state or {}),
     )
     working = environment.state.compiled_space
     catalog = environment.list_tools()
@@ -3802,6 +3873,7 @@ async def run_openenv_react_proposer(
             if archive_stats.get("archive_path") is not None
             else None
         ),
+        queue_state=dict(environment.state.queue_state),
     )
 
 
@@ -3844,6 +3916,8 @@ def proposer_outcome_summary(outcome: MiproOpenEnvProposerOutcome) -> dict[str, 
             key: len(values) for key, values in outcome.compiled_space.search_space.items()
         },
         "transcript_turns": len(outcome.transcript),
+        "tentative_rollout_queue_id": outcome.queue_state.get("tentative_queue_id"),
+        "committed_rollout_queue_id": outcome.queue_state.get("committed_queue_id"),
     }
 
 

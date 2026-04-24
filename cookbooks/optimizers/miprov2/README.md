@@ -60,6 +60,45 @@ This writes:
 The live `--execute` path runs through native Synth MIPRO phase-3 with the
 OpenEnv proposer loop.
 
+## Interactive Proposer And Rollout Queues
+
+Native phase-3 can pause at proposer boundaries for manual/Codex-driven
+inspection:
+
+```bash
+python cookbooks/optimizers/miprov2/run.py \
+  --execute \
+  --smoke \
+  --interactive-proposer \
+  --artifacts-dir .out/miprov2_interactive_smoke
+```
+
+At each proposer boundary the run writes a `before_proposer` checkpoint, creates
+a file-backed proposer session, and includes a tentative rollout queue in the
+session state. The proposer flow is:
+
+```text
+read state -> preview_tpe_rollout_queue -> optionally override_rollout_queue
+-> commit_rollout_queue -> add candidate edits -> commit session -> resume
+```
+
+TPE is the default scheduler, not the final authority. If the proposer does not
+commit a queue, phase-3 auto-commits the post-proposer TPE default. If the
+proposer commits a queue, phase-3 preserves both the original TPE queue and the
+committed queue under `miprov2_artifacts/rollout_queues/`, then executes the
+committed candidate plan before pausing at the next proposer boundary.
+
+Resume a committed session with:
+
+```bash
+python cookbooks/optimizers/miprov2/run.py \
+  --execute \
+  --smoke \
+  --interactive-proposer \
+  --interactive-resume-session-id <session_id> \
+  --artifacts-dir .out/miprov2_interactive_smoke
+```
+
 Run the public `synth-containers` service:
 
 ```bash

@@ -291,6 +291,7 @@ async def run_proposer_from_checkpoint(
         context=context,
         config=config,
         variant=variant,
+        queue_state=dict(context.read_model_payload.get("rollout_queue_state") or {}),
     )
 
 

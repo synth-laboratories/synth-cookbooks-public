@@ -175,6 +175,14 @@ class DiscreteMiproOptimizer:
     ) -> list[dict[str, str]]:
         return await self._tpe.ask(top_k=max(1, int(top_k)), exclude_keys=exclude_keys)
 
+    async def preview_suggest(
+        self, *, top_k: int = 1, exclude_keys: set[str] | None = None
+    ) -> list[dict[str, str]]:
+        return await self._tpe.preview_ask(
+            top_k=max(1, int(top_k)),
+            exclude_keys=exclude_keys,
+        )
+
     async def suggest_one(
         self, *, exclude_keys: set[str] | None = None
     ) -> dict[str, str] | None:

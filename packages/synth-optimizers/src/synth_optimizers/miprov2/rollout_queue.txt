@@ -1,6 +1,62 @@
 MIPROv2 rollout queue notes
 ===========================
 
+Implementation status
+---------------------
+
+Implemented:
+
+- queue domain models for candidate intervention refs, queued rollouts, rollout
+  queues, queue overrides, queue commits, and queued rollout results
+- non-mutating TPE queue preview
+- proposer tools:
+  - preview_tpe_rollout_queue
+  - get_rollout_queue
+  - override_rollout_queue
+  - commit_rollout_queue
+- phase-3 queue integration:
+  - tentative queue creation at proposer boundaries
+  - queue state included in checkpoints and interactive sessions
+  - committed queue consumption on resume
+  - automatic TPE-default queue commit when the proposer does not commit one
+  - normalized queue artifacts under ledger_workspace/rollout_queues/
+- optional evaluate_queued_rollout hook for row-level execution, with aggregate
+  evaluate_train(candidate) compatibility preserved
+
+Remaining:
+
+- hypothesis storage and tools:
+  - register_hypothesis
+  - append_hypothesis_adjustment
+  - query active/supported/contradicted hypotheses
+- bet storage and tools:
+  - register_bet
+  - resolve_bet
+  - query open/resolved bets by candidate, rollout, task, or hypothesis
+- rollout label schema and labeller pass:
+  - register_rollout_label_definition
+  - assign labels only from active proposer-curated definitions
+  - query_rollouts_by_label
+- open-endedness scoring:
+  - score_rollout_open_endedness
+  - query_open_ended_rollouts
+- proposer runbook enforcement:
+  - read state before writing
+  - state or refine hypotheses
+  - make bets before spending rollout budget
+  - resolve completed bets and update memory after rollouts
+- richer SFT/plugin-specific candidate intervention adapters
+- evals that measure whether queue overrides reduce rollout count or improve
+  learning efficiency versus TPE-default queues
+
+Recommended next chunk:
+
+Implement the durable hypothesis + bet layer before labels and open-endedness.
+Hypotheses and bets give queue overrides a reason structure: the proposer can
+say what it believes, what future rollouts should prove or disprove, and why a
+queue edit is worth spending budget on. Labels and open-endedness should come
+afterward as post-rollout indexing/scoring over that evidence.
+
 Purpose
 -------
 
