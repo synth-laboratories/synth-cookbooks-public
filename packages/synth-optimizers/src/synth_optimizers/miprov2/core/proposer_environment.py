@@ -25,6 +25,10 @@ from synth_optimizers.miprov2.core.proposer_openenv import (
     clone_compiled_space,
     summarize_compiled_space,
 )
+from synth_optimizers.miprov2.core.proposer_memory import (
+    normalize_memory_state,
+    proposer_memory_summary,
+)
 from synth_optimizers.miprov2.core.proposer_sessions import (
     MiproProposerEvent,
     MiproProposerSession,
@@ -115,7 +119,7 @@ def tool_state_to_dict(state: MiproProposerToolState) -> dict[str, Any]:
             if isinstance(state.queue_state.get("variant"), dict)
             else MiproOpenEnvProposerVariant().to_dict()
         ),
-        "memory_state": dict(state.memory_state),
+        "memory_state": normalize_memory_state(state.memory_state),
         "queue_state": dict(state.queue_state),
     }
 
@@ -140,7 +144,7 @@ def tool_state_from_dict(payload: dict[str, Any]) -> MiproProposerToolState:
             for item in list(payload.get("demo_patches") or [])
             if isinstance(item, dict)
         ],
-        memory_state=dict(payload.get("memory_state") or {}),
+        memory_state=normalize_memory_state(dict(payload.get("memory_state") or {})),
         queue_state=queue_state,
     )
 
@@ -161,6 +165,7 @@ class MiproProposerEnvironment:
         config: MiproOpenEnvProposerConfig | None = None,
         variant: MiproOpenEnvProposerVariant | dict[str, Any] | None = None,
         queue_state: dict[str, Any] | None = None,
+        memory_state: dict[str, Any] | None = None,
     ) -> "MiproProposerEnvironment":
         variant_model = _coerce_variant(variant)
         initial_queue_state = dict(queue_state or {})
@@ -177,6 +182,7 @@ class MiproProposerEnvironment:
             compiled_space=clone_compiled_space(compiled_space),
             context=context,
             config=config or MiproOpenEnvProposerConfig(),
+            memory_state=normalize_memory_state(memory_state),
             queue_state=initial_queue_state,
         )
         return cls(session=session, state=state, store=None, variant=variant_model)
@@ -191,6 +197,7 @@ class MiproProposerEnvironment:
         config: MiproOpenEnvProposerConfig | None = None,
         variant: MiproOpenEnvProposerVariant | dict[str, Any] | None = None,
         queue_state: dict[str, Any] | None = None,
+        memory_state: dict[str, Any] | None = None,
         actor_id: str = "interactive",
     ) -> "MiproProposerEnvironment":
         variant_model = _coerce_variant(variant)
@@ -201,10 +208,20 @@ class MiproProposerEnvironment:
             or {}
         )
         initial_queue_state["variant"] = variant_model.to_dict()
+        initial_memory_state = normalize_memory_state(
+            memory_state
+            or (
+                context.read_model_payload.get("proposer_memory_state")
+                if isinstance(context.read_model_payload, dict)
+                else {}
+            )
+            or {}
+        )
         state = MiproProposerToolState(
             compiled_space=compiled_space_from_snapshot(dict(checkpoint.get("compiled_space") or {})),
             context=context,
             config=config or MiproOpenEnvProposerConfig(),
+            memory_state=initial_memory_state,
             queue_state=initial_queue_state,
         )
         store = MiproProposerSessionStore(session_root)
@@ -265,6 +282,7 @@ class MiproProposerEnvironment:
             "proposer_context": proposer_context_to_dict(self.state.context),
             "instruction_patch_count": len(self.state.instruction_patches),
             "demo_patch_count": len(self.state.demo_patches),
+            "memory_summary": proposer_memory_summary(self.state.memory_state),
             "instruction_patches": [
                 _instruction_patch_to_dict(patch) for patch in self.state.instruction_patches
             ],
@@ -352,6 +370,7 @@ class MiproProposerEnvironment:
                 _instruction_patch_to_dict(patch) for patch in self.state.instruction_patches
             ],
             "new_demo_patches": [_demo_patch_to_dict(patch) for patch in self.state.demo_patches],
+            "memory_summary": proposer_memory_summary(self.state.memory_state),
             "event_log_path": self.session.event_log_path,
             "metadata": dict(self.session.metadata),
         }

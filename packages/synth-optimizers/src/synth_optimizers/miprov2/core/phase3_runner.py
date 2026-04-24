@@ -50,6 +50,10 @@ from synth_optimizers.miprov2.core.proposer_environment import (
     MiproProposerEnvironment,
     tool_state_from_dict,
 )
+from synth_optimizers.miprov2.core.proposer_memory import (
+    normalize_memory_state,
+    proposer_memory_summary,
+)
 from synth_optimizers.miprov2.core.proposer_tools import tool_category
 from synth_optimizers.miprov2.core.run_ledger import (
     SQLiteMiproRunLedger,
@@ -394,6 +398,7 @@ def _interactive_outcome_from_committed_session(
         stop_reason=stop_reason,
         tool_call_count=len(tool_events),
         queue_state=dict(state.queue_state),
+        memory_state=dict(state.memory_state),
     )
     summary = {
         "session_id": session.session_id,
@@ -408,6 +413,8 @@ def _interactive_outcome_from_committed_session(
         "current_version": int(session.current_version),
         "status": session.status,
         "queue_state": dict(state.queue_state),
+        "memory_state": dict(state.memory_state),
+        "memory_summary": proposer_memory_summary(state.memory_state),
     }
     return outcome, summary
 
@@ -1213,6 +1220,7 @@ async def run_phase3_loop(
     train_rounds_completed = 0
     proposer_rounds_completed = 0
     latest_train_read_model: dict[str, Any] = {}
+    proposer_memory_state: dict[str, Any] = normalize_memory_state({})
     pending_interactive_proposer: dict[str, Any] | None = None
     interactive_resume_session_id = str(cfg.interactive_resume_session_id or "").strip()
 
@@ -1262,6 +1270,7 @@ async def run_phase3_loop(
         )
         ledger.upsert_state(key="tabu_hashes", value=sorted(tabu_lever_bundle_hashes))
         ledger.upsert_state(key="tabu_hash_count", value=len(tabu_lever_bundle_hashes))
+        ledger.upsert_state(key="latest_proposer_memory_state", value=dict(proposer_memory_state))
         ledger.upsert_state(key="baseline_train_score", value=out.baseline_train_score)
         ledger.upsert_state(
             key="heldout_baseline_score", value=out.heldout_baseline_score
@@ -1665,6 +1674,9 @@ async def run_phase3_loop(
                     text = str(value).strip()
                     if text:
                         tabu_lever_bundle_hashes.add(text)
+            restored_memory = resume_state.run_state.get("latest_proposer_memory_state")
+            if isinstance(restored_memory, Mapping):
+                proposer_memory_state = normalize_memory_state(dict(restored_memory))
             restored_sessions = resume_state.run_state.get("proposer_sessions")
             if isinstance(restored_sessions, list):
                 out.proposer_sessions = [
@@ -1843,6 +1855,7 @@ async def run_phase3_loop(
                 },
                 "sampled_train_rows": sampled_rows,
                 "recent_trial_rows": recent_trial_rows,
+                "proposer_memory_summary": proposer_memory_summary(proposer_memory_state),
             }
             proposer_context = MiproOpenEnvProposerContext(
                 objective=(
@@ -1864,6 +1877,7 @@ async def run_phase3_loop(
                     "tabu_hash_count": len(tabu_lever_bundle_hashes),
                     "skipped_tabu_candidates": out.skipped_tabu_candidates,
                     "tentative_rollout_queue_id": tentative_queue.queue_id,
+                    "proposer_memory_summary": proposer_memory_summary(proposer_memory_state),
                 },
                 candidate_summary_counts={
                     "candidate_count": len(candidate_rows),
@@ -1898,6 +1912,8 @@ async def run_phase3_loop(
                     "sampled_train_rows": sampled_rows,
                     "recent_trial_rows": recent_trial_rows,
                     "rollout_queue_state": rollout_queue_state,
+                    "proposer_memory_state": proposer_memory_state,
+                    "proposer_memory_summary": proposer_memory_summary(proposer_memory_state),
                 },
             )
             run_identifier = out.run_id or run_id or ledger.run_id
@@ -1996,6 +2012,7 @@ async def run_phase3_loop(
                         source_ref=checkpoint_id,
                         config=cfg.proposer_config,
                         queue_state=rollout_queue_state,
+                        memory_state=proposer_memory_state,
                     )
                     pending_interactive_proposer = {
                         "run_id": str(run_identifier),
@@ -2027,6 +2044,7 @@ async def run_phase3_loop(
                     context=proposer_context,
                     config=cfg.proposer_config,
                     queue_state=rollout_queue_state,
+                    memory_state=proposer_memory_state,
                 )
             stop_reason = str(proposer_outcome.stop_reason)
             out.stop_reason_frequency[stop_reason] = (
@@ -2039,6 +2057,15 @@ async def run_phase3_loop(
             )
             persist_compiled_space_snapshot()
             proposer_summary = proposer_outcome_summary(proposer_outcome)
+            proposer_memory_state = normalize_memory_state(proposer_outcome.memory_state)
+            proposer_memory_artifact = ledger.upsert_proposer_memory(
+                memory_state=proposer_memory_state,
+                round_idx=proposer_round_idx,
+            )
+            ledger.upsert_state(
+                key="latest_proposer_memory_state",
+                value=dict(proposer_memory_state),
+            )
             proposer_trace_payload = {
                 "run_id": run_identifier,
                 "round_idx": proposer_round_idx,
@@ -2051,6 +2078,7 @@ async def run_phase3_loop(
                 "workspace_locations": dict(proposer_context.workspace_locations),
                 "delta_digest_paths": dict(proposer_context.delta_digest_paths),
                 "proposer_summary": proposer_summary,
+                "proposer_memory_artifact": dict(proposer_memory_artifact),
                 "transcript": list(proposer_outcome.transcript),
             }
             trace_path: str | None = None
@@ -2069,6 +2097,7 @@ async def run_phase3_loop(
                 "recent_successes": list(recent_successes),
                 "grounding_row_count": len(sampled_rows),
                 "proposer_summary": proposer_summary,
+                "proposer_memory_artifact": dict(proposer_memory_artifact),
                 "proposer_trace_json": trace_path,
             }
             if out.consumed_interactive_session is not None:

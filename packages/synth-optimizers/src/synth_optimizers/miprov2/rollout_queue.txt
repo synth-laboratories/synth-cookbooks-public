@@ -22,17 +22,21 @@ Implemented:
   - normalized queue artifacts under ledger_workspace/rollout_queues/
 - optional evaluate_queued_rollout hook for row-level execution, with aggregate
   evaluate_train(candidate) compatibility preserved
-
-Remaining:
-
 - hypothesis storage and tools:
   - register_hypothesis
   - append_hypothesis_adjustment
-  - query active/supported/contradicted hypotheses
+  - query_hypotheses
 - bet storage and tools:
   - register_bet
   - resolve_bet
-  - query open/resolved bets by candidate, rollout, task, or hypothesis
+  - query_bets by candidate, rollout, task, or hypothesis
+- proposer memory persistence:
+  - memory state in checkpoints and interactive sessions
+  - normalized artifacts under ledger_workspace/proposer_memory/
+  - queue override/commit links to known hypothesis and bet refs
+
+Remaining:
+
 - rollout label schema and labeller pass:
   - register_rollout_label_definition
   - assign labels only from active proposer-curated definitions
@@ -42,8 +46,6 @@ Remaining:
   - query_open_ended_rollouts
 - proposer runbook enforcement:
   - read state before writing
-  - state or refine hypotheses
-  - make bets before spending rollout budget
   - resolve completed bets and update memory after rollouts
 - richer SFT/plugin-specific candidate intervention adapters
 - evals that measure whether queue overrides reduce rollout count or improve
@@ -51,11 +53,10 @@ Remaining:
 
 Recommended next chunk:
 
-Implement the durable hypothesis + bet layer before labels and open-endedness.
-Hypotheses and bets give queue overrides a reason structure: the proposer can
-say what it believes, what future rollouts should prove or disprove, and why a
-queue edit is worth spending budget on. Labels and open-endedness should come
-afterward as post-rollout indexing/scoring over that evidence.
+Implement rollout labels and a lightweight labeller pass. Hypotheses and bets
+now give queue overrides a reason structure; labels are the next useful index
+over completed rollout evidence, and open-endedness should come afterward as a
+scoring layer over labelled/resolved evidence.
 
 Purpose
 -------

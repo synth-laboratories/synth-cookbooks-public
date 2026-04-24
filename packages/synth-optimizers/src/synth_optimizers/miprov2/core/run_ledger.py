@@ -416,6 +416,74 @@ class SQLiteMiproRunLedger:
             for row in rows
         ]
 
+    def upsert_proposer_memory(
+        self,
+        *,
+        memory_state: dict[str, Any],
+        round_idx: int | None = None,
+    ) -> dict[str, Any]:
+        artifact_dir = self.workspace_root / "proposer_memory"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "run_id": self.run_id,
+            "round_idx": round_idx,
+            "memory_state": dict(memory_state),
+            "created_at": float(time.time()),
+        }
+        snapshot_path = artifact_dir / "latest.json"
+        snapshot_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+            encoding="utf-8",
+        )
+        record_count = 0
+        for kind, id_key in (
+            ("hypotheses", "hypothesis_id"),
+            ("adjustments", "adjustment_id"),
+            ("bets", "bet_id"),
+        ):
+            records = memory_state.get(kind)
+            if not isinstance(records, dict):
+                continue
+            kind_dir = artifact_dir / kind
+            kind_dir.mkdir(parents=True, exist_ok=True)
+            for record_id, record_payload in records.items():
+                if not isinstance(record_payload, dict):
+                    continue
+                normalized_id = str(record_payload.get(id_key) or record_id).strip()
+                if not normalized_id:
+                    continue
+                record = dict(record_payload)
+                record[id_key] = normalized_id
+                artifact_path = kind_dir / f"{_safe_path_component(normalized_id)}.json"
+                artifact_path.write_text(
+                    json.dumps(record, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+                    encoding="utf-8",
+                )
+                self._conn.execute(
+                    """
+                    INSERT INTO proposer_memory(
+                        run_id, record_kind, record_id, round_idx, record_json, artifact_path, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id, record_kind, record_id) DO UPDATE SET
+                        round_idx=excluded.round_idx,
+                        record_json=excluded.record_json,
+                        artifact_path=excluded.artifact_path,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        self.run_id,
+                        str(kind),
+                        normalized_id,
+                        int(round_idx) if round_idx is not None else None,
+                        _json_dumps(record),
+                        str(artifact_path),
+                        float(time.time()),
+                    ),
+                )
+                record_count += 1
+        self._conn.commit()
+        return {"snapshot_path": str(snapshot_path), "record_count": record_count}
+
     def upsert_state(self, *, key: str, value: Any) -> None:
         state_key = str(key).strip()
         if not state_key:
@@ -1862,6 +1930,17 @@ class SQLiteMiproRunLedger:
                 artifact_path TEXT NOT NULL,
                 created_at REAL NOT NULL,
                 PRIMARY KEY (run_id, queue_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS proposer_memory (
+                run_id TEXT NOT NULL,
+                record_kind TEXT NOT NULL,
+                record_id TEXT NOT NULL,
+                round_idx INTEGER,
+                record_json TEXT NOT NULL,
+                artifact_path TEXT NOT NULL,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY (run_id, record_kind, record_id)
             );
 
             CREATE TABLE IF NOT EXISTS run_state (

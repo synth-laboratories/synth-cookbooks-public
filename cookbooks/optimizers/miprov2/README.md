@@ -78,8 +78,10 @@ a file-backed proposer session, and includes a tentative rollout queue in the
 session state. The proposer flow is:
 
 ```text
-read state -> preview_tpe_rollout_queue -> optionally override_rollout_queue
+read evidence -> register/refine hypothesis -> register bet
+-> preview_tpe_rollout_queue -> optionally override_rollout_queue
 -> commit_rollout_queue -> add candidate edits -> commit session -> resume
+-> resolve_bet after evidence exists
 ```
 
 TPE is the default scheduler, not the final authority. If the proposer does not
@@ -87,6 +89,13 @@ commit a queue, phase-3 auto-commits the post-proposer TPE default. If the
 proposer commits a queue, phase-3 preserves both the original TPE queue and the
 committed queue under `miprov2_artifacts/rollout_queues/`, then executes the
 committed candidate plan before pausing at the next proposer boundary.
+
+Hypotheses and bets are durable proposer memory, not optimizer rewards. Use
+`register_hypothesis`, `append_hypothesis_adjustment`, and `query_hypotheses` to
+track claims about agent x dataset x preference structure. Use `register_bet`,
+`resolve_bet`, and `query_bets` to make those claims falsifiable against future
+rollouts. Queue overrides and commits can link to hypothesis/bet ids so later
+analysis can see why budget was spent.
 
 Resume a committed session with:
 

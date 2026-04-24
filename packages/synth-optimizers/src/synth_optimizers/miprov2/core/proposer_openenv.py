@@ -41,6 +41,7 @@ from synth_optimizers.miprov2.core.program_model import (
     StaticFewShotDemo,
     TrajectorySnippetDemo,
 )
+from synth_optimizers.miprov2.core.proposer_memory import proposer_memory_summary
 
 _GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 _OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
@@ -702,6 +703,145 @@ def build_openenv_tool_catalog(
             "source": "mipro_openenv_action",
         },
         {
+            "name": "register_hypothesis",
+            "description": (
+                "Register a durable claim about the agent, dataset, task preferences, or policy behavior. "
+                "Use this after reading evidence and before spending rollout budget on a queue edit."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "hypothesis_id": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "rationale": {"type": "string"},
+                    "preference_model_notes": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "dataset_id": {"type": "string"},
+                    "agent_id": {"type": "string"},
+                    "proposer_id": {"type": "string"},
+                    "candidate_refs": {"type": "array", "items": {"type": "string"}},
+                    "rollout_refs": {"type": "array", "items": {"type": "string"}},
+                    "task_refs": {"type": "array", "items": {"type": "string"}},
+                    "queue_refs": {"type": "array", "items": {"type": "string"}},
+                    "queue_override_refs": {"type": "array", "items": {"type": "string"}},
+                    "metadata": {"type": "object"},
+                },
+                "required": ["summary", "rationale"],
+                "additionalProperties": False,
+            },
+            "source": "mipro_proposer_memory",
+        },
+        {
+            "name": "append_hypothesis_adjustment",
+            "description": (
+                "Append a refinement, correction, or evidence-linked update to an existing hypothesis."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "adjustment_id": {"type": "string"},
+                    "hypothesis_id": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "created_by": {"type": "string"},
+                    "diff_payload": {"type": "object"},
+                    "linked_candidate_refs": {"type": "array", "items": {"type": "string"}},
+                    "linked_rollout_refs": {"type": "array", "items": {"type": "string"}},
+                    "linked_task_refs": {"type": "array", "items": {"type": "string"}},
+                    "linked_queue_refs": {"type": "array", "items": {"type": "string"}},
+                    "linked_queue_override_refs": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "metadata": {"type": "object"},
+                },
+                "required": ["hypothesis_id", "summary", "reason"],
+                "additionalProperties": False,
+            },
+            "source": "mipro_proposer_memory",
+        },
+        {
+            "name": "query_hypotheses",
+            "description": "Query proposer hypotheses by status, candidate, rollout, or task.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string"},
+                    "candidate_id": {"type": "string"},
+                    "rollout_id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            "source": "mipro_proposer_memory",
+        },
+        {
+            "name": "register_bet",
+            "description": (
+                "Register a falsifiable prediction about future rollouts. "
+                "Use this to explain why a candidate edit or queue override is worth running."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "bet_id": {"type": "string"},
+                    "hypothesis_id": {"type": "string"},
+                    "proposer_id": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "prediction": {"type": "string"},
+                    "rollout_refs": {"type": "array", "items": {"type": "string"}},
+                    "candidate_refs": {"type": "array", "items": {"type": "string"}},
+                    "task_refs": {"type": "array", "items": {"type": "string"}},
+                    "queue_refs": {"type": "array", "items": {"type": "string"}},
+                    "queue_override_refs": {"type": "array", "items": {"type": "string"}},
+                    "success_criteria": {"type": "string"},
+                    "expected_outcome": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "metadata": {"type": "object"},
+                },
+                "required": ["summary", "prediction"],
+                "additionalProperties": False,
+            },
+            "source": "mipro_proposer_memory",
+        },
+        {
+            "name": "resolve_bet",
+            "description": (
+                "Resolve an open bet as supported, contradicted, mixed, or inconclusive after rollout evidence exists."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "bet_id": {"type": "string"},
+                    "resolution": {"type": "string"},
+                    "resolution_comment": {"type": "string"},
+                    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+                    "metadata": {"type": "object"},
+                },
+                "required": ["bet_id", "resolution"],
+                "additionalProperties": False,
+            },
+            "source": "mipro_proposer_memory",
+        },
+        {
+            "name": "query_bets",
+            "description": "Query proposer bets by status, hypothesis, candidate, rollout, or task.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string"},
+                    "hypothesis_id": {"type": "string"},
+                    "candidate_id": {"type": "string"},
+                    "rollout_id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            "source": "mipro_proposer_memory",
+        },
+        {
             "name": "preview_tpe_rollout_queue",
             "description": (
                 "Inspect the tentative next TPE rollout queue. This shows the candidate configs "
@@ -763,6 +903,8 @@ def build_openenv_tool_catalog(
                     "commit_id": {"type": "string"},
                     "accept_tpe_defaults": {"type": "boolean"},
                     "reason": {"type": "string"},
+                    "linked_hypothesis_refs": {"type": "array", "items": {"type": "string"}},
+                    "linked_bet_refs": {"type": "array", "items": {"type": "string"}},
                     "metadata": {"type": "object"},
                 },
                 "additionalProperties": False,
@@ -1349,6 +1491,7 @@ class MiproOpenEnvProposerOutcome:
     archived_message_count: int = 0
     archive_path: str | None = None
     queue_state: dict[str, Any] = field(default_factory=dict)
+    memory_state: dict[str, Any] = field(default_factory=dict)
 
 
 def _cached_prompt_tokens_from_usage(usage: Mapping[str, Any]) -> int:
@@ -2029,9 +2172,17 @@ def _build_openenv_research_prompt(
         "  6. query_evidence_files(kind='verifier_verdict') plus read_evidence_file — open full verifier_verdict.json payloads for representative wins and regressions.\n"
         "  7. get_rollout_trace — pair the verifier metadata with the actual prompt/response/ideal trace before you decide what to change.\n"
         "  8. list_sampled_train_rows(limit>=12) and list_recent_trial_rows(limit>=3) — use these compatibility views to understand task breadth and recent failures.\n"
+        "  9. query_hypotheses and query_bets — inspect durable proposer memory before creating a new claim.\n"
         "You may perform several adjacent reads in one response when they belong to one diagnosis step.\n"
         "When verifier metadata exists, review at least one improved rollout and one regressed rollout before patching. "
         "Look at the reward, the score_components, and the full verifier_verdict payload together.\n"
+        "HYPOTHESES AND BETS:\n"
+        "  - Register or refine a hypothesis before nontrivial queue overrides or broad candidate edits.\n"
+        "  - Register a concrete bet when you choose rollouts to test a claim; link it to rollout/candidate/queue ids.\n"
+        "  - Resolve completed bets when evidence is available. Bets are proposer memory, not reward.\n"
+        "QUEUE PLANNING:\n"
+        "  - preview_tpe_rollout_queue shows the default TPE schedule. TPE is the default scheduler, not the final authority.\n"
+        "  - If you override the queue, cite linked_hypothesis_refs or linked_bet_refs and explain expected information gain.\n"
         "DIAGNOSE: format errors usually want rules/constraints; knowledge errors want premises; task-group-specific mistakes want heuristics.\n"
         "PROPOSE: submit 1-2 targeted transforms grounded in the evidence. One rule, heuristic, or premise per transform is better than a broad rewrite. "
         "Think in terms of transform reuse and compatibility, not one-off prompt rewrites.\n"
@@ -3545,6 +3696,7 @@ async def run_openenv_react_proposer(
     config: MiproOpenEnvProposerConfig | None = None,
     variant: MiproOpenEnvProposerVariant | Mapping[str, Any] | None = None,
     queue_state: Mapping[str, Any] | None = None,
+    memory_state: Mapping[str, Any] | None = None,
 ) -> MiproOpenEnvProposerOutcome:
     """Run one bounded OpenEnv-style proposer session and return an expanded space."""
 
@@ -3558,6 +3710,7 @@ async def run_openenv_react_proposer(
         config=cfg,
         variant=variant_model,
         queue_state=dict(queue_state or {}),
+        memory_state=dict(memory_state or {}),
     )
     working = environment.state.compiled_space
     catalog = environment.list_tools()
@@ -3874,6 +4027,7 @@ async def run_openenv_react_proposer(
             else None
         ),
         queue_state=dict(environment.state.queue_state),
+        memory_state=dict(environment.state.memory_state),
     )
 
 
@@ -3918,6 +4072,7 @@ def proposer_outcome_summary(outcome: MiproOpenEnvProposerOutcome) -> dict[str, 
         "transcript_turns": len(outcome.transcript),
         "tentative_rollout_queue_id": outcome.queue_state.get("tentative_queue_id"),
         "committed_rollout_queue_id": outcome.queue_state.get("committed_queue_id"),
+        "memory_summary": proposer_memory_summary(outcome.memory_state),
     }
 
 
