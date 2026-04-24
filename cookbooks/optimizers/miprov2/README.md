@@ -78,12 +78,10 @@ a file-backed proposer session, and includes a tentative rollout queue in the
 session state. The proposer flow is:
 
 ```text
-read evidence -> register/refine hypothesis -> register bet
--> curate labels -> label completed rollouts -> query labels
--> score open-endedness -> query informative rollouts
--> preview_tpe_rollout_queue -> optionally override_rollout_queue
--> commit_rollout_queue -> add candidate edits -> commit session -> resume
--> resolve_bet after evidence exists
+read evidence -> inspect memory -> refine hypothesis
+-> make/resolve bet -> curate/query labels
+-> score/query open-endedness -> preview/override/commit queue
+-> patch candidate -> finish/commit session -> resume
 ```
 
 TPE is the default scheduler, not the final authority. If the proposer does not
@@ -110,6 +108,20 @@ Open-endedness scores are proposer memory too. Use
 `score_rollout_open_endedness` and `query_open_ended_rollouts` to track novelty,
 unexpectedness, and learnability for high-signal rollouts. These scores are not
 task reward; they describe information value for future search.
+
+The proposer runbook policy is controlled by
+`MiproOpenEnvProposerConfig.proposer_runbook_policy`:
+
+- `warn` is the default for normal experiments. It records counters, warnings,
+  and next-step reminders while preserving proposer freedom.
+- `enforce_core` is for controlled evals. It blocks only candidate patches
+  before evidence reads, nontrivial queue overrides before a hypothesis/bet, and
+  finish before meaningful progress.
+- `off` suppresses runbook diagnostics and keeps the older proposer behavior.
+
+Runbook summaries are written into proposer outcomes, traces, interactive
+session summaries, and checkpoint replay outputs so prompt/tool/model variants
+can be compared on both reward and process quality.
 
 Resume a committed session with:
 

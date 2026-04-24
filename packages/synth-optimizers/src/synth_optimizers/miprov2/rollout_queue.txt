@@ -46,21 +46,27 @@ Implemented:
   - query_open_ended_rollouts
   - optional scorer hook skipped when no scorer is supplied
   - open-endedness scores persisted under proposer_memory/open_endedness_scores/
+- proposer runbook policy:
+  - proposer_runbook_policy modes: off, warn, enforce_core
+  - runbook counters and warnings in proposer outcomes, traces, sessions, and
+    checkpoint replay summaries
+  - existing read-before-patch gates reported through runbook diagnostics
+  - enforce_core blocks patch-before-evidence, queue override before a
+    hypothesis/bet, and finish before meaningful progress
+  - interactive committed sessions derive the same counters from events.jsonl
 
 Remaining:
 
-- proposer runbook enforcement:
-  - read state before writing
-  - resolve completed bets and update memory after rollouts
 - richer SFT/plugin-specific candidate intervention adapters
 - evals that measure whether queue overrides reduce rollout count or improve
   learning efficiency versus TPE-default queues
 
 Recommended next chunk:
 
-Implement proposer runbook enforcement. The nouns and tools now exist; the next
-step is making proposer behavior reliably follow the evidence -> hypotheses ->
-bets -> labels -> open-endedness -> queue planning loop.
+Implement rollout-efficiency evals for the full proposer loop. The nouns, tools,
+memory layer, queue controls, scoring surface, and runbook diagnostics now exist;
+the next step is measuring whether queue overrides and memory-driven planning
+reduce rollout count or improve learning efficiency versus TPE-default queues.
 
 Purpose
 -------
@@ -94,16 +100,26 @@ the candidate, rows tied to open bets, rows under-covered by labels, or rows tha
 best distinguish between competing hypotheses. Full train sweeps should be a
 deliberate choice, not the default cost of every candidate.
 
-The intended loop is:
+The canonical proposer runbook is:
 
-1. Observe rollout evidence and candidate history.
-2. Form or refine hypotheses about the problem structure.
-3. Make concrete bets about future rollouts.
-4. Queue or override rollouts to test those bets.
-5. Resolve bets from completed rollout evidence.
-6. Score what was novel, surprising, and learnable.
-7. Use the lessons to create better candidate interventions.
-8. Repeat with a richer understanding of the task.
+1. Read rollout evidence and candidate history.
+2. Inspect durable memory.
+3. Form or refine hypotheses about the problem structure.
+4. Make or resolve concrete bets about future rollouts.
+5. Curate/query labels.
+6. Score/query open-endedness for informative evidence.
+7. Preview, override, and commit rollout queues.
+8. Submit candidate interventions.
+9. Finish and resume training.
+10. Repeat with a richer understanding of the task.
+
+The runbook policy is diagnostic by default. `warn` records counters, warning
+codes, and short next-step reminders without blocking new runbook behaviors.
+`enforce_core` should be reserved for controlled evals because it only blocks
+core safety failures: candidate patches before evidence reads, nontrivial queue
+overrides before any hypothesis/bet exists, and finish before meaningful
+progress. `off` keeps the older proposer loop behavior and suppresses runbook
+diagnostics.
 
 MIPROv2 currently lets the proposer inspect historical trials, candidate
 evidence, read-model summaries, and the current compiled search space. It does

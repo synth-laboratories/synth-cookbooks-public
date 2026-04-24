@@ -15,7 +15,7 @@ import asyncio
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -1548,6 +1548,7 @@ class MiproOpenEnvProposerConfig:
     chat_retry_attempts: int = 4
     chat_retry_base_seconds: float = 2.0
     count_successful_reads_as_progress: bool = True
+    proposer_runbook_policy: str = "warn"
     archive_root: str | None = None
 
     def __post_init__(self) -> None:
@@ -1584,6 +1585,11 @@ class MiproOpenEnvProposerConfig:
         if float(self.chat_retry_base_seconds) < 0.0:
             raise ValueError(
                 "MiproOpenEnvProposerConfig.chat_retry_base_seconds must be >= 0"
+            )
+        if str(self.proposer_runbook_policy) not in {"off", "warn", "enforce_core"}:
+            raise ValueError(
+                "MiproOpenEnvProposerConfig.proposer_runbook_policy must be one of "
+                "'off', 'warn', or 'enforce_core'"
             )
         if self.archive_root is not None and not str(self.archive_root).strip():
             raise ValueError(
@@ -1638,6 +1644,9 @@ class MiproOpenEnvProposerOutcome:
     archive_path: str | None = None
     queue_state: dict[str, Any] = field(default_factory=dict)
     memory_state: dict[str, Any] = field(default_factory=dict)
+    runbook_warnings: list[dict[str, Any]] = field(default_factory=list)
+    runbook_violation_count: int = 0
+    runbook_summary: dict[str, Any] = field(default_factory=dict)
 
 
 def _cached_prompt_tokens_from_usage(usage: Mapping[str, Any]) -> int:
@@ -2261,6 +2270,7 @@ def _tool_followup_user_message(
     remaining_turns: int,
     failed_tool_results: list[tuple[str, str]],
     successful_patch_count: int,
+    runbook_reminders: list[str] | None = None,
 ) -> str | None:
     lines: list[str] = [
         "Canonical state changes must come from add_* tools or finish. Do not rely on free-form narration to mutate state.",
@@ -2270,6 +2280,10 @@ def _tool_followup_user_message(
         lines.append("A recent tool call failed. Fix the arguments before retrying.")
         for name, error in failed_tool_results[-2:]:
             lines.append(f"- {name}: {error}")
+    if runbook_reminders:
+        lines.append("Runbook reminder:")
+        for reminder in runbook_reminders[:3]:
+            lines.append(f"- {reminder}")
     if remaining_turns <= 2:
         if successful_patch_count > 0:
             lines.append(
@@ -3128,6 +3142,373 @@ _ROW_EVIDENCE_READ_ACTIONS = {
     "get_rollout_trace",
     "query_transform_compatibility",
 }
+_RUNBOOK_MEMORY_READ_ACTIONS = {
+    "query_hypotheses",
+    "query_bets",
+    "query_rollout_label_definitions",
+    "query_rollouts_by_label",
+    "query_open_ended_rollouts",
+}
+_RUNBOOK_HYPOTHESIS_WRITE_ACTIONS = {
+    "register_hypothesis",
+    "append_hypothesis_adjustment",
+}
+_RUNBOOK_BET_WRITE_ACTIONS = {"register_bet"}
+_RUNBOOK_BET_RESOLUTION_ACTIONS = {"resolve_bet"}
+_RUNBOOK_LABEL_QUERY_ACTIONS = {
+    "query_rollout_label_definitions",
+    "query_rollouts_by_label",
+}
+_RUNBOOK_LABEL_WRITE_ACTIONS = {
+    "register_rollout_label_definition",
+    "assign_rollout_label",
+}
+_RUNBOOK_OPEN_ENDEDNESS_QUERY_ACTIONS = {"query_open_ended_rollouts"}
+_RUNBOOK_OPEN_ENDEDNESS_WRITE_ACTIONS = {"score_rollout_open_endedness"}
+_RUNBOOK_QUEUE_PREVIEW_ACTIONS = {"preview_tpe_rollout_queue", "get_rollout_queue"}
+_RUNBOOK_QUEUE_OVERRIDE_ACTIONS = {"override_rollout_queue"}
+_RUNBOOK_QUEUE_COMMIT_ACTIONS = {"commit_rollout_queue"}
+_RUNBOOK_COUNTER_KEYS = (
+    "evidence_reads",
+    "memory_reads",
+    "bet_queries",
+    "hypothesis_writes",
+    "bet_writes",
+    "bet_resolutions",
+    "label_queries",
+    "label_writes",
+    "open_endedness_queries",
+    "open_endedness_writes",
+    "queue_previews",
+    "queue_overrides",
+    "queue_commits",
+    "candidate_patches",
+    "finish_calls",
+)
+
+
+def _new_runbook_state(policy: str) -> dict[str, Any]:
+    return {
+        "policy": str(policy),
+        "counters": {key: 0 for key in _RUNBOOK_COUNTER_KEYS},
+        "warnings": [],
+        "violation_count": 0,
+    }
+
+
+def _has_completed_evidence(context: MiproOpenEnvProposerContext | None) -> bool:
+    if context is None:
+        return False
+    if _context_rows(context, "recent_trial_rows"):
+        return True
+    read_model = dict(context.read_model_payload)
+    for key in (
+        "rollouts",
+        "trial_rows",
+        "candidate_rollout_deltas",
+        "candidate_verdict_digests",
+    ):
+        value = read_model.get(key)
+        if isinstance(value, Mapping) and value:
+            return True
+        if isinstance(value, list) and value:
+            return True
+    return False
+
+
+def _runbook_memory_counts(memory_state: Mapping[str, Any] | None) -> dict[str, int]:
+    summary = proposer_memory_summary(dict(memory_state or {}))
+    return {
+        "hypotheses": int(summary.get("hypothesis_count") or 0),
+        "active_hypotheses": int(summary.get("active_hypothesis_count") or 0),
+        "bets": int(summary.get("bet_count") or 0),
+        "open_bets": int(summary.get("open_bet_count") or 0),
+        "active_label_definitions": int(
+            summary.get("active_label_definition_count") or 0
+        ),
+        "rollout_labels": int(summary.get("rollout_label_count") or 0),
+        "open_endedness_scores": int(
+            summary.get("open_endedness_score_count") or 0
+        ),
+    }
+
+
+def _runbook_add_warning(
+    runbook_state: dict[str, Any],
+    *,
+    code: str,
+    message: str,
+    action: str | None = None,
+    severity: str = "warning",
+    enforced: bool = False,
+) -> None:
+    warnings = runbook_state.setdefault("warnings", [])
+    if any(str(item.get("code") or "") == code for item in warnings if isinstance(item, Mapping)):
+        if enforced:
+            runbook_state["violation_count"] = int(
+                runbook_state.get("violation_count") or 0
+            ) + 1
+        return
+    warnings.append(
+        {
+            "code": code,
+            "message": message,
+            "action": action,
+            "severity": severity,
+            "enforced": bool(enforced),
+        }
+    )
+    if enforced:
+        runbook_state["violation_count"] = int(
+            runbook_state.get("violation_count") or 0
+        ) + 1
+
+
+def _runbook_note_action(
+    runbook_state: dict[str, Any],
+    *,
+    action_name: str,
+    memory_state: Mapping[str, Any] | None,
+    context: MiproOpenEnvProposerContext | None,
+) -> None:
+    counters = runbook_state.setdefault("counters", {})
+    def bump(key: str) -> None:
+        counters[key] = int(counters.get(key) or 0) + 1
+
+    if action_name in _ROW_EVIDENCE_READ_ACTIONS:
+        bump("evidence_reads")
+    if action_name in _RUNBOOK_MEMORY_READ_ACTIONS:
+        bump("memory_reads")
+    if action_name == "query_bets":
+        bump("bet_queries")
+    if action_name in _RUNBOOK_HYPOTHESIS_WRITE_ACTIONS:
+        bump("hypothesis_writes")
+    if action_name in _RUNBOOK_BET_WRITE_ACTIONS:
+        bump("bet_writes")
+    if action_name in _RUNBOOK_BET_RESOLUTION_ACTIONS:
+        bump("bet_resolutions")
+    if action_name in _RUNBOOK_LABEL_QUERY_ACTIONS:
+        bump("label_queries")
+    if action_name in _RUNBOOK_LABEL_WRITE_ACTIONS:
+        bump("label_writes")
+    if action_name in _RUNBOOK_OPEN_ENDEDNESS_QUERY_ACTIONS:
+        bump("open_endedness_queries")
+    if action_name in _RUNBOOK_OPEN_ENDEDNESS_WRITE_ACTIONS:
+        bump("open_endedness_writes")
+    if action_name in _RUNBOOK_QUEUE_PREVIEW_ACTIONS:
+        bump("queue_previews")
+    if action_name in _RUNBOOK_QUEUE_OVERRIDE_ACTIONS:
+        bump("queue_overrides")
+    if action_name in _RUNBOOK_QUEUE_COMMIT_ACTIONS:
+        bump("queue_commits")
+    if action_name in _PATCH_ACTIONS:
+        bump("candidate_patches")
+    if action_name == "finish":
+        bump("finish_calls")
+
+    memory_counts = _runbook_memory_counts(memory_state)
+    has_hypothesis_or_bet = (
+        int(counters.get("hypothesis_writes") or 0) > 0
+        or int(counters.get("bet_writes") or 0) > 0
+        or memory_counts["hypotheses"] > 0
+        or memory_counts["bets"] > 0
+    )
+    if action_name in _RUNBOOK_QUEUE_OVERRIDE_ACTIONS and not has_hypothesis_or_bet:
+        _runbook_add_warning(
+            runbook_state,
+            code="queue_override_before_hypothesis_or_bet",
+            message=(
+                "Queue overrides should be tied to at least one hypothesis or bet "
+                "so the rollout budget has a falsifiable purpose."
+            ),
+            action=action_name,
+        )
+    if (
+        action_name in _RUNBOOK_QUEUE_OVERRIDE_ACTIONS
+        and memory_counts["active_label_definitions"] > 0
+        and int(counters.get("label_queries") or 0) <= 0
+    ):
+        _runbook_add_warning(
+            runbook_state,
+            code="labels_exist_but_not_queried_before_queue_override",
+            message="Active label definitions exist; query labels before queue overrides.",
+            action=action_name,
+        )
+    if (
+        action_name
+        in (
+            _RUNBOOK_QUEUE_PREVIEW_ACTIONS
+            | _RUNBOOK_QUEUE_OVERRIDE_ACTIONS
+            | _RUNBOOK_QUEUE_COMMIT_ACTIONS
+        )
+        and memory_counts["open_bets"] > 0
+        and int(counters.get("bet_queries") or 0) <= 0
+    ):
+        _runbook_add_warning(
+            runbook_state,
+            code="open_bets_exist_but_not_queried_before_queue_planning",
+            message="Open bets exist; inspect proposer memory before planning the queue.",
+            action=action_name,
+        )
+    if (
+        action_name in _RUNBOOK_QUEUE_COMMIT_ACTIONS
+        and int(counters.get("queue_previews") or 0) <= 0
+    ):
+        _runbook_add_warning(
+            runbook_state,
+            code="queue_commit_without_preview",
+            message="Commit happened before previewing the default TPE queue.",
+            action=action_name,
+        )
+    if (
+        action_name in _PATCH_ACTIONS
+        and int(counters.get("evidence_reads") or 0) <= 0
+    ):
+        _runbook_add_warning(
+            runbook_state,
+            code="patch_before_evidence",
+            message="Candidate patches should follow concrete rollout or row evidence reads.",
+            action=action_name,
+        )
+    if (
+        action_name == "finish"
+        and int(counters.get("candidate_patches") or 0) <= 0
+        and int(counters.get("queue_commits") or 0) <= 0
+        and int(counters.get("hypothesis_writes") or 0) <= 0
+        and int(counters.get("bet_writes") or 0) <= 0
+    ):
+        _runbook_add_warning(
+            runbook_state,
+            code="finish_before_meaningful_progress",
+            message="Finish should follow at least one useful memory, queue, or candidate action.",
+            action=action_name,
+        )
+    if (
+        _has_completed_evidence(context)
+        and int(counters.get("label_writes") or 0) <= 0
+        and int(counters.get("open_endedness_writes") or 0) <= 0
+        and action_name in (_RUNBOOK_QUEUE_COMMIT_ACTIONS | _PATCH_ACTIONS | {"finish"})
+    ):
+        _runbook_add_warning(
+            runbook_state,
+            code="completed_evidence_without_label_or_open_endedness_attempt",
+            message=(
+                "Completed rollout evidence exists; consider labels or "
+                "open-endedness scores for informative failures and surprises."
+            ),
+            action=action_name,
+        )
+
+
+def _runbook_enforce_core_reason(
+    runbook_state: Mapping[str, Any],
+    *,
+    action_name: str,
+    memory_state: Mapping[str, Any] | None,
+    successful_patch_count: int,
+) -> str | None:
+    counters = dict(runbook_state.get("counters") or {})
+    memory_counts = _runbook_memory_counts(memory_state)
+    if action_name in _PATCH_ACTIONS and int(counters.get("evidence_reads") or 0) <= 0:
+        return "runbook_patch_before_evidence"
+    if action_name in _RUNBOOK_QUEUE_OVERRIDE_ACTIONS:
+        has_hypothesis_or_bet = (
+            int(counters.get("hypothesis_writes") or 0) > 0
+            or int(counters.get("bet_writes") or 0) > 0
+            or memory_counts["hypotheses"] > 0
+            or memory_counts["bets"] > 0
+        )
+        if not has_hypothesis_or_bet:
+            return "runbook_queue_override_requires_hypothesis_or_bet"
+    if action_name == "finish" and successful_patch_count <= 0:
+        return "runbook_finish_before_meaningful_progress"
+    return None
+
+
+def _runbook_public_summary(
+    runbook_state: Mapping[str, Any],
+    *,
+    memory_state: Mapping[str, Any] | None = None,
+    context: MiproOpenEnvProposerContext | None = None,
+) -> dict[str, Any]:
+    policy = str(runbook_state.get("policy") or "off")
+    counters = {
+        key: int(dict(runbook_state.get("counters") or {}).get(key) or 0)
+        for key in _RUNBOOK_COUNTER_KEYS
+    }
+    summary = {
+        "policy": policy,
+        "counters": counters,
+        "warning_count": len(list(runbook_state.get("warnings") or [])),
+        "violation_count": int(runbook_state.get("violation_count") or 0),
+        "warning_codes": [
+            str(item.get("code") or "")
+            for item in list(runbook_state.get("warnings") or [])
+            if isinstance(item, Mapping)
+        ],
+        "memory_counts": _runbook_memory_counts(memory_state),
+        "completed_evidence_available": _has_completed_evidence(context),
+    }
+    return summary
+
+
+def _runbook_reminders(runbook_state: Mapping[str, Any]) -> list[str]:
+    counters = dict(runbook_state.get("counters") or {})
+    warnings = list(runbook_state.get("warnings") or [])
+    warning_codes = {
+        str(item.get("code") or "") for item in warnings if isinstance(item, Mapping)
+    }
+    reminders: list[str] = []
+    if int(counters.get("evidence_reads") or 0) <= 0:
+        reminders.append("Read concrete rollout or sampled-row evidence before patching.")
+    if int(counters.get("memory_reads") or 0) <= 0:
+        reminders.append("Inspect hypotheses, bets, labels, or open-ended rollouts before planning.")
+    if "queue_override_before_hypothesis_or_bet" in warning_codes:
+        reminders.append("Tie queue overrides to a hypothesis or bet so the rollout has a falsifiable purpose.")
+    if "queue_commit_without_preview" in warning_codes:
+        reminders.append("Preview the default TPE queue before committing a rollout plan.")
+    if "completed_evidence_without_label_or_open_endedness_attempt" in warning_codes:
+        reminders.append("Label or score at least the most informative completed rollout when it will guide the next plan.")
+    return reminders[:3]
+
+
+def summarize_runbook_events(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    policy: str = "warn",
+    memory_state: Mapping[str, Any] | None = None,
+    context: MiproOpenEnvProposerContext | None = None,
+) -> dict[str, Any]:
+    runbook_state = _new_runbook_state(policy)
+    if policy == "off":
+        return _runbook_public_summary(
+            runbook_state,
+            memory_state=memory_state,
+            context=context,
+        )
+    for event in events:
+        action_name = str(event.get("tool_name") or "").strip()
+        action = event.get("action")
+        if not action_name and isinstance(action, Mapping):
+            action_name = str(action.get("name") or "").strip()
+        if not action_name:
+            action_name = str(action or "").strip()
+        if not action_name:
+            continue
+        _runbook_note_action(
+            runbook_state,
+            action_name=action_name,
+            memory_state=memory_state,
+            context=context,
+        )
+    return {
+        **_runbook_public_summary(
+            runbook_state,
+            memory_state=memory_state,
+            context=context,
+        ),
+        "warnings": list(runbook_state.get("warnings") or []),
+    }
 
 
 def _context_rows(
@@ -3898,6 +4279,8 @@ async def run_openenv_react_proposer(
         "archive_path": None,
     }
     live_messages: list[dict[str, Any]] = []
+    runbook_policy = str(cfg.proposer_runbook_policy)
+    runbook_state = _new_runbook_state(runbook_policy)
 
     for turn_idx in range(1, int(cfg.max_turns) + 1):
         turns_remaining_before_action = int(cfg.max_turns) - turn_idx + 1
@@ -3923,6 +4306,12 @@ async def run_openenv_react_proposer(
         state["baseline_candidate_id"] = context.baseline_candidate_id
         state["delta_digest_paths"] = dict(context.delta_digest_paths)
         state["workspace_locations"] = dict(context.workspace_locations)
+        if runbook_policy != "off":
+            state["runbook_summary"] = _runbook_public_summary(
+                runbook_state,
+                memory_state=environment.state.memory_state,
+                context=context,
+            )
         if not live_messages:
             live_messages = _initial_live_messages(
                 objective=context.objective,
@@ -3987,6 +4376,11 @@ async def run_openenv_react_proposer(
                 remaining_turns=turns_remaining_after_action,
                 failed_tool_results=failed_tool_results,
                 successful_patch_count=len(instruction_patches) + len(demo_patches),
+                runbook_reminders=(
+                    _runbook_reminders(runbook_state)
+                    if runbook_policy == "warn"
+                    else None
+                ),
             )
             if followup_message:
                 live_messages.append({"role": "user", "content": followup_message})
@@ -4028,9 +4422,25 @@ async def run_openenv_react_proposer(
                     and consecutive_patch_actions >= int(cfg.max_consecutive_patch_actions)
                 ):
                     policy_violation_reason = "max_consecutive_patch_actions_reached"
+            if policy_violation_reason is None and runbook_policy == "enforce_core":
+                policy_violation_reason = _runbook_enforce_core_reason(
+                    runbook_state,
+                    action_name=action_name,
+                    memory_state=environment.state.memory_state,
+                    successful_patch_count=successful_patch_count,
+                )
 
             if policy_violation_reason is not None:
                 policy_violation_count += 1
+                if runbook_policy != "off":
+                    _runbook_add_warning(
+                        runbook_state,
+                        code=policy_violation_reason,
+                        message=f"Runbook or proposer policy blocked {action_name}.",
+                        action=action_name,
+                        severity="violation",
+                        enforced=True,
+                    )
                 result = {
                     "status": "ignored",
                     "action": action_name,
@@ -4067,6 +4477,13 @@ async def run_openenv_react_proposer(
                 and str(result.get("status") or "") == "ok"
             ):
                 made_progress = True
+            if runbook_policy != "off":
+                _runbook_note_action(
+                    runbook_state,
+                    action_name=action_name,
+                    memory_state=environment.state.memory_state,
+                    context=context,
+                )
 
             if is_read_action:
                 read_action_count += 1
@@ -4149,6 +4566,11 @@ async def run_openenv_react_proposer(
             remaining_turns=turns_remaining_after_action,
             failed_tool_results=failed_tool_results,
             successful_patch_count=len(instruction_patches) + len(demo_patches),
+            runbook_reminders=(
+                _runbook_reminders(runbook_state)
+                if runbook_policy == "warn"
+                else None
+            ),
         )
         if followup_message:
             live_messages.append({"role": "user", "content": followup_message})
@@ -4183,6 +4605,17 @@ async def run_openenv_react_proposer(
         ),
         queue_state=dict(environment.state.queue_state),
         memory_state=dict(environment.state.memory_state),
+        runbook_warnings=list(runbook_state.get("warnings") or []),
+        runbook_violation_count=int(runbook_state.get("violation_count") or 0),
+        runbook_summary=(
+            _runbook_public_summary(
+                runbook_state,
+                memory_state=environment.state.memory_state,
+                context=context,
+            )
+            if runbook_policy != "off"
+            else {"policy": "off"}
+        ),
     )
 
 
@@ -4228,6 +4661,9 @@ def proposer_outcome_summary(outcome: MiproOpenEnvProposerOutcome) -> dict[str, 
         "tentative_rollout_queue_id": outcome.queue_state.get("tentative_queue_id"),
         "committed_rollout_queue_id": outcome.queue_state.get("committed_queue_id"),
         "memory_summary": proposer_memory_summary(outcome.memory_state),
+        "runbook_warnings": list(outcome.runbook_warnings),
+        "runbook_violation_count": int(outcome.runbook_violation_count),
+        "runbook_summary": dict(outcome.runbook_summary),
     }
 
 
@@ -4249,4 +4685,5 @@ __all__ = [
     "run_openenv_react_proposer",
     "sync_optimizer_search_space",
     "proposer_outcome_summary",
+    "summarize_runbook_events",
 ]

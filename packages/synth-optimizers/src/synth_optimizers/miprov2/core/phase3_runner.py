@@ -44,6 +44,7 @@ from synth_optimizers.miprov2.core.proposer_openenv import (
     clone_compiled_space,
     proposer_outcome_summary,
     run_openenv_react_proposer,
+    summarize_runbook_events,
     sync_optimizer_search_space,
 )
 from synth_optimizers.miprov2.core.proposer_environment import (
@@ -402,6 +403,12 @@ def _interactive_outcome_from_committed_session(
         result = dict(event.get("result") or {})
         if bool(result.get("stop_session")) and tool_name == "finish":
             stop_reason = "interactive_finish"
+    runbook_payload = summarize_runbook_events(
+        tool_events,
+        policy=str(getattr(state.config, "proposer_runbook_policy", "warn")),
+        memory_state=state.memory_state,
+        context=state.context,
+    )
 
     outcome = MiproOpenEnvProposerOutcome(
         compiled_space=state.compiled_space,
@@ -416,6 +423,11 @@ def _interactive_outcome_from_committed_session(
         tool_call_count=len(tool_events),
         queue_state=dict(state.queue_state),
         memory_state=dict(state.memory_state),
+        runbook_warnings=list(runbook_payload.get("warnings") or []),
+        runbook_violation_count=int(runbook_payload.get("violation_count") or 0),
+        runbook_summary={
+            key: value for key, value in runbook_payload.items() if key != "warnings"
+        },
     )
     summary = {
         "session_id": session.session_id,
@@ -432,6 +444,8 @@ def _interactive_outcome_from_committed_session(
         "queue_state": dict(state.queue_state),
         "memory_state": dict(state.memory_state),
         "memory_summary": proposer_memory_summary(state.memory_state),
+        "runbook_summary": outcome.runbook_summary,
+        "runbook_warnings": list(outcome.runbook_warnings),
     }
     return outcome, summary
 

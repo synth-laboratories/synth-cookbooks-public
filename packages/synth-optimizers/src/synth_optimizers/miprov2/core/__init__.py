@@ -173,6 +173,7 @@ from synth_optimizers.miprov2.core.proposer_openenv import (
     clone_compiled_space,
     proposer_outcome_summary,
     run_openenv_react_proposer,
+    summarize_runbook_events,
     summarize_compiled_space,
     sync_optimizer_search_space,
 )
@@ -307,6 +308,7 @@ __all__ = [
     "clone_compiled_space",
     "summarize_compiled_space",
     "run_openenv_react_proposer",
+    "summarize_runbook_events",
     "sync_optimizer_search_space",
     "proposer_outcome_summary",
     "LedgerObservation",
