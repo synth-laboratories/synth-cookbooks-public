@@ -842,6 +842,90 @@ def build_openenv_tool_catalog(
             "source": "mipro_proposer_memory",
         },
         {
+            "name": "register_rollout_label_definition",
+            "description": (
+                "Create a proposer-curated rollout label schema. Keep the label set small and decision-relevant; "
+                "labellers may only assign values from active definitions."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "label_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "allowed_values": {"type": "array", "items": {"type": "string"}},
+                    "task_id": {"type": "string"},
+                    "created_by_proposer_id": {"type": "string"},
+                    "metadata": {"type": "object"},
+                },
+                "required": ["name", "description", "allowed_values"],
+                "additionalProperties": False,
+            },
+            "source": "mipro_proposer_memory",
+        },
+        {
+            "name": "query_rollout_label_definitions",
+            "description": "Query active or deprecated rollout label definitions.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            "source": "mipro_proposer_memory",
+        },
+        {
+            "name": "assign_rollout_label",
+            "description": (
+                "Assign a curated label value to a completed rollout. The label definition must exist and be active."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "rollout_label_id": {"type": "string"},
+                    "rollout_id": {"type": "string"},
+                    "label_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "value": {"type": "string"},
+                    "assigned_by": {"type": "string"},
+                    "assignment_source": {"type": "string"},
+                    "candidate_id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "rationale": {"type": "string"},
+                    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+                    "linked_hypothesis_refs": {"type": "array", "items": {"type": "string"}},
+                    "linked_bet_refs": {"type": "array", "items": {"type": "string"}},
+                    "queue_refs": {"type": "array", "items": {"type": "string"}},
+                    "metadata": {"type": "object"},
+                },
+                "required": ["rollout_id", "value"],
+                "additionalProperties": False,
+            },
+            "source": "mipro_proposer_memory",
+        },
+        {
+            "name": "query_rollouts_by_label",
+            "description": "Query labelled rollout evidence by label id/name, value, candidate, and split.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "label_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "value": {"type": "string"},
+                    "candidate_id": {"type": "string"},
+                    "split": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            "source": "mipro_proposer_memory",
+        },
+        {
             "name": "preview_tpe_rollout_queue",
             "description": (
                 "Inspect the tentative next TPE rollout queue. This shows the candidate configs "
@@ -2172,7 +2256,8 @@ def _build_openenv_research_prompt(
         "  6. query_evidence_files(kind='verifier_verdict') plus read_evidence_file — open full verifier_verdict.json payloads for representative wins and regressions.\n"
         "  7. get_rollout_trace — pair the verifier metadata with the actual prompt/response/ideal trace before you decide what to change.\n"
         "  8. list_sampled_train_rows(limit>=12) and list_recent_trial_rows(limit>=3) — use these compatibility views to understand task breadth and recent failures.\n"
-        "  9. query_hypotheses and query_bets — inspect durable proposer memory before creating a new claim.\n"
+        "  9. query_hypotheses, query_bets, and query_rollout_label_definitions — inspect durable proposer memory before creating a new claim.\n"
+        " 10. query_rollouts_by_label — use curated labels as a compact index over past rollout evidence when labels exist.\n"
         "You may perform several adjacent reads in one response when they belong to one diagnosis step.\n"
         "When verifier metadata exists, review at least one improved rollout and one regressed rollout before patching. "
         "Look at the reward, the score_components, and the full verifier_verdict payload together.\n"
@@ -2180,6 +2265,10 @@ def _build_openenv_research_prompt(
         "  - Register or refine a hypothesis before nontrivial queue overrides or broad candidate edits.\n"
         "  - Register a concrete bet when you choose rollouts to test a claim; link it to rollout/candidate/queue ids.\n"
         "  - Resolve completed bets when evidence is available. Bets are proposer memory, not reward.\n"
+        "LABELS:\n"
+        "  - Curate a small label set with register_rollout_label_definition when repeated rollout patterns matter for decisions.\n"
+        "  - Assign labels only from active definitions; do not invent free-form tags.\n"
+        "  - Query labels before planning queue overrides, and retire/deprecate labels that stop affecting decisions.\n"
         "QUEUE PLANNING:\n"
         "  - preview_tpe_rollout_queue shows the default TPE schedule. TPE is the default scheduler, not the final authority.\n"
         "  - If you override the queue, cite linked_hypothesis_refs or linked_bet_refs and explain expected information gain.\n"

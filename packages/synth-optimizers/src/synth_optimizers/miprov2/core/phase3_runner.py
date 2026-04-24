@@ -51,8 +51,12 @@ from synth_optimizers.miprov2.core.proposer_environment import (
     tool_state_from_dict,
 )
 from synth_optimizers.miprov2.core.proposer_memory import (
+    MiproRolloutLabel,
+    MiproRolloutLabelAssignmentSource,
+    MiproRolloutLabelDefinitionStatus,
     normalize_memory_state,
     proposer_memory_summary,
+    rollout_label_id_for,
 )
 from synth_optimizers.miprov2.core.proposer_tools import tool_category
 from synth_optimizers.miprov2.core.run_ledger import (
@@ -81,6 +85,11 @@ SummarizeRecentTrialsFn: TypeAlias = Callable[
 EvaluateQueuedRolloutFn: TypeAlias = Callable[
     [MiproProgramCandidate, MiproQueuedRollout],
     EvaluateCandidateOutcome | Awaitable[EvaluateCandidateOutcome],
+]
+LabelCompletedRolloutsOutcome: TypeAlias = list[Mapping[str, Any]]
+LabelCompletedRolloutsFn: TypeAlias = Callable[
+    [MiproTrialResult, MiproProgramCandidate, list[Mapping[str, Any]]],
+    LabelCompletedRolloutsOutcome | Awaitable[LabelCompletedRolloutsOutcome],
 ]
 
 
@@ -1190,6 +1199,7 @@ async def run_phase3_loop(
     agent: MiproOpenEnvReactAgent,
     evaluate_train: EvaluateCandidateFn,
     evaluate_queued_rollout: EvaluateQueuedRolloutFn | None = None,
+    label_completed_rollouts: LabelCompletedRolloutsFn | None = None,
     evaluate_heldout: EvaluateCandidateFn | None = None,
     grounding_hooks: MiproGroundingHooksLike | None = None,
     config: MiproPhase3Config | None = None,
@@ -1363,6 +1373,91 @@ async def run_phase3_loop(
             },
         )
 
+    def active_label_definitions() -> list[Mapping[str, Any]]:
+        normalized = normalize_memory_state(proposer_memory_state)
+        return [
+            dict(item)
+            for item in normalized["label_definitions"].values()
+            if str(item.get("status") or "active")
+            == MiproRolloutLabelDefinitionStatus.ACTIVE.value
+        ]
+
+    async def maybe_label_completed_rollouts(
+        *,
+        trial: MiproTrialResult,
+        candidate: MiproProgramCandidate,
+    ) -> list[dict[str, Any]]:
+        nonlocal proposer_memory_state
+        definitions = active_label_definitions()
+        if label_completed_rollouts is None or not definitions:
+            return []
+        raw = label_completed_rollouts(trial, candidate, definitions)
+        if inspect.isawaitable(raw):
+            raw = await cast(Awaitable[LabelCompletedRolloutsOutcome], raw)
+        normalized = normalize_memory_state(proposer_memory_state)
+        known_definitions = {
+            str(item.get("label_id") or ""): dict(item)
+            for item in normalized["label_definitions"].values()
+        }
+        accepted: list[dict[str, Any]] = []
+        warnings: list[dict[str, Any]] = []
+        for item in list(raw or []):
+            if not isinstance(item, Mapping):
+                warnings.append({"reason": "label payload is not an object", "payload": str(item)})
+                continue
+            payload = dict(item)
+            label_id = str(payload.get("label_id") or "").strip()
+            definition = known_definitions.get(label_id)
+            if definition is None:
+                warnings.append({"reason": "unknown label_id", "label_id": label_id})
+                continue
+            if (
+                str(definition.get("status") or "active")
+                != MiproRolloutLabelDefinitionStatus.ACTIVE.value
+            ):
+                warnings.append({"reason": "label definition is not active", "label_id": label_id})
+                continue
+            value = str(payload.get("value") or "").strip()
+            allowed_values = [str(value) for value in list(definition.get("allowed_values") or [])]
+            if value not in allowed_values:
+                warnings.append(
+                    {
+                        "reason": "value is not allowed for label definition",
+                        "label_id": label_id,
+                        "value": value,
+                        "allowed_values": allowed_values,
+                    }
+                )
+                continue
+            label_payload = {
+                **payload,
+                "label_id": label_id,
+                "value": value,
+                "rollout_id": str(payload.get("rollout_id") or trial.candidate_id or ""),
+                "candidate_id": str(payload.get("candidate_id") or candidate.candidate_id or ""),
+                "assignment_source": str(
+                    payload.get("assignment_source")
+                    or MiproRolloutLabelAssignmentSource.LABELLER.value
+                ),
+            }
+            label_payload["rollout_label_id"] = str(
+                payload.get("rollout_label_id") or rollout_label_id_for(label_payload)
+            )
+            try:
+                label = MiproRolloutLabel.from_dict(label_payload)
+            except ValueError as exc:
+                warnings.append({"reason": str(exc), "label_id": label_id})
+                continue
+            normalized["rollout_labels"][label.rollout_label_id] = label.to_dict()
+            accepted.append(label.to_dict())
+        proposer_memory_state = normalized
+        if accepted or warnings:
+            trial.details["rollout_labels"] = list(trial.details.get("rollout_labels") or []) + accepted
+            trial.details["rollout_label_warnings"] = (
+                list(trial.details.get("rollout_label_warnings") or []) + warnings
+            )
+        return accepted
+
     async def run_train_wave(
         *,
         wave_round_idx: int,
@@ -1473,6 +1568,7 @@ async def run_phase3_loop(
         await optimizer.observe_batch(list(evaluated))
         out.train_observations.extend(list(evaluated))
         for trial, (_, candidate) in zip(evaluated, decoded_pairs, strict=False):
+            await maybe_label_completed_rollouts(trial=trial, candidate=candidate)
             observation_seq = await persist_train_trial(
                 seq=observation_seq,
                 round_idx_value=wave_round_idx,
@@ -1506,6 +1602,11 @@ async def run_phase3_loop(
                 },
             )
         await refresh_train_read_model()
+        if active_label_definitions():
+            ledger.upsert_proposer_memory(
+                memory_state=proposer_memory_state,
+                round_idx=proposer_round_idx,
+            )
         persist_common_state()
 
     try:
@@ -2346,6 +2447,8 @@ __all__ = [
     "SummarizeRecentTrialsOutcome",
     "SummarizeRecentTrialsFn",
     "EvaluateQueuedRolloutFn",
+    "LabelCompletedRolloutsOutcome",
+    "LabelCompletedRolloutsFn",
     "MiproPhase3Config",
     "MiproGroundingHooksLike",
     "MiproGroundingHooks",

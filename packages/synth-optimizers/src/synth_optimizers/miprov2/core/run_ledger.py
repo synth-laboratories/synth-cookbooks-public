@@ -440,6 +440,8 @@ class SQLiteMiproRunLedger:
             ("hypotheses", "hypothesis_id"),
             ("adjustments", "adjustment_id"),
             ("bets", "bet_id"),
+            ("label_definitions", "label_id"),
+            ("rollout_labels", "rollout_label_id"),
         ):
             records = memory_state.get(kind)
             if not isinstance(records, dict):

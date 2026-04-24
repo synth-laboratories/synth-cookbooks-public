@@ -79,6 +79,7 @@ session state. The proposer flow is:
 
 ```text
 read evidence -> register/refine hypothesis -> register bet
+-> curate labels -> label completed rollouts -> query labels
 -> preview_tpe_rollout_queue -> optionally override_rollout_queue
 -> commit_rollout_queue -> add candidate edits -> commit session -> resume
 -> resolve_bet after evidence exists
@@ -96,6 +97,13 @@ track claims about agent x dataset x preference structure. Use `register_bet`,
 `resolve_bet`, and `query_bets` to make those claims falsifiable against future
 rollouts. Queue overrides and commits can link to hypothesis/bet ids so later
 analysis can see why budget was spent.
+
+Labels are also durable proposer memory. Use
+`register_rollout_label_definition` to curate a small task-specific schema,
+`assign_rollout_label` for completed rollout evidence, and
+`query_rollouts_by_label` before planning queue overrides. Phase-3 can accept an
+optional caller-owned labeller hook; if there are no active label definitions,
+the labeller pass is skipped and no free-form labels are invented.
 
 Resume a committed session with:
 

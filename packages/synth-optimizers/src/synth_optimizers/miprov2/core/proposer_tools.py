@@ -13,12 +13,18 @@ from synth_optimizers.miprov2.core.proposer_memory import (
     MiproHypothesis,
     MiproHypothesisAdjustment,
     MiproHypothesisStatus,
+    MiproRolloutLabel,
+    MiproRolloutLabelAssignmentSource,
+    MiproRolloutLabelDefinition,
+    MiproRolloutLabelDefinitionStatus,
     bet_id_for,
     empty_memory_state,
     hypothesis_adjustment_id_for,
     hypothesis_id_for,
     normalize_memory_state,
     proposer_memory_summary,
+    rollout_label_definition_id_for,
+    rollout_label_id_for,
 )
 
 
@@ -92,6 +98,10 @@ _MEMORY_TOOLS = {
     "register_bet",
     "resolve_bet",
     "query_bets",
+    "register_rollout_label_definition",
+    "query_rollout_label_definitions",
+    "assign_rollout_label",
+    "query_rollouts_by_label",
 }
 
 
@@ -118,6 +128,8 @@ def tool_mutates_state(name: str) -> bool:
         "append_hypothesis_adjustment",
         "register_bet",
         "resolve_bet",
+        "register_rollout_label_definition",
+        "assign_rollout_label",
     }
 
 
@@ -129,6 +141,8 @@ def _memory_maps(memory_state: dict[str, Any]) -> dict[str, dict[str, dict[str, 
         "hypotheses": normalized["hypotheses"],
         "adjustments": normalized["adjustments"],
         "bets": normalized["bets"],
+        "label_definitions": normalized["label_definitions"],
+        "rollout_labels": normalized["rollout_labels"],
     }
 
 
@@ -165,6 +179,35 @@ def _require_known_memory_refs(
     return None
 
 
+def _definition_by_id_or_name(
+    label_definitions: dict[str, dict[str, Any]],
+    *,
+    label_id: str,
+    name: str,
+) -> dict[str, Any] | None:
+    if label_id and label_id in label_definitions:
+        return dict(label_definitions[label_id])
+    if name:
+        for definition in label_definitions.values():
+            if str(definition.get("name") or "") == name:
+                return dict(definition)
+    return None
+
+
+def _rollout_lookup_from_context(state: MiproProposerToolState) -> dict[str, dict[str, Any]]:
+    read_model = getattr(state.context, "read_model_payload", {}) or {}
+    if not isinstance(read_model, dict):
+        return {}
+    rollouts = read_model.get("rollouts")
+    if not isinstance(rollouts, list):
+        return {}
+    return {
+        str(item.get("rollout_id") or ""): dict(item)
+        for item in rollouts
+        if isinstance(item, dict) and str(item.get("rollout_id") or "").strip()
+    }
+
+
 def _memory_tool_result(action: Any, state: MiproProposerToolState) -> dict[str, Any] | None:
     name = str(getattr(action, "name", "") or "")
     args = dict(getattr(action, "arguments", {}) or {})
@@ -177,6 +220,8 @@ def _memory_tool_result(action: Any, state: MiproProposerToolState) -> dict[str,
     hypotheses = maps["hypotheses"]
     adjustments = maps["adjustments"]
     bets = maps["bets"]
+    label_definitions = maps["label_definitions"]
+    rollout_labels = maps["rollout_labels"]
 
     if name == "register_hypothesis":
         summary = str(args.get("summary") or "").strip()
@@ -411,6 +456,183 @@ def _memory_tool_result(action: Any, state: MiproProposerToolState) -> dict[str,
             "status": "ok",
             "action": name,
             "bets": rows[: max(0, limit)],
+            "memory_summary": proposer_memory_summary(state.memory_state),
+        }
+
+    if name == "register_rollout_label_definition":
+        label_name = str(args.get("name") or "").strip()
+        description = str(args.get("description") or "").strip()
+        allowed_values = [
+            str(item) for item in list(args.get("allowed_values") or []) if str(item).strip()
+        ]
+        if not label_name or not description or not allowed_values:
+            return {
+                "status": "error",
+                "action": name,
+                "reason": "name, description, and allowed_values are required",
+            }
+        try:
+            definition = MiproRolloutLabelDefinition.from_dict(
+                {
+                    **args,
+                    "label_id": str(
+                        args.get("label_id") or rollout_label_definition_id_for(args)
+                    ),
+                    "name": label_name,
+                    "description": description,
+                    "allowed_values": allowed_values,
+                    "status": str(
+                        args.get("status")
+                        or MiproRolloutLabelDefinitionStatus.ACTIVE.value
+                    ),
+                }
+            )
+        except ValueError as exc:
+            return {"status": "error", "action": name, "reason": str(exc)}
+        label_definitions[definition.label_id] = definition.to_dict()
+        return {
+            "status": "ok",
+            "action": name,
+            "label_definition": definition.to_dict(),
+            "memory_summary": proposer_memory_summary(state.memory_state),
+        }
+
+    if name == "query_rollout_label_definitions":
+        status_filter = str(args.get("status") or "").strip()
+        task_id = str(args.get("task_id") or "").strip()
+        label_name = str(args.get("name") or "").strip()
+        limit = int(args.get("limit") or 20)
+        rows = list(label_definitions.values())
+        if status_filter:
+            rows = [item for item in rows if str(item.get("status") or "") == status_filter]
+        if task_id:
+            rows = [item for item in rows if str(item.get("task_id") or "") == task_id]
+        if label_name:
+            rows = [item for item in rows if str(item.get("name") or "") == label_name]
+        return {
+            "status": "ok",
+            "action": name,
+            "label_definitions": rows[: max(0, limit)],
+            "memory_summary": proposer_memory_summary(state.memory_state),
+        }
+
+    if name == "assign_rollout_label":
+        label_id = str(args.get("label_id") or "").strip()
+        label_name = str(args.get("name") or "").strip()
+        definition = _definition_by_id_or_name(
+            label_definitions,
+            label_id=label_id,
+            name=label_name,
+        )
+        if definition is None:
+            return {
+                "status": "error",
+                "action": name,
+                "reason": "unknown label definition",
+            }
+        if (
+            str(definition.get("status") or "active")
+            != MiproRolloutLabelDefinitionStatus.ACTIVE.value
+        ):
+            return {
+                "status": "error",
+                "action": name,
+                "reason": "label definition is not active",
+                "label_definition": definition,
+            }
+        value = str(args.get("value") or "").strip()
+        allowed_values = [str(item) for item in list(definition.get("allowed_values") or [])]
+        if value not in allowed_values:
+            return {
+                "status": "error",
+                "action": name,
+                "reason": "value is not allowed for label definition",
+                "allowed_values": allowed_values,
+            }
+        rollout_id = str(args.get("rollout_id") or "").strip()
+        if not rollout_id:
+            return {"status": "error", "action": name, "reason": "rollout_id is required"}
+        linked_hypothesis_refs = [
+            str(item)
+            for item in list(args.get("linked_hypothesis_refs") or [])
+            if str(item).strip()
+        ]
+        linked_bet_refs = [
+            str(item) for item in list(args.get("linked_bet_refs") or []) if str(item).strip()
+        ]
+        ref_error = _require_known_memory_refs(
+            memory_state=state.memory_state,
+            hypothesis_refs=linked_hypothesis_refs,
+            bet_refs=linked_bet_refs,
+        )
+        if ref_error is not None:
+            return {"action": name, **ref_error}
+        maps = _memory_maps(state.memory_state)
+        rollout_labels = maps["rollout_labels"]
+        label_payload = {
+            **args,
+            "label_id": str(definition["label_id"]),
+            "value": value,
+            "rollout_id": rollout_id,
+            "assignment_source": str(
+                args.get("assignment_source")
+                or MiproRolloutLabelAssignmentSource.PROPOSER.value
+            ),
+            "linked_hypothesis_refs": linked_hypothesis_refs,
+            "linked_bet_refs": linked_bet_refs,
+        }
+        label_payload["rollout_label_id"] = str(
+            args.get("rollout_label_id") or rollout_label_id_for(label_payload)
+        )
+        try:
+            label = MiproRolloutLabel.from_dict(label_payload)
+        except ValueError as exc:
+            return {"status": "error", "action": name, "reason": str(exc)}
+        rollout_labels[label.rollout_label_id] = label.to_dict()
+        return {
+            "status": "ok",
+            "action": name,
+            "rollout_label": label.to_dict(),
+            "memory_summary": proposer_memory_summary(state.memory_state),
+        }
+
+    if name == "query_rollouts_by_label":
+        label_id = str(args.get("label_id") or "").strip()
+        label_name = str(args.get("name") or "").strip()
+        value = str(args.get("value") or "").strip()
+        candidate_id = str(args.get("candidate_id") or "").strip()
+        split = str(args.get("split") or "").strip()
+        limit = int(args.get("limit") or 20)
+        definition = _definition_by_id_or_name(
+            label_definitions,
+            label_id=label_id,
+            name=label_name,
+        )
+        resolved_label_id = str(definition.get("label_id") or "") if definition else label_id
+        rollout_lookup = _rollout_lookup_from_context(state)
+        rows = list(rollout_labels.values())
+        if resolved_label_id:
+            rows = [item for item in rows if str(item.get("label_id") or "") == resolved_label_id]
+        if value:
+            rows = [item for item in rows if str(item.get("value") or "") == value]
+        if candidate_id:
+            rows = [item for item in rows if str(item.get("candidate_id") or "") == candidate_id]
+        enriched: list[dict[str, Any]] = []
+        for label in rows:
+            rollout = rollout_lookup.get(str(label.get("rollout_id") or ""))
+            if split and rollout is not None and str(rollout.get("split") or "") != split:
+                continue
+            enriched.append(
+                {
+                    "label": dict(label),
+                    "label_definition": dict(definition or {}),
+                    "rollout": dict(rollout or {}),
+                }
+            )
+        return {
+            "status": "ok",
+            "action": name,
+            "matches": enriched[: max(0, limit)],
             "memory_summary": proposer_memory_summary(state.memory_state),
         }
 
