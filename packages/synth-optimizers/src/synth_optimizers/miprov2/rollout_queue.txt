@@ -4,6 +4,46 @@ MIPROv2 rollout queue notes
 Purpose
 -------
 
+The high-level objective is open-ended search: learn the structure of the
+problem, the policy, and the dataset fast enough to optimize with fewer, more
+informative rollouts. MIPROv2 should not only search for the next high-scoring
+candidate; it should learn why candidates work or fail. The proposer should form
+hypotheses about agent x dataset x preference patterns, make falsifiable bets,
+run rollouts that prove or disprove those bets with hard evidence, extract
+lessons from the results, and use those lessons to produce stronger candidate
+interventions.
+
+This needs to work for both major candidate plugin families:
+
+- prompt candidates: instruction transforms, full instruction candidates,
+  static demos, trajectory demos, and other prompt-side interventions
+- SFT candidates: dataset slices, training-example selections, loss/training
+  config variants, checkpoint candidates, adapters, or other fine-tuning
+  interventions
+
+The proposer runbook should be plugin-neutral. It should reason about candidate
+interventions, queued rollouts, evidence, hypotheses, and bets without assuming
+that the intervention is only an instruction/demo edit.
+
+A major practical goal is fewer rollouts. Once the optimizer has a few candidate
+versions and some problem-structure memory, a new transformation should not
+automatically be evaluated on every train seed. The proposer should help choose
+the smallest useful rollout slice: the hardest rows, the rows most diagnostic for
+the candidate, rows tied to open bets, rows under-covered by labels, or rows that
+best distinguish between competing hypotheses. Full train sweeps should be a
+deliberate choice, not the default cost of every candidate.
+
+The intended loop is:
+
+1. Observe rollout evidence and candidate history.
+2. Form or refine hypotheses about the problem structure.
+3. Make concrete bets about future rollouts.
+4. Queue or override rollouts to test those bets.
+5. Resolve bets from completed rollout evidence.
+6. Score what was novel, surprising, and learnable.
+7. Use the lessons to create better candidate interventions.
+8. Repeat with a richer understanding of the task.
+
 MIPROv2 currently lets the proposer inspect historical trials, candidate
 evidence, read-model summaries, and the current compiled search space. It does
 not yet give the proposer a direct view of what the optimizer is likely to try
@@ -14,8 +54,47 @@ material; it is also shaping what TPE can sample. A proposer tool that previews
 the tentative next candidate batch would make proposer decisions more grounded:
 "if I stop now, these are the next K candidates TPE would probably evaluate."
 
+The larger goal is not merely to run the statistically most promising next
+candidate. It is to spend rollout budget on the most informative experiments:
+rollouts that test bets, stress hypotheses, reveal new failure modes, resolve
+uncertainty, or expose promising open-ended directions. TPE should provide the
+default queue, not the final say.
+
 Useful nouns
 ------------
+
+Term definitions for the proposer:
+
+- Proposer: the planning agent that reads optimizer evidence, proposes candidate
+  interventions, makes bets, and can plan or override rollout queues.
+- Policy: the model/program being improved by MIPROv2. In prompt mode this is
+  the prompted model. In SFT mode this may be a trained or fine-tuned candidate
+  checkpoint/adapter.
+- Candidate: a version of the policy created by one or more interventions. A
+  candidate can be prompt-side, SFT-side, or mixed if a plugin supports it.
+- CandidateIntervention: the change that creates or modifies a candidate. For
+  prompt plugins this can be an instruction transform or demo. For SFT plugins
+  this can be a training-data, training-config, or checkpoint intervention.
+- Rollout: one execution/evaluation of one candidate on one task row, seed, or
+  task instance.
+- QueuedRollout: a planned rollout before it runs.
+- RolloutQueue: a slate of queued rollouts that may come from TPE defaults,
+  proposer overrides, replay, or manual/debug planning.
+- TPE: the default statistical scheduler that proposes candidate configs from
+  the current search space and observations. TPE is the default, not the final
+  authority.
+- Hypothesis: a durable claim about problem/policy structure that should explain
+  multiple rollouts or candidates.
+- Bet: a falsifiable prediction about future rollout outcomes, usually tied to
+  one or more hypotheses.
+- LabelDefinition: a proposer-curated schema for classifying rollouts.
+- RolloutLabel: a label assigned to a completed rollout by a labeller using only
+  active curated label definitions.
+- Open-endedness score: a post-rollout score for novelty, unexpectedness, and
+  learnability, separate from reward.
+- Hard evidence: rollout outputs, rewards, verifier verdicts, traces, labels,
+  resolved bets, and candidate metadata. The proposer should cite hard evidence
+  when updating memory or creating interventions.
 
 QueuedRollout:
 
@@ -41,10 +120,17 @@ CandidateIntervention:
 - candidate_id
 - parent_candidate_id
 - lever_bundle_hash
+- plugin_kind: prompt | sft | mixed | other
+- plugin_id
 - source_config
+- prompt_intervention
+- sft_intervention
 - instruction_options
 - instruction_transforms
 - demo_options
+- training_data_refs
+- training_config
+- checkpoint_ref
 - metadata
 
 RolloutQueue:
@@ -60,6 +146,116 @@ RolloutQueue:
 - candidates
 - rollouts
 
+RolloutQueueOverride:
+
+- override_id
+- queue_id
+- proposer_id
+- created_at
+- override_kind: replace_rollout | replace_candidate | insert_rollout | remove_rollout | reorder
+- target_rollout_id
+- replacement_rollout
+- replacement_candidate_ref
+- reason
+- expected_information_gain
+- linked_hypothesis_refs
+- linked_bet_refs
+- metadata
+
+Hypothesis:
+
+- hypothesis_id
+- task_id
+- dataset_id
+- agent_id
+- proposer_id
+- summary
+- rationale
+- preference_model_notes
+- status: active | supported | contradicted | superseded | abandoned
+- created_at
+- updated_at
+- candidate_refs
+- rollout_refs
+- adjustment_refs
+- metadata
+
+HypothesisAdjustment:
+
+- adjustment_id
+- hypothesis_id
+- created_at
+- created_by
+- summary
+- diff_payload
+- reason
+- linked_candidate_refs
+- linked_rollout_refs
+- metadata
+
+Bet:
+
+- bet_id
+- hypothesis_id
+- proposer_id
+- created_at
+- status: open | resolved | void
+- summary
+- prediction
+- rollout_refs
+- candidate_refs
+- task_refs
+- success_criteria
+- expected_outcome
+- confidence
+- resolved_at
+- resolution: supported | contradicted | mixed | inconclusive
+- resolution_comment
+- metadata
+
+RolloutLabelDefinition:
+
+- label_id
+- task_id
+- created_by_proposer_id
+- name
+- description
+- allowed_values
+- created_at
+- status: active | deprecated
+- metadata
+
+RolloutLabel:
+
+- rollout_label_id
+- rollout_id
+- label_id
+- value
+- assigned_by
+- assigned_at
+- confidence
+- rationale
+- evidence_refs
+- metadata
+
+RolloutOpenEndednessScore:
+
+- score_id
+- rollout_id
+- candidate_id
+- task_id
+- scored_by
+- scored_at
+- novelty_score
+- unexpectedness_score
+- learnability_score
+- open_endedness_score
+- relation_to_bets
+- relation_to_hypotheses
+- lesson
+- followup_refs
+- metadata
+
 MIPROv2 application
 ------------------
 
@@ -71,6 +267,110 @@ rollouts. A candidate queue preview can therefore expose both levels:
 - the concrete rollout rows/seeds those candidates would run against for the
   current train wave
 
+TPE is the default scheduler, but the proposer should be able to override as
+many queued rollouts as it wants. The proposer may accept the TPE queue as-is,
+replace a few candidate x row pairs, insert additional stress-test rollouts,
+remove redundant rollouts, or reorder the queue. The reason should be explicit:
+the override should name the hypothesis, bet, label pattern, or open-endedness
+gap it is trying to test.
+
+Hypotheses are the longer-lived reasoning layer above queues and rollouts. The
+proposer should be able to register a hypothesis about an agent x dataset x
+preference pattern, then link that hypothesis to candidate versions and rollout
+records over time. For example:
+
+- "The agent fails Banking77 labels when the customer asks about card fees and
+  payment recognition in the same utterance."
+- "A strict answer-only output rule helps exact-match tasks but hurts tasks
+  where the verifier expects explanation."
+- "Greek translation prompts need a dialect/source-period premise before
+  morphology heuristics help."
+
+Each hypothesis should support append-only adjustments. A later proposer step
+can refine the hypothesis, add a diff, link new rollout evidence, or supersede
+it with a narrower claim. This gives the optimizer a traceable memory of why
+candidate material exists, not just which candidate scored well.
+
+Bets are the falsifiable prediction layer below hypotheses. A hypothesis can be
+broad and long-lived, but a bet should make a concrete claim about multiple
+future rollouts. For example:
+
+- "Candidate c42 will still fail fee-vs-recognition Banking77 rows because the
+  transform does not mention fee-charged language."
+- "This output-format transform will improve exact-match rows but regress rows
+  where the policy currently gives short explanatory answers."
+- "The next TPE batch will contain at least one candidate that combines the
+  dialect premise with the morphology heuristic."
+
+A bet lists the rollout ids, candidate refs, and task refs it is about before
+those rollouts resolve. Once the rollouts complete, a resolver adds a short
+resolution comment and marks the bet supported, contradicted, mixed, or
+inconclusive. This makes proposer reasoning auditable at the level of predictions
+that can be checked later, not only retrospective explanations.
+
+Labels are the searchable rollout memory layer. Go-Explore-style systems often
+have verifier or terminator passes that process rollouts after execution. MIPROv2
+should support a lighter analogue: labellers review completed rollouts and assign
+labels from a proposer-curated label set. If the proposer has not curated labels
+for a task/run, labellers should not invent labels.
+
+The proposer can then query historical rollouts by label, for example:
+
+- output_format_error
+- confusable_intent_pair
+- verifier_disagreement
+- instruction_helped
+- instruction_regressed
+- unsupported_by_evidence
+
+The important separation is:
+
+- proposer curates the label schema
+- labellers assign labels to rollout records after observing the rollout
+- proposer tools filter and summarize past rollouts by those labels
+
+This gives the proposer a compact, evolving index over rollout history without
+forcing every read to re-parse raw traces.
+
+Some completed rollouts should also be scored for open-endedness. The question
+is not only whether the candidate won or lost, but whether the result was novel,
+unexpected under the current bets/hypotheses, and useful for learning. For
+example:
+
+- A low-reward rollout may be high value if it reveals a new failure mode not
+  covered by any active hypothesis.
+- A successful rollout may be low novelty if it simply confirms an already
+  obvious label pattern.
+- A mixed rollout may be high open-endedness if it contradicts one bet while
+  supporting another and suggests a better decomposition.
+
+Open-endedness scoring should be explicit for at least a sample of completed
+rollouts, and for any rollout tied to an open bet. The proposer can then query
+not just best/worst rollouts, but "most surprising" or "most informative"
+rollouts when deciding what to investigate next.
+
+Over time, queue planning should bias toward maximally informative rollouts:
+
+- rollouts that are likely to resolve high-confidence bets
+- rollouts that distinguish between competing hypotheses
+- rollouts on rows/candidates with sparse evidence
+- rollouts expected to expose surprising behavior
+- rollouts that cover labels not yet well understood
+- rollouts that test whether a candidate is broadly useful or only locally lucky
+
+This is separate from exploitation. A rollout can be worthwhile even if expected
+reward is low, as long as the expected information gain is high.
+
+The same logic applies to candidate evaluation breadth. A candidate intervention
+can start with a focused rollout slice before graduating to wider evaluation:
+
+- diagnostic rows first
+- hard or previously unsolved rows next
+- rows tied to high-value labels or open bets
+- only then broader train/heldout slices if the evidence warrants it
+
+This lets the proposer spend less budget while learning more per rollout.
+
 The first implementation should be read-only:
 
 1. Clone the compiled search space and optimizer state.
@@ -79,6 +379,405 @@ The first implementation should be read-only:
 4. Materialize a tentative RolloutQueue against the current sampled train rows.
 5. Return the queue through a proposer tool such as preview_tpe_candidates or
    check_tpe_state.
+
+A nearby write tool should register hypotheses without mutating search space:
+
+register_hypothesis input:
+
+- summary
+- rationale
+- preference_model_notes
+- candidate_refs
+- rollout_refs
+- metadata
+
+append_hypothesis_adjustment input:
+
+- hypothesis_id
+- summary
+- diff_payload
+- reason
+- linked_candidate_refs
+- linked_rollout_refs
+- metadata
+
+These tools should be evidence-linked but not reward-bearing. Their job is to
+make proposer reasoning auditable and reusable across rounds.
+
+register_bet input:
+
+- hypothesis_id
+- summary
+- prediction
+- rollout_refs
+- candidate_refs
+- task_refs
+- success_criteria
+- expected_outcome
+- confidence
+- metadata
+
+resolve_bet input:
+
+- bet_id
+- resolution
+- resolution_comment
+- evidence_refs
+- metadata
+
+register_rollout_label_definition input:
+
+- name
+- description
+- allowed_values
+- metadata
+
+query_rollouts_by_label input:
+
+- label_id | name
+- value
+- candidate_id
+- split
+- limit
+
+Labelling should be opt-in per task/run: if there are no active
+RolloutLabelDefinition records, the labeller pass should skip assignment rather
+than create free-form tags.
+
+score_rollout_open_endedness input:
+
+- rollout_id
+- novelty_score
+- unexpectedness_score
+- learnability_score
+- relation_to_bets
+- relation_to_hypotheses
+- lesson
+- followup_refs
+- metadata
+
+query_open_ended_rollouts input:
+
+- min_open_endedness_score
+- candidate_id
+- hypothesis_id
+- bet_id
+- label_id | name
+- split
+- limit
+
+Open-endedness scores should be separate from reward. Reward answers "did this
+candidate solve the task row?" Open-endedness answers "did this rollout teach us
+something we did not already expect?"
+
+override_rollout_queue input:
+
+- queue_id
+- overrides:
+  - override_kind
+  - target_rollout_id
+  - replacement_rollout
+  - replacement_candidate_ref
+  - reason
+  - expected_information_gain
+  - linked_hypothesis_refs
+  - linked_bet_refs
+- metadata
+
+commit_rollout_queue input:
+
+- queue_id
+- accept_tpe_defaults
+- proposer_override_refs
+- reason
+- metadata
+
+The proposer can override zero, one, or all queued rollouts. If it does nothing,
+the TPE queue commits unchanged. If it overrides, the committed queue should
+record both the original TPE recommendation and the proposer edits so later evals
+can measure whether proposer queue control improved information gain or final
+optimizer performance.
+
+Proposer runbook
+----------------
+
+The proposer should not receive a pile of tools and improvise. It needs a clear
+operating procedure. A good default runbook is:
+
+1. Read current state.
+   Use current candidate summaries, recent rollouts, sampled rows, labels, open
+   bets, active hypotheses, and the tentative TPE queue. Do not write candidate
+   material before reading enough evidence to name the uncertainty being tested.
+
+2. Identify the decision.
+   Decide whether this round needs exploitation, exploration, diagnosis, or
+   validation. The proposer should explicitly state which kind of decision it is
+   making before modifying the queue or search space.
+
+3. Form or refine hypotheses.
+   If evidence suggests a reusable task structure, register or adjust a
+   hypothesis. Hypotheses should cite candidate refs, rollout refs, labels, or
+   prior bets. Free-floating hunches are not useful.
+
+4. Make bets.
+   Before spending new rollout budget, register concrete predictions about what
+   will happen. Bets should name the candidate/task/rollout refs and define what
+   would count as supported or contradicted.
+
+5. Plan the rollout queue.
+   Start from the TPE preview. Accept TPE defaults when they are already
+   informative. Override when a smaller or different rollout set would test the
+   active bets/hypotheses more efficiently. Every override needs a reason and an
+   expected information gain.
+
+6. Choose rollout breadth.
+   Do not evaluate every new candidate on every seed by reflex. Pick the minimum
+   slice that can answer the current question. Escalate to broader evaluation
+   only after focused rollouts show the candidate is worth more budget.
+
+7. Create candidate interventions.
+   Add instruction transforms or candidates only after the evidence and intended
+   rollout test are clear. Prefer small interventions that correspond to a
+   hypothesis or bet.
+
+8. Resolve completed work.
+   When rollouts finish, resolve relevant bets, attach labels from the curated
+   schema, and score open-endedness for high-signal rollouts. Capture what was
+   learned, including negative or surprising results.
+
+9. Update memory.
+   Adjust hypotheses, retire stale labels, note contradicted bets, and keep only
+   memory that will affect future candidate design or rollout allocation.
+
+10. Repeat.
+    The next proposer round should begin from the updated evidence, not from a
+    blank prompt improvement mindset.
+
+Tool fit
+--------
+
+State and evidence tools answer: "What has happened?"
+
+- list_components
+- list_component_options
+- query_candidates
+- query_rollouts
+- query_candidate_rollout_deltas
+- query_candidate_verdict_digest
+- query_rollouts_by_label
+- query_open_ended_rollouts
+
+Planning tools answer: "What should we spend rollout budget on?"
+
+- preview_tpe_candidates
+- override_rollout_queue
+- commit_rollout_queue
+
+Memory tools answer: "What do we believe and how did evidence change it?"
+
+- register_hypothesis
+- append_hypothesis_adjustment
+- register_bet
+- resolve_bet
+- register_rollout_label_definition
+- score_rollout_open_endedness
+
+Search-space tools answer: "What candidate material should exist?"
+
+- add_instruction_transform
+- add_instruction_candidate
+- add_static_demo_candidate
+- add_trajectory_demo_candidate
+- add_sft_candidate
+- add_sft_data_slice_candidate
+- add_sft_training_config_candidate
+- add_checkpoint_candidate
+- finish
+
+The exact search-space tools are plugin-dependent. Prompt plugins expose
+instruction/demo tools. SFT plugins should expose analogous tools for data,
+training config, adapter/checkpoint selection, and any plugin-specific candidate
+material. The runbook should treat all of these as ways to create candidate
+interventions that can be tested by queued rollouts.
+
+Hypothesis types
+----------------
+
+The proposer should write hypotheses in a few recurring shapes. The goal is to
+make claims precise enough that bets and rollout queues can test them.
+
+Agent capability hypotheses:
+
+- "The policy struggles with X."
+- "The policy succeeds when X is explicit but fails when X is implied."
+- "The policy can do X, but only when the prompt forces intermediate structure."
+
+Dataset distribution hypotheses:
+
+- "This slice contains many examples of Y, usually expressed as Z."
+- "The heldout distribution likely differs from train on Y."
+- "Rows with feature Y are underrepresented in the current train evidence."
+
+Preference/verifier hypotheses:
+
+- "The verifier rewards X and penalizes Y."
+- "Exact-match evaluation punishes otherwise-correct answers with extra text."
+- "The gold behavior prefers label-level precision over broad semantic
+  similarity."
+
+Intervention hypotheses:
+
+- "Adding rule X should improve rows with feature Y."
+- "This transform will help candidate family A but regress family B."
+- "This SFT data slice should help label family Y more than generic training
+  examples."
+
+Queue/planning hypotheses:
+
+- "The next TPE batch is redundant and will not test the active uncertainty."
+- "A focused queue over rows Y will distinguish hypothesis A from hypothesis B
+  with fewer rollouts than a full train sweep."
+- "Candidate C only needs a small diagnostic slice before wider evaluation."
+
+Gold behavior examples by taskset
+---------------------------------
+
+These are examples of what a good proposer run might produce. They are not
+ground truth claims about the datasets; they are concrete target behaviors for
+the proposer once it has read real rollout evidence.
+
+Banking77 intent classification:
+
+- Hypothesis: "The policy confuses card-payment-fee, cash-withdrawal-fee, and
+  card-payment-not-recognised intents when the customer mentions both a payment
+  event and a fee/dispute phrase."
+- Bet: "A candidate with an explicit 'fee charged vs payment not recognized'
+  distinction will improve selected confusable rows without hurting simpler
+  card-arrival/card-linking rows."
+- Queue choice: override TPE to run the candidate on a small slice of confusable
+  labels plus a few unrelated labels as regression guards, not all train rows.
+- Labels: confusable_intent_pair, fee_language, dispute_language,
+  answer_label_too_broad.
+- Candidate intervention: add a prompt rule or SFT slice emphasizing minimal
+  discriminative cues between adjacent banking intents.
+- Open-endedness signal: a surprising success on an unrelated label may reveal
+  that the transform improved general "choose exact intent" discipline, not only
+  fee/dispute rows.
+
+HealthBench Meta majority-physician-label classification:
+
+- Hypothesis: "The policy overuses generic safety/consult-a-doctor language and
+  misses the majority physician label when the answer quality turns on a
+  specific medical caveat."
+- Bet: "A candidate that asks for the clinically decisive criterion before
+  choosing a label will improve disagreement-heavy rows."
+- Queue choice: focus on rows where previous candidates split, verifier
+  rationales mention missing caveats, or labels are close under the rubric.
+- Labels: missing_caveat, overbroad_safety_response, rubric_boundary_case,
+  physician_disagreement_pattern.
+- Candidate intervention: prompt-side rubric rule, demo with close-call medical
+  classification, or SFT data slice of caveat-sensitive rows.
+- Open-endedness signal: a low-score rollout with a new caveat failure may be
+  more valuable than another easy correct medical safety row.
+
+Ancient Greek exact match:
+
+- Hypothesis: "The policy fails when morphology, dialect/source period, or
+  inflectional ambiguity must be resolved before producing the exact answer."
+- Bet: "A candidate that instructs the policy to identify morphology before
+  answering will improve inflection-sensitive rows but may regress memorized
+  direct-translation rows if it adds extra text."
+- Queue choice: run a narrow morphology-heavy slice plus exact-match format
+  guards before spending the small 32-row budget broadly.
+- Labels: morphology_error, dialect_premise_missing, extra_text_exact_match,
+  lemma_vs_inflected_form.
+- Candidate intervention: prompt rule for exact answer only after silent
+  morphology check, or SFT examples focused on inflection/dialect ambiguity.
+- Open-endedness signal: contradiction between "morphology helps" and
+  "extra reasoning hurts exact match" should lead to a narrower intervention,
+  not a generic "think step by step" instruction.
+
+GSM8K math word problems:
+
+- Hypothesis: "The policy gets arithmetic right on direct problems but fails on
+  multi-step unit or rate problems where the intermediate quantity is implicit."
+- Bet: "A candidate that enforces variable naming and final numeric-only answer
+  will improve multi-step rows while preserving exact-match formatting."
+- Queue choice: pick rows with prior arithmetic slips, unit conversions, and
+  final-format failures; do not test only easy one-step arithmetic.
+- Labels: arithmetic_slip, implicit_intermediate, unit_conversion,
+  final_format_error.
+- Candidate intervention: prompt transform for concise scratchpad discipline and
+  final answer normalization, or SFT slice of implicit-intermediate examples.
+- Open-endedness signal: if the candidate improves reasoning but fails exact
+  answer formatting, that teaches a separate format intervention is needed.
+
+HotpotQA distractor QA:
+
+- Hypothesis: "The policy answers from a distractor paragraph when the bridge
+  entity is underspecified or when two entities share surface forms."
+- Bet: "A candidate that requires identifying the bridge entity before answering
+  will improve distractor-heavy rows but may add unnecessary verbosity on direct
+  rows."
+- Queue choice: focus rollouts on high-distractor rows, shared-name/entity rows,
+  and a small direct-answer guard slice.
+- Labels: distractor_selected, bridge_entity_missing, entity_ambiguity,
+  answer_span_format_error.
+- Candidate intervention: prompt rule/demo for bridge-first evidence selection,
+  or SFT slice with distractor contrast examples.
+- Open-endedness signal: a candidate that fails but cites the right bridge
+  entity may be valuable because retrieval/evidence selection improved while
+  answer extraction remains weak.
+
+HOVER binary fact verification:
+
+- Hypothesis: "The policy predicts supported when evidence is partially
+  consistent but misses a second-hop contradiction."
+- Bet: "A candidate that requires checking each claim component independently
+  will improve contradiction rows, especially multi-hop negative examples."
+- Queue choice: run focused supported/refuted pairs with similar lexical overlap
+  and enough support rows to detect overcorrection toward refuted.
+- Labels: partial_support_trap, missed_second_hop, lexical_overlap_bias,
+  overcorrected_to_refuted.
+- Candidate intervention: prompt transform requiring component-wise evidence
+  checks, or SFT slice balancing partial-support negatives against true support.
+- Open-endedness signal: if the candidate flips too many supported rows to
+  refuted, the lesson is about calibration and evidence thresholds, not simply
+  "be more skeptical."
+
+Gold proposer pattern
+---------------------
+
+Across tasks, the gold proposer behavior is:
+
+1. Start with evidence, not a generic improvement idea.
+2. State a hypothesis in one of the concrete hypothesis shapes above.
+3. Make a bet with candidate/row refs and clear success criteria.
+4. Choose the smallest rollout queue that can test the bet.
+5. Override TPE only when the override increases expected information gain.
+6. Create the narrowest candidate intervention that corresponds to the
+   hypothesis.
+7. Resolve the bet from rollout evidence.
+8. Score surprising/informative rollouts for open-endedness.
+9. Convert the lesson into the next hypothesis, queue choice, or candidate
+   intervention.
+
+The bad pattern is to add broad prompt advice, run a full train sweep, and then
+retrofit an explanation to the score. The good pattern is to make the optimizer
+learn an explicit map of the problem while spending less budget.
+
+Failure modes to watch
+----------------------
+
+- Queue overrides can destroy TPE's useful exploitation signal if the proposer
+  treats override power as mandatory. TPE remains the default.
+- Labels can become sloppy, circular, or too numerous. Curate few labels, assign
+  them consistently, and retire labels that do not affect decisions.
+- Bets must be falsifiable. A bet that can never be contradicted is just a
+  comment.
+- Open-endedness should mean learnable surprise, not novelty for its own sake.
+- Focused rollout slices save budget only if they are chosen for a real
+  diagnostic purpose. Otherwise they just add sampling noise.
 
 Important semantics
 -------------------
@@ -129,7 +828,24 @@ Follow-on work
 --------------
 
 - Add a ledger table or normalized artifact for queued rollouts.
+- Add a ledger table or normalized artifact for rollout queue overrides that
+  preserves the original TPE recommendation and the proposer-edited queue.
+- Add a ledger table or normalized artifact for hypotheses and hypothesis
+  adjustments.
+- Add a ledger table or normalized artifact for bets and bet resolutions.
+- Add a ledger table or normalized artifact for rollout label definitions and
+  assigned rollout labels.
+- Add a ledger table or normalized artifact for rollout open-endedness scores.
 - Add proposer tools to inspect tentative and committed queues.
+- Add proposer tools to override, reorder, insert into, remove from, and commit
+  rollout queues.
+- Add proposer tools to register, append, and query hypotheses linked to
+  candidates and rollouts.
+- Add proposer tools to register bets, resolve bets, and query open/resolved
+  bets by candidate, task, hypothesis, or rollout.
+- Add proposer tools to curate label definitions and query labeled rollout
+  history.
+- Add proposer/labeller tools to score and query rollout open-endedness.
 - Record queue snapshots before and after accepted proposer transforms so the
   proposer checkpoint eval can ask whether a variant improved the next planned
   work, not only whether the directly proposed candidates improved heldout rows.
