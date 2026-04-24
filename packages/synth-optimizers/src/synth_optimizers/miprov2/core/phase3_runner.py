@@ -39,12 +39,18 @@ from synth_optimizers.miprov2.core.program_model import (
 from synth_optimizers.miprov2.core.proposer_openenv import (
     MiproOpenEnvProposerConfig,
     MiproOpenEnvProposerContext,
+    MiproOpenEnvProposerOutcome,
     MiproOpenEnvReactAgent,
     clone_compiled_space,
     proposer_outcome_summary,
     run_openenv_react_proposer,
     sync_optimizer_search_space,
 )
+from synth_optimizers.miprov2.core.proposer_environment import (
+    MiproProposerEnvironment,
+    tool_state_from_dict,
+)
+from synth_optimizers.miprov2.core.proposer_tools import tool_category
 from synth_optimizers.miprov2.core.run_ledger import (
     SQLiteMiproRunLedger,
     load_resume_state,
@@ -82,6 +88,9 @@ class MiproPhase3Config:
     proposer_config: MiproOpenEnvProposerConfig | None = None
     checkpoint_policy: str = "none"
     checkpoint_dir: str | None = None
+    proposer_control: str = "auto"
+    interactive_session_root: str | None = None
+    interactive_resume_session_id: str | None = None
 
     def __post_init__(self) -> None:
         if int(self.proposer_rounds) < 0:
@@ -115,6 +124,15 @@ class MiproPhase3Config:
             raise ValueError(
                 "MiproPhase3Config.checkpoint_policy must be 'none' or 'before_each_proposer'"
             )
+        proposer_control = str(self.proposer_control or "auto").strip()
+        if proposer_control not in {"auto", "interactive_pause"}:
+            raise ValueError(
+                "MiproPhase3Config.proposer_control must be 'auto' or 'interactive_pause'"
+            )
+        if self.interactive_resume_session_id and proposer_control != "interactive_pause":
+            raise ValueError(
+                "MiproPhase3Config.interactive_resume_session_id requires proposer_control='interactive_pause'"
+            )
 
 
 class MiproGroundingHooksLike(Protocol):
@@ -147,6 +165,9 @@ class MiproPhase3Outcome:
     skipped_tabu_candidates: int = 0
     run_id: str | None = None
     ledger_path: str | None = None
+    run_status: str = "running"
+    pending_interactive_session: dict[str, Any] | None = None
+    consumed_interactive_session: dict[str, Any] | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -248,6 +269,134 @@ def _write_proposer_trace_json(
         json.dump(dict(payload), handle, indent=2, sort_keys=True, ensure_ascii=True)
         handle.write("\n")
     return out_path
+
+
+def _read_json_file(path: str | Path) -> dict[str, Any]:
+    return dict(json.loads(Path(path).expanduser().read_text(encoding="utf-8")))
+
+
+def _read_jsonl_file(path: str | Path | None) -> list[dict[str, Any]]:
+    if path is None:
+        return []
+    file_path = Path(path).expanduser()
+    if not file_path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in file_path.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        parsed = json.loads(text)
+        if isinstance(parsed, Mapping):
+            rows.append(dict(parsed))
+    return rows
+
+
+def _interactive_session_root(
+    *,
+    cfg: MiproPhase3Config,
+    checkpoint_root: str,
+) -> str:
+    if cfg.interactive_session_root is not None:
+        configured = str(cfg.interactive_session_root).strip()
+        if configured:
+            return configured
+    return str(Path(checkpoint_root).expanduser().resolve().parent / "proposer_sessions")
+
+
+def _interactive_outcome_from_committed_session(
+    *,
+    session_root: str,
+    session_id: str,
+    pending: Mapping[str, Any] | None,
+) -> tuple[MiproOpenEnvProposerOutcome, dict[str, Any]]:
+    environment = MiproProposerEnvironment.load(
+        session_root=session_root,
+        session_id=session_id,
+    )
+    session = environment.session
+    if session.status != "committed":
+        raise ValueError(
+            f"interactive proposer session '{session_id}' must be committed, got {session.status!r}"
+        )
+    if session.committed_state_ref is None:
+        raise ValueError(f"interactive proposer session '{session_id}' has no committed_state_ref")
+    committed_state_path = Path(session.committed_state_ref).expanduser()
+    if not committed_state_path.exists():
+        raise FileNotFoundError(str(committed_state_path))
+
+    if pending is not None:
+        expected_run_id = str(pending.get("run_id") or "").strip()
+        if expected_run_id and str(session.run_id or "") != expected_run_id:
+            raise ValueError(
+                f"interactive proposer session run_id mismatch: expected {expected_run_id}, got {session.run_id}"
+            )
+        expected_round_idx = int(pending.get("round_idx") or 0)
+        if expected_round_idx and int(session.round_idx) != expected_round_idx:
+            raise ValueError(
+                f"interactive proposer session round mismatch: expected {expected_round_idx}, got {session.round_idx}"
+            )
+        expected_checkpoint_id = str(pending.get("checkpoint_id") or "").strip()
+        if expected_checkpoint_id and str(session.source_ref or "") != expected_checkpoint_id:
+            raise ValueError(
+                "interactive proposer session checkpoint mismatch: "
+                f"expected {expected_checkpoint_id}, got {session.source_ref}"
+            )
+
+    state = tool_state_from_dict(_read_json_file(committed_state_path))
+    events = _read_jsonl_file(session.event_log_path)
+    tool_events = [
+        item
+        for item in events
+        if str(item.get("event_type") or "") == "tool_call"
+        and str(item.get("tool_name") or "").strip()
+    ]
+    action_counts: dict[str, int] = {}
+    read_tools: set[str] = set()
+    patch_action_count = 0
+    read_action_count = 0
+    stop_reason = "interactive_commit"
+    for event in tool_events:
+        tool_name = str(event.get("tool_name") or "")
+        action_counts[tool_name] = int(action_counts.get(tool_name, 0)) + 1
+        category = tool_category(tool_name)
+        if category == "evidence":
+            read_action_count += 1
+            read_tools.add(tool_name)
+        if category == "search_space":
+            result = dict(event.get("result") or {})
+            if bool(result.get("state_mutated")):
+                patch_action_count += 1
+        result = dict(event.get("result") or {})
+        if bool(result.get("stop_session")) and tool_name == "finish":
+            stop_reason = "interactive_finish"
+
+    outcome = MiproOpenEnvProposerOutcome(
+        compiled_space=state.compiled_space,
+        instruction_patches=list(state.instruction_patches),
+        demo_patches=list(state.demo_patches),
+        transcript=events,
+        action_counts=action_counts,
+        read_action_count=read_action_count,
+        patch_action_count=patch_action_count,
+        read_tools_used=tuple(sorted(read_tools)),
+        stop_reason=stop_reason,
+        tool_call_count=len(tool_events),
+    )
+    summary = {
+        "session_id": session.session_id,
+        "session_root": str(Path(session_root).expanduser().resolve()),
+        "session_dir": session.session_dir,
+        "run_id": session.run_id,
+        "round_idx": int(session.round_idx),
+        "source_ref": session.source_ref,
+        "committed_state_ref": str(committed_state_path),
+        "event_log_path": session.event_log_path,
+        "event_count": int(session.event_count),
+        "current_version": int(session.current_version),
+        "status": session.status,
+    }
+    return outcome, summary
 
 
 def _coerce_eval_outcome(
@@ -933,6 +1082,8 @@ async def run_phase3_loop(
     train_rounds_completed = 0
     proposer_rounds_completed = 0
     latest_train_read_model: dict[str, Any] = {}
+    pending_interactive_proposer: dict[str, Any] | None = None
+    interactive_resume_session_id = str(cfg.interactive_resume_session_id or "").strip()
 
     def persist_compiled_space_snapshot() -> None:
         ledger.upsert_state(
@@ -1317,6 +1468,13 @@ async def run_phase3_loop(
                 out.proposer_trace_paths = [
                     str(item) for item in restored_trace_paths if str(item).strip()
                 ]
+            restored_pending = resume_state.run_state.get("pending_interactive_proposer")
+            if isinstance(restored_pending, Mapping):
+                pending_interactive_proposer = dict(restored_pending)
+                out.pending_interactive_session = dict(pending_interactive_proposer)
+            restored_consumed = resume_state.run_state.get("consumed_interactive_proposer")
+            if isinstance(restored_consumed, Mapping):
+                out.consumed_interactive_session = dict(restored_consumed)
             await refresh_train_read_model()
 
         baseline_config = build_baseline_config(working_space)
@@ -1498,12 +1656,16 @@ async def run_phase3_loop(
                 },
             )
             run_identifier = out.run_id or run_id or ledger.run_id
-            if cfg.checkpoint_policy == "before_each_proposer":
-                checkpoint_root = (
-                    cfg.checkpoint_dir
-                    if cfg.checkpoint_dir is not None
-                    else str(Path(ledger.workspace_root) / "checkpoints")
-                )
+            checkpoint_payload: dict[str, Any] | None = None
+            checkpoint_root = (
+                cfg.checkpoint_dir
+                if cfg.checkpoint_dir is not None
+                else str(Path(ledger.workspace_root) / "checkpoints")
+            )
+            if (
+                cfg.checkpoint_policy == "before_each_proposer"
+                or cfg.proposer_control == "interactive_pause"
+            ):
                 checkpoint_payload = write_proposer_checkpoint(
                     checkpoint_dir=checkpoint_root,
                     run_id=str(run_identifier),
@@ -1551,12 +1713,73 @@ async def run_phase3_loop(
                         "candidate_count": len(candidate_rows),
                     },
                 )
-            proposer_outcome = await run_openenv_react_proposer(
-                compiled_space=working_space,
-                agent=agent,
-                context=proposer_context,
-                config=cfg.proposer_config,
-            )
+
+            if cfg.proposer_control == "interactive_pause":
+                if checkpoint_payload is None:
+                    raise RuntimeError("interactive proposer requires a checkpoint payload")
+                artifact_refs = dict(checkpoint_payload.get("artifact_refs") or {})
+                checkpoint_path = str(artifact_refs.get("checkpoint") or "").strip()
+                checkpoint_id = str(checkpoint_payload.get("checkpoint_id") or "").strip()
+                session_root = _interactive_session_root(
+                    cfg=cfg,
+                    checkpoint_root=checkpoint_root,
+                )
+                if interactive_resume_session_id:
+                    if not isinstance(pending_interactive_proposer, Mapping):
+                        raise ValueError(
+                            "interactive_resume_session_id was provided but no pending_interactive_proposer "
+                            "state exists for this run"
+                        )
+                    proposer_outcome, consumed_session = _interactive_outcome_from_committed_session(
+                        session_root=session_root,
+                        session_id=interactive_resume_session_id,
+                        pending=pending_interactive_proposer,
+                    )
+                    out.consumed_interactive_session = dict(consumed_session)
+                    out.pending_interactive_session = None
+                    pending_interactive_proposer = None
+                    interactive_resume_session_id = ""
+                    ledger.upsert_state(key="pending_interactive_proposer", value=None)
+                    ledger.upsert_state(
+                        key="consumed_interactive_proposer",
+                        value=dict(consumed_session),
+                    )
+                else:
+                    environment = MiproProposerEnvironment.from_checkpoint(
+                        checkpoint_payload,
+                        session_root=session_root,
+                        source_ref=checkpoint_id,
+                        config=cfg.proposer_config,
+                    )
+                    pending_interactive_proposer = {
+                        "run_id": str(run_identifier),
+                        "round_idx": proposer_round_idx,
+                        "checkpoint_id": checkpoint_id,
+                        "checkpoint_path": checkpoint_path,
+                        "session_id": environment.session.session_id,
+                        "session_root": str(Path(session_root).expanduser().resolve()),
+                        "session_dir": environment.session.session_dir,
+                        "event_log_path": environment.session.event_log_path,
+                        "train_rounds_completed": train_rounds_completed,
+                        "proposer_rounds_completed": proposer_rounds_completed,
+                        "ledger_path": str(ledger.ledger_path),
+                    }
+                    out.pending_interactive_session = dict(pending_interactive_proposer)
+                    out.run_status = "paused_for_interactive_proposer"
+                    ledger.upsert_state(
+                        key="pending_interactive_proposer",
+                        value=dict(pending_interactive_proposer),
+                    )
+                    persist_common_state()
+                    ledger.set_status(status="paused_for_interactive_proposer")
+                    return out
+            else:
+                proposer_outcome = await run_openenv_react_proposer(
+                    compiled_space=working_space,
+                    agent=agent,
+                    context=proposer_context,
+                    config=cfg.proposer_config,
+                )
             stop_reason = str(proposer_outcome.stop_reason)
             out.stop_reason_frequency[stop_reason] = (
                 int(out.stop_reason_frequency.get(stop_reason, 0)) + 1
@@ -1600,6 +1823,10 @@ async def run_phase3_loop(
                 "proposer_summary": proposer_summary,
                 "proposer_trace_json": trace_path,
             }
+            if out.consumed_interactive_session is not None:
+                proposer_session["interactive_session"] = dict(
+                    out.consumed_interactive_session
+                )
             out.proposer_sessions.append(proposer_session)
 
             for _ in range(int(cfg.train_rounds_per_proposer_round)):
@@ -1718,6 +1945,7 @@ async def run_phase3_loop(
                 persist_common_state()
                 ledger.upsert_state(key="heldout_best_score", value=out.heldout_best_score)
                 ledger.upsert_state(key="heldout_lift", value=out.heldout_lift)
+                out.run_status = "completed"
                 ledger.set_status(status="completed")
                 return out
             latest_snapshot_round = (
@@ -1763,6 +1991,7 @@ async def run_phase3_loop(
         persist_common_state()
         ledger.upsert_state(key="heldout_best_score", value=out.heldout_best_score)
         ledger.upsert_state(key="heldout_lift", value=out.heldout_lift)
+        out.run_status = "completed"
         ledger.set_status(status="completed")
         return out
     except Exception:

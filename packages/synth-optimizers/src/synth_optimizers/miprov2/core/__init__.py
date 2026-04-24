@@ -82,6 +82,22 @@ from synth_optimizers.miprov2.core.phase3_runner import (
     SummarizeRecentTrialsOutcome,
     run_phase3_loop,
 )
+from synth_optimizers.miprov2.core.proposer_environment import (
+    MiproProposerEnvironment,
+    tool_state_from_dict,
+    tool_state_to_dict,
+)
+from synth_optimizers.miprov2.core.proposer_sessions import (
+    MiproProposerEvent,
+    MiproProposerSession,
+    MiproProposerSessionStore,
+)
+from synth_optimizers.miprov2.core.proposer_tools import (
+    MiproProposerToolResult,
+    MiproProposerToolState,
+    annotate_mipro_tool,
+    execute_mipro_tool,
+)
 from synth_optimizers.miprov2.core.program_compiler import (
     CompiledMiproSpace,
     compile_search_space,
@@ -200,6 +216,16 @@ __all__ = [
     "MiproPhase3Outcome",
     "MiproProposerStepInput",
     "run_phase3_loop",
+    "MiproProposerEnvironment",
+    "MiproProposerEvent",
+    "MiproProposerSession",
+    "MiproProposerSessionStore",
+    "MiproProposerToolResult",
+    "MiproProposerToolState",
+    "annotate_mipro_tool",
+    "execute_mipro_tool",
+    "tool_state_from_dict",
+    "tool_state_to_dict",
     "MiproOpenEnvAction",
     "MiproOpenEnvReactAgent",
     "MiproOpenEnvProposerContext",

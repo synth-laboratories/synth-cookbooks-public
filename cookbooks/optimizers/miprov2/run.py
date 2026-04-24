@@ -722,12 +722,21 @@ def _write_comparison_artifacts(
     )
 
 
-def execute_live(artifacts_dir: Path, *, config_path: Path, smoke: bool) -> int:
+def execute_live(
+    artifacts_dir: Path,
+    *,
+    config_path: Path,
+    smoke: bool,
+    interactive_proposer: bool = False,
+    interactive_session_root: Path | None = None,
+    interactive_resume_session_id: str | None = None,
+) -> int:
     _ensure_local_imports()
     loaded_key_names = _load_local_api_keys()
     from synth_optimizers.miprov2.core import (
         DiscreteMiproOptimizer,
         MiproGroundingHooks,
+        HeuristicOpenEnvReactAgent,
         MiproModuleTemplate,
         MiproOpenEnvProposerConfig,
         MiproPhase3Config,
@@ -800,16 +809,32 @@ def execute_live(artifacts_dir: Path, *, config_path: Path, smoke: bool) -> int:
     async def evaluate_heldout(candidate: Any) -> tuple[float, dict[str, Any]]:
         return await evaluate_rows(heldout_rows, candidate, split="heldout")
 
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required for native MIPRO OpenEnv proposer execution.")
-    proposer_agent = OpenAIOpenEnvReactAgent(
-        api_key=api_key,
-        model=str(config.get("proposer_model") or "gpt-5.4-mini"),
-        temperature=float(config.get("proposer_temperature") or 1.0),
-        max_tokens=int(config.get("proposer_max_completion_tokens") or 1200),
-        timeout_s=float(config.get("proposer_timeout_s") or 120),
+    interactive_enabled = bool(interactive_proposer or config.get("interactive_proposer"))
+    interactive_resume_id = str(
+        interactive_resume_session_id or config.get("interactive_resume_session_id") or ""
+    ).strip()
+    configured_session_root = (
+        Path(interactive_session_root)
+        if interactive_session_root is not None
+        else (
+            Path(str(config["interactive_session_root"]))
+            if config.get("interactive_session_root")
+            else output_dir / "proposer_sessions"
+        )
     )
+    if interactive_enabled:
+        proposer_agent = HeuristicOpenEnvReactAgent()
+    else:
+        api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is required for native MIPRO OpenEnv proposer execution.")
+        proposer_agent = OpenAIOpenEnvReactAgent(
+            api_key=api_key,
+            model=str(config.get("proposer_model") or "gpt-5.4-mini"),
+            temperature=float(config.get("proposer_temperature") or 1.0),
+            max_tokens=int(config.get("proposer_max_completion_tokens") or 1200),
+            timeout_s=float(config.get("proposer_timeout_s") or 120),
+        )
     proposer_rounds = 1 if smoke else int(config.get("max_proposer_sessions") or 6)
     train_rounds_per_proposer_round = 1 if smoke else max(
         1,
@@ -838,6 +863,9 @@ def execute_live(artifacts_dir: Path, *, config_path: Path, smoke: bool) -> int:
                 proposer_trace_dir=str(output_dir / "artifacts" / "proposer_traces"),
                 checkpoint_policy=str(config.get("checkpoint_policy") or "none"),
                 checkpoint_dir=str(output_dir / "checkpoints"),
+                proposer_control="interactive_pause" if interactive_enabled else "auto",
+                interactive_session_root=str(configured_session_root),
+                interactive_resume_session_id=interactive_resume_id or None,
                 proposer_config=MiproOpenEnvProposerConfig(
                     max_turns=8 if smoke else int(config.get("proposer_max_turns") or 32),
                     max_noop_turns=4 if smoke else int(config.get("proposer_max_noop_turns") or 12),
@@ -849,7 +877,7 @@ def execute_live(artifacts_dir: Path, *, config_path: Path, smoke: bool) -> int:
             ),
             run_id=f"{config.get('run_id')}_native{'_smoke' if smoke else ''}",
             ledger_path=str(ledger_path),
-            resume=False,
+            resume=bool(interactive_resume_id),
         )
     )
 
@@ -903,6 +931,9 @@ def execute_live(artifacts_dir: Path, *, config_path: Path, smoke: bool) -> int:
         "run_id": outcome.run_id,
         "ledger_path": ledger_path_relative,
         "mode": "native_phase3_openenv",
+        "run_status": outcome.run_status,
+        "pending_interactive_session": outcome.pending_interactive_session,
+        "consumed_interactive_session": outcome.consumed_interactive_session,
         "best_candidate": best_candidate,
         "baseline_train_score": outcome.baseline_train_score,
         "best_train_score": outcome.best_train_score,
@@ -1407,6 +1438,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--smoke", action="store_true", help="Run a small live execution before the full config budget.")
+    parser.add_argument(
+        "--interactive-proposer",
+        action="store_true",
+        help="Pause at proposer boundaries and expose a checkpoint-backed proposer session.",
+    )
+    parser.add_argument(
+        "--interactive-session-root",
+        type=Path,
+        default=None,
+        help="Directory containing interactive proposer sessions.",
+    )
+    parser.add_argument(
+        "--interactive-resume-session-id",
+        default=None,
+        help="Committed interactive proposer session id to consume before continuing.",
+    )
     args = parser.parse_args(argv)
 
     artifacts_dir = Path(args.artifacts_dir)
@@ -1421,7 +1468,14 @@ def main(argv: list[str] | None = None) -> int:
         return execute_gepa(artifacts_dir, config_path=Path(args.config), smoke=bool(args.smoke))
     if args.optimizer_mode == "dspy-miprov2":
         return execute_dspy_mipro(artifacts_dir, config_path=Path(args.config), smoke=bool(args.smoke))
-    return execute_live(artifacts_dir, config_path=Path(args.config), smoke=bool(args.smoke))
+    return execute_live(
+        artifacts_dir,
+        config_path=Path(args.config),
+        smoke=bool(args.smoke),
+        interactive_proposer=bool(args.interactive_proposer),
+        interactive_session_root=args.interactive_session_root,
+        interactive_resume_session_id=args.interactive_resume_session_id,
+    )
 
 
 if __name__ == "__main__":

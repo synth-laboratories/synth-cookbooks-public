@@ -3478,14 +3478,22 @@ async def run_openenv_react_proposer(
 ) -> MiproOpenEnvProposerOutcome:
     """Run one bounded OpenEnv-style proposer session and return an expanded space."""
 
+    from synth_optimizers.miprov2.core.proposer_environment import MiproProposerEnvironment
+
     cfg = config or MiproOpenEnvProposerConfig()
     variant_model = _coerce_proposer_variant(variant)
-    working = clone_compiled_space(compiled_space)
-    catalog = build_openenv_tool_catalog(working, variant=variant_model)
+    environment = MiproProposerEnvironment.in_memory(
+        compiled_space=compiled_space,
+        context=context,
+        config=cfg,
+        variant=variant_model,
+    )
+    working = environment.state.compiled_space
+    catalog = environment.list_tools()
     runtime_tools = list(catalog.get("runtime_tools") or [])
 
-    instruction_patches: list[MiproInstructionPatch] = []
-    demo_patches: list[MiproDemoPatch] = []
+    instruction_patches = environment.state.instruction_patches
+    demo_patches = environment.state.demo_patches
     transcript: list[dict[str, Any]] = []
     action_counts: dict[str, int] = {}
     stop_reason = "max_turns_reached"
@@ -3659,14 +3667,14 @@ async def run_openenv_react_proposer(
                 made_progress = False
             else:
                 try:
-                    result, stop_after, made_progress = _execute_action(
-                        action=action,
-                        compiled_space=working,
-                        context=context,
-                        config=cfg,
-                        instruction_patches=instruction_patches,
-                        demo_patches=demo_patches,
+                    tool_result = await environment.call_tool(
+                        action.name,
+                        dict(action.arguments),
+                        actor_id="openenv",
                     )
+                    result = dict(tool_result.get("result") or {})
+                    stop_after = bool(tool_result.get("stop_session"))
+                    made_progress = bool(tool_result.get("made_progress"))
                 except Exception as exc:
                     result = {
                         "status": "error",
@@ -3767,7 +3775,7 @@ async def run_openenv_react_proposer(
             live_messages.append({"role": "user", "content": followup_message})
 
     return MiproOpenEnvProposerOutcome(
-        compiled_space=working,
+        compiled_space=environment.state.compiled_space,
         instruction_patches=instruction_patches,
         demo_patches=demo_patches,
         transcript=transcript,
