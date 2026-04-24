@@ -12,6 +12,7 @@ pattern used in OpenEnv-style proposer loops:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from collections.abc import Mapping
@@ -54,6 +55,249 @@ _PARSE_FAILURE_REASONS = {
     "non_object_model_response",
     "missing_action",
 }
+_VARIANT_FIELDS = {
+    "variant_id",
+    "description",
+    "system_prompt",
+    "system_prompt_append",
+    "orientation_prompt",
+    "orientation_prompt_append",
+    "enabled_tools",
+    "disabled_tools",
+    "tool_order",
+    "tool_description_overrides",
+    "tool_schema_overrides",
+    "tool_extra_overrides",
+    "proposer_config_overrides",
+    "metadata",
+}
+
+
+def _jsonable_dict(value: Mapping[str, Any], *, field_name: str) -> dict[str, Any]:
+    output = dict(value)
+    try:
+        json.dumps(output, sort_keys=True, ensure_ascii=True, default=str)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be JSON-serializable") from exc
+    return output
+
+
+def _string_tuple(value: Any, *, field_name: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str) or not isinstance(value, list | tuple):
+        raise ValueError(f"{field_name} must be a list of strings")
+    seen: set[str] = set()
+    output: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if not text:
+            raise ValueError(f"{field_name} must not contain empty strings")
+        if text in seen:
+            continue
+        seen.add(text)
+        output.append(text)
+    return tuple(output)
+
+
+def _string_mapping(value: Any, *, field_name: str) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} must be an object")
+    output: dict[str, str] = {}
+    for key, item in value.items():
+        name = str(key).strip()
+        if not name:
+            raise ValueError(f"{field_name} keys must be non-empty strings")
+        output[name] = str(item)
+    return output
+
+
+def _object_mapping(value: Any, *, field_name: str) -> dict[str, dict[str, Any]]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} must be an object")
+    output: dict[str, dict[str, Any]] = {}
+    for key, item in value.items():
+        name = str(key).strip()
+        if not name:
+            raise ValueError(f"{field_name} keys must be non-empty strings")
+        if not isinstance(item, Mapping):
+            raise ValueError(f"{field_name}.{name} must be an object")
+        output[name] = _jsonable_dict(item, field_name=f"{field_name}.{name}")
+    return output
+
+
+@dataclass(slots=True, frozen=True)
+class MiproOpenEnvProposerVariant:
+    """Declarative proposer override used for checkpoint replay experiments."""
+
+    variant_id: str = "default"
+    description: str = ""
+    system_prompt: str | None = None
+    system_prompt_append: str | None = None
+    orientation_prompt: str | None = None
+    orientation_prompt_append: str | None = None
+    enabled_tools: tuple[str, ...] = ()
+    disabled_tools: tuple[str, ...] = ()
+    tool_order: tuple[str, ...] = ()
+    tool_description_overrides: dict[str, str] = field(default_factory=dict)
+    tool_schema_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+    tool_extra_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+    proposer_config_overrides: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "variant_id",
+            _require_non_empty(self.variant_id, field_name="MiproOpenEnvProposerVariant.variant_id"),
+        )
+        object.__setattr__(self, "description", str(self.description))
+        for attr in (
+            "system_prompt",
+            "system_prompt_append",
+            "orientation_prompt",
+            "orientation_prompt_append",
+        ):
+            value = getattr(self, attr)
+            object.__setattr__(self, attr, str(value) if value is not None else None)
+        object.__setattr__(
+            self,
+            "enabled_tools",
+            _string_tuple(self.enabled_tools, field_name="MiproOpenEnvProposerVariant.enabled_tools"),
+        )
+        object.__setattr__(
+            self,
+            "disabled_tools",
+            _string_tuple(self.disabled_tools, field_name="MiproOpenEnvProposerVariant.disabled_tools"),
+        )
+        object.__setattr__(
+            self,
+            "tool_order",
+            _string_tuple(self.tool_order, field_name="MiproOpenEnvProposerVariant.tool_order"),
+        )
+        object.__setattr__(
+            self,
+            "tool_description_overrides",
+            _string_mapping(
+                self.tool_description_overrides,
+                field_name="MiproOpenEnvProposerVariant.tool_description_overrides",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "tool_schema_overrides",
+            _object_mapping(
+                self.tool_schema_overrides,
+                field_name="MiproOpenEnvProposerVariant.tool_schema_overrides",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "tool_extra_overrides",
+            _object_mapping(
+                self.tool_extra_overrides,
+                field_name="MiproOpenEnvProposerVariant.tool_extra_overrides",
+            ),
+        )
+        if not isinstance(self.proposer_config_overrides, Mapping):
+            raise ValueError("MiproOpenEnvProposerVariant.proposer_config_overrides must be an object")
+        object.__setattr__(
+            self,
+            "proposer_config_overrides",
+            _jsonable_dict(
+                self.proposer_config_overrides,
+                field_name="MiproOpenEnvProposerVariant.proposer_config_overrides",
+            ),
+        )
+        if not isinstance(self.metadata, Mapping):
+            raise ValueError("MiproOpenEnvProposerVariant.metadata must be an object")
+        object.__setattr__(
+            self,
+            "metadata",
+            _jsonable_dict(self.metadata, field_name="MiproOpenEnvProposerVariant.metadata"),
+        )
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any] | None) -> "MiproOpenEnvProposerVariant":
+        if payload is None:
+            return cls()
+        if not isinstance(payload, Mapping):
+            raise ValueError("MiproOpenEnvProposerVariant.from_dict requires an object")
+        unknown = sorted(set(payload) - _VARIANT_FIELDS)
+        if unknown:
+            raise ValueError(f"unknown proposer variant field(s): {', '.join(unknown)}")
+        return cls(
+            variant_id=str(payload.get("variant_id") or "default"),
+            description=str(payload.get("description") or ""),
+            system_prompt=(
+                str(payload["system_prompt"]) if payload.get("system_prompt") is not None else None
+            ),
+            system_prompt_append=(
+                str(payload["system_prompt_append"])
+                if payload.get("system_prompt_append") is not None
+                else None
+            ),
+            orientation_prompt=(
+                str(payload["orientation_prompt"]) if payload.get("orientation_prompt") is not None else None
+            ),
+            orientation_prompt_append=(
+                str(payload["orientation_prompt_append"])
+                if payload.get("orientation_prompt_append") is not None
+                else None
+            ),
+            enabled_tools=_string_tuple(payload.get("enabled_tools"), field_name="enabled_tools"),
+            disabled_tools=_string_tuple(payload.get("disabled_tools"), field_name="disabled_tools"),
+            tool_order=_string_tuple(payload.get("tool_order"), field_name="tool_order"),
+            tool_description_overrides=_string_mapping(
+                payload.get("tool_description_overrides"),
+                field_name="tool_description_overrides",
+            ),
+            tool_schema_overrides=_object_mapping(
+                payload.get("tool_schema_overrides"),
+                field_name="tool_schema_overrides",
+            ),
+            tool_extra_overrides=_object_mapping(
+                payload.get("tool_extra_overrides"),
+                field_name="tool_extra_overrides",
+            ),
+            proposer_config_overrides=dict(payload.get("proposer_config_overrides") or {}),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "variant_id": self.variant_id,
+            "description": self.description,
+            "system_prompt": self.system_prompt,
+            "system_prompt_append": self.system_prompt_append,
+            "orientation_prompt": self.orientation_prompt,
+            "orientation_prompt_append": self.orientation_prompt_append,
+            "enabled_tools": list(self.enabled_tools),
+            "disabled_tools": list(self.disabled_tools),
+            "tool_order": list(self.tool_order),
+            "tool_description_overrides": dict(self.tool_description_overrides),
+            "tool_schema_overrides": {
+                key: dict(value) for key, value in self.tool_schema_overrides.items()
+            },
+            "tool_extra_overrides": {
+                key: dict(value) for key, value in self.tool_extra_overrides.items()
+            },
+            "proposer_config_overrides": dict(self.proposer_config_overrides),
+            "metadata": dict(self.metadata),
+        }
+
+    def stable_hash(self) -> str:
+        payload = json.dumps(
+            self.to_dict(),
+            sort_keys=True,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _require_non_empty(value: str, *, field_name: str) -> str:
@@ -72,6 +316,92 @@ def _truncate(text: str, *, limit: int = 240) -> str:
 
 def _demo_payload_key(demo: MiproDemo) -> str:
     return json.dumps(demo.to_dict(), sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+
+
+def _coerce_proposer_variant(
+    variant: MiproOpenEnvProposerVariant | Mapping[str, Any] | None,
+) -> MiproOpenEnvProposerVariant:
+    if variant is None:
+        return MiproOpenEnvProposerVariant()
+    if isinstance(variant, MiproOpenEnvProposerVariant):
+        return variant
+    return MiproOpenEnvProposerVariant.from_dict(variant)
+
+
+def _validate_tool_schema(tool_name: str, schema: Mapping[str, Any]) -> dict[str, Any]:
+    payload = _jsonable_dict(schema, field_name=f"tool_schema_overrides.{tool_name}")
+    if payload.get("type") != "object":
+        raise ValueError(f"tool_schema_overrides.{tool_name} must be a JSON schema object")
+    properties = payload.get("properties")
+    if properties is not None and not isinstance(properties, Mapping):
+        raise ValueError(f"tool_schema_overrides.{tool_name}.properties must be an object")
+    required = payload.get("required")
+    if required is not None and not isinstance(required, list):
+        raise ValueError(f"tool_schema_overrides.{tool_name}.required must be a list")
+    return payload
+
+
+def _ensure_known_tool_names(
+    *,
+    names: set[str],
+    requested: tuple[str, ...] | Mapping[str, Any],
+    field_name: str,
+) -> None:
+    values = requested.keys() if isinstance(requested, Mapping) else requested
+    unknown = sorted(str(name) for name in values if str(name) not in names)
+    if unknown:
+        raise ValueError(f"{field_name} references unknown tool(s): {', '.join(unknown)}")
+
+
+def _apply_tool_catalog_variant(
+    runtime_tools: list[dict[str, Any]],
+    variant: MiproOpenEnvProposerVariant,
+) -> list[dict[str, Any]]:
+    if not runtime_tools:
+        return []
+    tool_names = {str(item.get("name") or "") for item in runtime_tools}
+    tool_names.discard("")
+    for field_name, requested in (
+        ("enabled_tools", variant.enabled_tools),
+        ("disabled_tools", variant.disabled_tools),
+        ("tool_order", variant.tool_order),
+        ("tool_description_overrides", variant.tool_description_overrides),
+        ("tool_schema_overrides", variant.tool_schema_overrides),
+        ("tool_extra_overrides", variant.tool_extra_overrides),
+    ):
+        _ensure_known_tool_names(names=tool_names, requested=requested, field_name=field_name)
+
+    output: list[dict[str, Any]] = []
+    for tool in runtime_tools:
+        name = str(tool.get("name") or "")
+        patched = dict(tool)
+        if name in variant.tool_description_overrides:
+            patched["description"] = variant.tool_description_overrides[name]
+        if name in variant.tool_schema_overrides:
+            patched["input_schema"] = _validate_tool_schema(
+                name, variant.tool_schema_overrides[name]
+            )
+        if name in variant.tool_extra_overrides:
+            extras = dict(variant.tool_extra_overrides[name])
+            if "name" in extras:
+                raise ValueError("tool_extra_overrides cannot change executable tool names")
+            patched.update(extras)
+        output.append(patched)
+
+    if variant.enabled_tools:
+        enabled = set(variant.enabled_tools)
+        output = [tool for tool in output if str(tool.get("name") or "") in enabled]
+    if variant.disabled_tools:
+        disabled = set(variant.disabled_tools)
+        output = [tool for tool in output if str(tool.get("name") or "") not in disabled]
+    if variant.tool_order:
+        order = {name: idx for idx, name in enumerate(variant.tool_order)}
+        indexed_output = list(enumerate(output))
+        indexed_output.sort(
+            key=lambda pair: (order.get(str(pair[1].get("name") or ""), len(order)), pair[0])
+        )
+        output = [tool for _, tool in indexed_output]
+    return output
 
 
 def clone_compiled_space(compiled_space: CompiledMiproSpace) -> CompiledMiproSpace:
@@ -106,7 +436,10 @@ def clone_compiled_space(compiled_space: CompiledMiproSpace) -> CompiledMiproSpa
     )
 
 
-def build_openenv_tool_catalog(compiled_space: CompiledMiproSpace) -> dict[str, Any]:
+def build_openenv_tool_catalog(
+    compiled_space: CompiledMiproSpace,
+    variant: MiproOpenEnvProposerVariant | Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build an OpenEnv-like runtime tool catalog for proposer sessions."""
 
     _ = compiled_space
@@ -552,6 +885,8 @@ def build_openenv_tool_catalog(compiled_space: CompiledMiproSpace) -> dict[str, 
             "source": "mipro_openenv_action",
         },
     ]
+    variant_model = _coerce_proposer_variant(variant)
+    runtime_tools = _apply_tool_catalog_variant(runtime_tools, variant_model)
     return {
         "runtime_tools": runtime_tools,
         "tool_count": len(runtime_tools),
@@ -937,6 +1272,7 @@ class MiproOpenEnvProposerOutcome:
     read_tools_used: tuple[str, ...] = ()
     stop_reason: str = "unknown"
     prompt_tokens: int = 0
+    cached_prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
     model_turn_count: int = 0
@@ -944,6 +1280,16 @@ class MiproOpenEnvProposerOutcome:
     archive_spill_count: int = 0
     archived_message_count: int = 0
     archive_path: str | None = None
+
+
+def _cached_prompt_tokens_from_usage(usage: Mapping[str, Any]) -> int:
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, Mapping):
+        return int(details.get("cached_tokens") or 0)
+    details = usage.get("input_tokens_details")
+    if isinstance(details, Mapping):
+        return int(details.get("cached_tokens") or 0)
+    return int(usage.get("cached_prompt_tokens") or usage.get("cached_input_tokens") or 0)
 
 
 def _parse_groq_json_action(text: str) -> MiproOpenEnvAction:
@@ -1306,7 +1652,9 @@ def _orientation_user_message(
     objective: str,
     proposer_state: Mapping[str, Any],
     transcript: list[dict[str, Any]],
+    variant: MiproOpenEnvProposerVariant | Mapping[str, Any] | None = None,
 ) -> str:
+    variant_model = _coerce_proposer_variant(variant)
     components = list(proposer_state.get("components") or [])
     compact_components: list[dict[str, Any]] = []
     for item in components[:16]:
@@ -1342,11 +1690,16 @@ def _orientation_user_message(
         "components": compact_components,
         "recent_transcript_tail": _compact_proposer_transcript(transcript, limit=8),
     }
-    return (
+    message = (
         "MIPRO proposer context (summary-first). "
         "Use tools for detailed evidence before patching.\n"
         + json.dumps(summary_payload, sort_keys=True, ensure_ascii=True)
     )
+    if variant_model.orientation_prompt is not None:
+        message = variant_model.orientation_prompt
+    if variant_model.orientation_prompt_append:
+        message = f"{message}\n\n{variant_model.orientation_prompt_append}"
+    return message
 
 
 async def _next_action_via_openai_compatible(
@@ -1571,9 +1924,13 @@ def _tool_followup_user_message(
     return "\n".join(lines).strip() or None
 
 
-def _build_openenv_research_prompt(runtime_tools: list[dict[str, Any]]) -> str:
+def _build_openenv_research_prompt(
+    runtime_tools: list[dict[str, Any]],
+    variant: MiproOpenEnvProposerVariant | Mapping[str, Any] | None = None,
+) -> str:
+    variant_model = _coerce_proposer_variant(variant)
     tool_names = [str(item.get("name") or "") for item in runtime_tools]
-    return (
+    prompt = (
         "You are an OpenEnv ReAct proposer for MIPRO search space expansion. "
         "Use native tool calling to choose actions. You may make multiple tool calls in one response when they form a coherent evidence-gathering batch or a write-plus-finish batch. "
         "Do not emit JSON wrappers. Do not narrate unless no action is possible. "
@@ -1620,6 +1977,11 @@ def _build_openenv_research_prompt(runtime_tools: list[dict[str, Any]]) -> str:
         "  - task-specific rules that obviously break other task groups\n"
         "FINISH: call finish only after at least one successful add_* patch. If 3 consecutive patches are rejected, call list_registered_candidates and then finish immediately."
     )
+    if variant_model.system_prompt is not None:
+        prompt = variant_model.system_prompt
+    if variant_model.system_prompt_append:
+        prompt = f"{prompt}\n\n{variant_model.system_prompt_append}"
+    return prompt
 
 
 def _initial_live_messages(
@@ -1628,13 +1990,15 @@ def _initial_live_messages(
     runtime_tools: list[dict[str, Any]],
     proposer_state: Mapping[str, Any],
     transcript: list[dict[str, Any]],
+    variant: MiproOpenEnvProposerVariant | Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     return _conversation_messages(
-        system_prompt=_build_openenv_research_prompt(runtime_tools),
+        system_prompt=_build_openenv_research_prompt(runtime_tools, variant=variant),
         initial_user_message=_orientation_user_message(
             objective=objective,
             proposer_state=proposer_state,
             transcript=transcript,
+            variant=variant,
         ),
         transcript=[],
     )
@@ -3110,12 +3474,14 @@ async def run_openenv_react_proposer(
     agent: MiproOpenEnvReactAgent,
     context: MiproOpenEnvProposerContext,
     config: MiproOpenEnvProposerConfig | None = None,
+    variant: MiproOpenEnvProposerVariant | Mapping[str, Any] | None = None,
 ) -> MiproOpenEnvProposerOutcome:
     """Run one bounded OpenEnv-style proposer session and return an expanded space."""
 
     cfg = config or MiproOpenEnvProposerConfig()
+    variant_model = _coerce_proposer_variant(variant)
     working = clone_compiled_space(compiled_space)
-    catalog = build_openenv_tool_catalog(working)
+    catalog = build_openenv_tool_catalog(working, variant=variant_model)
     runtime_tools = list(catalog.get("runtime_tools") or [])
 
     instruction_patches: list[MiproInstructionPatch] = []
@@ -3134,6 +3500,7 @@ async def run_openenv_react_proposer(
     read_tools_used: set[str] = set()
     consecutive_patch_actions = 0
     prompt_tokens = 0
+    cached_prompt_tokens = 0
     completion_tokens = 0
     total_tokens = 0
     model_turn_count = 0
@@ -3175,6 +3542,7 @@ async def run_openenv_react_proposer(
                 runtime_tools=runtime_tools,
                 proposer_state=state,
                 transcript=transcript,
+                variant=variant_model,
             )
         _trim_messages_if_needed(
             messages=live_messages,
@@ -3202,6 +3570,7 @@ async def run_openenv_react_proposer(
             usage = dict(turn_response.usage)
             provider_trace = dict(turn_response.provider_trace)
             prompt_tokens += int(usage.get("prompt_tokens") or 0)
+            cached_prompt_tokens += _cached_prompt_tokens_from_usage(usage)
             completion_tokens += int(
                 usage.get("completion_tokens") or usage.get("output_tokens") or 0
             )
@@ -3413,6 +3782,7 @@ async def run_openenv_react_proposer(
         read_tools_used=tuple(sorted(read_tools_used)),
         stop_reason=stop_reason,
         prompt_tokens=prompt_tokens,
+        cached_prompt_tokens=cached_prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
         model_turn_count=model_turn_count,
@@ -3454,6 +3824,7 @@ def proposer_outcome_summary(outcome: MiproOpenEnvProposerOutcome) -> dict[str, 
         "evidence_read_action_count": outcome.evidence_read_action_count,
         "read_tools_used": list(outcome.read_tools_used),
         "prompt_tokens": outcome.prompt_tokens,
+        "cached_prompt_tokens": outcome.cached_prompt_tokens,
         "completion_tokens": outcome.completion_tokens,
         "total_tokens": outcome.total_tokens,
         "model_turn_count": outcome.model_turn_count,

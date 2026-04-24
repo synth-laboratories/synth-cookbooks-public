@@ -169,6 +169,35 @@ def extract_prediction(
     return normalized_lookup.get(normalized_raw, raw.splitlines()[0].strip() if raw else "")
 
 
+def _cached_prompt_tokens_from_usage(usage: Mapping[str, Any]) -> int:
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, Mapping):
+        return int(details.get("cached_tokens") or 0)
+    details = usage.get("input_tokens_details")
+    if isinstance(details, Mapping):
+        return int(details.get("cached_tokens") or 0)
+    return int(usage.get("cached_prompt_tokens") or usage.get("cached_input_tokens") or 0)
+
+
+def usage_from_response(response_json: Mapping[str, Any]) -> dict[str, int]:
+    usage = response_json.get("usage") if isinstance(response_json, Mapping) else None
+    if not isinstance(usage, Mapping):
+        return {
+            "prompt_tokens": 0,
+            "cached_prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+    prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+    completion_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "cached_prompt_tokens": _cached_prompt_tokens_from_usage(usage),
+        "completion_tokens": completion_tokens,
+        "total_tokens": int(usage.get("total_tokens") or (prompt_tokens + completion_tokens)),
+    }
+
+
 class Banking77Dataset:
     def __init__(self) -> None:
         self._train: Any | None = None
@@ -282,15 +311,31 @@ class Banking77Runtime:
 
     async def submit_rollout(self, request: Mapping[str, Any]) -> ExecutionRecord:
         payload = dict(request)
+        task_payload = payload.get("task_payload") if isinstance(payload.get("task_payload"), dict) else {}
         env = payload.get("env") if isinstance(payload.get("env"), dict) else {}
         env_config = env.get("config") if isinstance(env.get("config"), dict) else {}
-        split = str(env_config.get("split") or DEFAULT_SPLIT)
-        seed = int(env.get("seed") or payload.get("seed") or 0)
-        sample = self.dataset.sample(split=split, seed=seed)
+        example = task_payload.get("example") if isinstance(task_payload.get("example"), dict) else None
+        if example is None:
+            example = payload.get("example") if isinstance(payload.get("example"), dict) else None
+        split = str((example or {}).get("split") or env_config.get("split") or payload.get("split") or DEFAULT_SPLIT)
+        seed = int((example or {}).get("seed") or env.get("seed") or payload.get("seed") or 0)
+        if example is not None and example.get("text") is not None and example.get("label") is not None:
+            sample = {
+                "index": int(example.get("index") or seed),
+                "split": split,
+                "text": str(example.get("text") or ""),
+                "label": str(example.get("label") or ""),
+                "label_idx": int(example.get("label_idx") or 0),
+            }
+        else:
+            sample = self.dataset.sample(split=split, seed=seed)
         policy = payload.get("policy") if isinstance(payload.get("policy"), dict) else {}
         policy_cfg = policy.get("config") if isinstance(policy.get("config"), dict) else {}
-        system_prompt = str(policy_cfg.get("system_prompt") or DEFAULT_SYSTEM_PROMPT)
-        user_template = str(policy_cfg.get("user_prompt") or DEFAULT_USER_PROMPT)
+        candidate = task_payload.get("candidate") if isinstance(task_payload.get("candidate"), dict) else {}
+        if not candidate:
+            candidate = payload.get("candidate") if isinstance(payload.get("candidate"), dict) else {}
+        system_prompt = str(candidate.get("system_prompt") or policy_cfg.get("system_prompt") or DEFAULT_SYSTEM_PROMPT)
+        user_template = str(candidate.get("user_prompt") or policy_cfg.get("user_prompt") or DEFAULT_USER_PROMPT)
         available_intents = "\n".join(f"{idx + 1}. {label}" for idx, label in enumerate(self.dataset.label_names))
         user_prompt = user_template.format(query=sample["text"], available_intents=available_intents)
         raw_response, response_json, tool_calls = await call_chat_completion(
@@ -298,6 +343,7 @@ class Banking77Runtime:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
         )
+        usage = usage_from_response(response_json)
         predicted = extract_prediction(raw_text=raw_response, tool_calls=tool_calls, label_names=self.dataset.label_names)
         expected = str(sample["label"])
         reward = 1.0 if _normalize_label(predicted) == _normalize_label(expected) else 0.0
@@ -371,11 +417,14 @@ class Banking77Runtime:
             summary={
                 "outcome_reward": reward,
                 "correct": reward >= 1.0,
+                "output": predicted,
+                "prediction": predicted,
                 "predicted_intent": predicted,
                 "expected_intent": expected,
                 "split": split,
                 "seed": seed,
             },
+            usage=usage,
             metadata={
                 "status_detail": "completed",
                 "reward_source": "exact_label_match",

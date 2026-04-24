@@ -1,0 +1,23 @@
+{
+  "cookbook": "harbor_tblite_codex",
+  "trainer": "pipelinerl_tinker",
+  "environment": "tblite_codex_container",
+  "default_mode": "dry_run",
+  "train_budget": {
+    "baseline_rollouts": 8,
+    "training_rollouts": 32,
+    "heldout_rollouts": 16
+  },
+  "reward": {
+    "name": "harbor_verifier_success",
+    "range": [0.0, 1.0],
+    "source": "tblite_codex_container rollout result"
+  },
+  "artifacts": [
+    "rollout_records.jsonl",
+    "baseline_summary.json",
+    "training_summary.json",
+    "heldout_summary.json",
+    "result_note.md"
+  ]
+}

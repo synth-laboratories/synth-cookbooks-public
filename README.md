@@ -14,6 +14,8 @@ logs/screenshots.
   such as `synth-containers` and `synth-optimizers`.
 - `cookbooks/` - published recipes, narrative tutorials, runnable
   walkthroughs, and cookbook-local example files.
+- `skills/` - portable agent skills that help users run or adapt the public
+  packages and cookbooks.
 - `assets/` - public-safe screenshots, diagrams, and generated media.
 
 ## Target Layout
@@ -26,6 +28,7 @@ synth-cookbooks-public/
     synth-containers/
     synth-optimizers/
   cookbooks/
+  skills/
   assets/
 ```
 
@@ -40,3 +43,9 @@ metadata, README, version, build command, and publish command.
 - `packages/synth-containers/` - public container harnesses, service wrappers,
   and task adapters used by published recipes.
 - `packages/synth-optimizers/` - public optimizer package source.
+
+## Development
+
+See `DEVELOPERS.md` for contribution guidance, package validation commands, and
+the conventions for keeping cookbook examples separate from reusable package
+code.

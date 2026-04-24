@@ -301,6 +301,48 @@ class SQLiteMiproRunLedger:
         self._conn.commit()
         return int(cur.rowcount) > 0
 
+    def upsert_checkpoint(
+        self,
+        *,
+        checkpoint_id: str,
+        stage: str,
+        round_idx: int,
+        path: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        normalized_checkpoint_id = str(checkpoint_id).strip()
+        if not normalized_checkpoint_id:
+            raise ValueError("checkpoint_id must be non-empty")
+        normalized_stage = str(stage).strip()
+        if not normalized_stage:
+            raise ValueError("checkpoint stage must be non-empty")
+        normalized_path = str(path).strip()
+        if not normalized_path:
+            raise ValueError("checkpoint path must be non-empty")
+        now_ts = float(time.time())
+        self._conn.execute(
+            """
+            INSERT INTO checkpoints(
+                run_id, checkpoint_id, stage, round_idx, path, metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, checkpoint_id) DO UPDATE SET
+                stage=excluded.stage,
+                round_idx=excluded.round_idx,
+                path=excluded.path,
+                metadata_json=excluded.metadata_json
+            """,
+            (
+                self.run_id,
+                normalized_checkpoint_id,
+                normalized_stage,
+                int(round_idx),
+                normalized_path,
+                _json_dumps(dict(metadata or {})),
+                now_ts,
+            ),
+        )
+        self._conn.commit()
+
     def upsert_state(self, *, key: str, value: Any) -> None:
         state_key = str(key).strip()
         if not state_key:
@@ -1258,6 +1300,35 @@ class SQLiteMiproRunLedger:
             for row in rows
         ]
 
+    def query_checkpoints(
+        self,
+        *,
+        stage: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT checkpoint_id, stage, round_idx, path, metadata_json, created_at
+            FROM checkpoints
+            WHERE run_id = ?
+              AND (? IS NULL OR stage = ?)
+            ORDER BY round_idx ASC, created_at ASC
+            LIMIT ?
+            """,
+            (self.run_id, stage, stage, int(limit)),
+        ).fetchall()
+        return [
+            {
+                "checkpoint_id": str(row["checkpoint_id"]),
+                "stage": str(row["stage"]),
+                "round_idx": int(row["round_idx"]),
+                "path": str(row["path"]),
+                "metadata": _json_field(row["metadata_json"], default={}),
+                "created_at": float(row["created_at"]),
+            }
+            for row in rows
+        ]
+
     def build_run_read_model(self, *, limit_per_section: int = 50) -> dict[str, Any]:
         state = self.query_run_state()
         return {
@@ -1275,6 +1346,7 @@ class SQLiteMiproRunLedger:
             "transform_failures": self.query_transform_failures(limit=limit_per_section),
             "heldout_snapshots": self.query_heldout_snapshots(limit=limit_per_section),
             "proposer_rounds": self.query_proposer_rounds(limit=limit_per_section),
+            "checkpoints": self.query_checkpoints(limit=limit_per_section),
             "events": self.query_events(limit=limit_per_section),
             "workspace": self.workspace_snapshot(limit_per_section=min(limit_per_section, 20)),
         }
@@ -1355,6 +1427,7 @@ class SQLiteMiproRunLedger:
             "verdict_digests": self.query_candidate_verdict_digests(
                 limit=limit_per_section
             ),
+            "checkpoints": self.query_checkpoints(limit=limit_per_section),
         }
 
     def load_resume_state(self) -> MiproRunResumeState:
@@ -1694,6 +1767,17 @@ class SQLiteMiproRunLedger:
                 skipped_tabu_delta INTEGER NOT NULL,
                 created_at REAL NOT NULL,
                 PRIMARY KEY (run_id, seq)
+            );
+
+            CREATE TABLE IF NOT EXISTS checkpoints (
+                run_id TEXT NOT NULL,
+                checkpoint_id TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                round_idx INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                PRIMARY KEY (run_id, checkpoint_id)
             );
 
             CREATE TABLE IF NOT EXISTS run_state (

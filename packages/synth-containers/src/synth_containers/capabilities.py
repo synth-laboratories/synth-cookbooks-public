@@ -17,6 +17,7 @@ from .ontology import (
     StatefulnessTier,
 )
 from .profiles import infer_profiles
+from .resources import ResourceRef
 from .serde import JsonDataclassMixin
 from .tool_runtime import ToolRuntimeCapabilities
 
@@ -52,6 +53,7 @@ class RouteHints(JsonDataclassMixin):
     metadata_routes: list[str] = field(default_factory=lambda: ["/metadata", "/info"])
     task_info_routes: list[str] = field(default_factory=lambda: ["/task_info"])
     task_catalog_routes: list[str] = field(default_factory=lambda: ["/task_catalog"])
+    compatibility_routes: list[str] = field(default_factory=lambda: ["/compatibility"])
     rollout_routes: list[str] = field(default_factory=lambda: ["/rollout", "/rollouts"])
     state_routes: list[str] = field(default_factory=lambda: ["/rollouts/{rollout_id}/state"])
     pause_routes: list[str] = field(default_factory=lambda: ["/rollouts/{rollout_id}/pause"])
@@ -218,6 +220,7 @@ class TaskInfo(JsonDataclassMixin):
     task_metadata: dict[str, Any] = field(default_factory=dict)
     environment: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    resource_refs: list[ResourceRef] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -226,6 +229,7 @@ class TaskCatalog(JsonDataclassMixin):
     tasks: list[TaskDefinition] = field(default_factory=list)
     instances: list[TaskInstance] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    resource_refs: list[ResourceRef] = field(default_factory=list)
 
     def task_ids(self) -> list[str]:
         return [task.task_id for task in self.tasks]

@@ -27,6 +27,7 @@ from .compatibility import (
     compatibility_matrix,
     consumer_requirement,
     evaluate_consumer_support,
+    evaluate_runtime_requirement,
 )
 from .contracts import (
     ArtifactContract,
@@ -89,6 +90,15 @@ from .recovery import (
     derive_run_recovery_projection,
 )
 from .reference_runtime import CounterRuntime, InMemoryAsyncRolloutExecutor, ReferenceManagedRuntime
+from .resources import ResourceKind, ResourceRef
+from .rewards import NLEScoutRewardTracker, ScoutRewardUpdate, TimePenaltyMode
+from .runtime_requests import (
+    CheckpointLabelsRequest,
+    PauseRequest,
+    RuntimeCheckpointRequest,
+    RuntimeResumeRequest,
+    TerminateRequest,
+)
 from .tasks import DatasetSplit, InMemoryTaskCatalog, TaskFilter, task_definition_from_task_info
 from .tool_runtime import ToolCallSchemaKind, ToolOutputMode, ToolRuntimeCapabilities, ToolRuntimeKind
 from .wire import (
@@ -114,6 +124,7 @@ __all__ = [
     "CONSUMER_REQUIREMENTS",
     "CapabilityLevel",
     "CheckpointDescriptor",
+    "CheckpointLabelsRequest",
     "CheckpointResumeContract",
     "CheckpointSemantics",
     "CompatibilityIssue",
@@ -138,9 +149,11 @@ __all__ = [
     "InferenceTarget",
     "LeverBundle",
     "ManagedRuntime",
+    "NLEScoutRewardTracker",
     "Observation",
     "Outcome",
     "OutcomeKind",
+    "PauseRequest",
     "PrimitiveProtocol",
     "ProxyMode",
     "ProxyResolution",
@@ -151,15 +164,20 @@ __all__ = [
     "ResumeSemantics",
     "RewardSignal",
     "RewardSource",
+    "ResourceKind",
+    "ResourceRef",
     "RolloutMode",
     "RolloutState",
     "RouteHints",
     "RunPolicyContract",
     "RunRecoveryProjection",
     "RuntimeCapabilitySurface",
+    "RuntimeCheckpointRequest",
     "RuntimeFamily",
     "RuntimeKind",
     "RuntimeMetadata",
+    "RuntimeResumeRequest",
+    "ScoutRewardUpdate",
     "StateSnapshot",
     "StatefulnessTier",
     "SubmissionMode",
@@ -169,6 +187,8 @@ __all__ = [
     "TaskFilter",
     "TaskInfo",
     "TaskInstance",
+    "TerminateRequest",
+    "TimePenaltyMode",
     "TokenEmissionCapabilities",
     "TokenTrace",
     "ToolCallRecord",
@@ -196,6 +216,7 @@ __all__ = [
     "derive_run_recovery_projection",
     "environments_old_descriptor",
     "evaluate_consumer_support",
+    "evaluate_runtime_requirement",
     "execution_to_rollout_payload",
     "execution_to_state_payload",
     "harbor_descriptor",

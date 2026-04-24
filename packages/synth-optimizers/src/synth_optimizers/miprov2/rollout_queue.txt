@@ -1,0 +1,138 @@
+MIPROv2 rollout queue notes
+===========================
+
+Purpose
+-------
+
+MIPROv2 currently lets the proposer inspect historical trials, candidate
+evidence, read-model summaries, and the current compiled search space. It does
+not yet give the proposer a direct view of what the optimizer is likely to try
+next if the proposer stops changing the search space.
+
+That missing view matters because the proposer is not only inventing candidate
+material; it is also shaping what TPE can sample. A proposer tool that previews
+the tentative next candidate batch would make proposer decisions more grounded:
+"if I stop now, these are the next K candidates TPE would probably evaluate."
+
+Useful nouns
+------------
+
+QueuedRollout:
+
+- queue_id
+- rollout_id
+- candidate_id
+- candidate_interventions
+- split
+- row_id
+- seed
+- task_instance_id
+- evaluator_config
+- status: queued | running | completed | failed | skipped
+- priority
+- created_by: tpe | proposer_preview | replay | manual
+- created_at
+- started_at
+- completed_at
+- result_ref
+
+CandidateIntervention:
+
+- candidate_id
+- parent_candidate_id
+- lever_bundle_hash
+- source_config
+- instruction_options
+- instruction_transforms
+- demo_options
+- metadata
+
+RolloutQueue:
+
+- queue_id
+- queue_kind: tentative | committed | replay
+- task_id
+- split
+- created_by
+- candidate_count
+- rollout_count
+- rows
+- candidates
+- rollouts
+
+MIPROv2 application
+------------------
+
+In MIPROv2, evaluating one candidate on N train rows means scheduling N queued
+rollouts. A candidate queue preview can therefore expose both levels:
+
+- the next K candidate interventions TPE would suggest from the current search
+  space and observations
+- the concrete rollout rows/seeds those candidates would run against for the
+  current train wave
+
+The first implementation should be read-only:
+
+1. Clone the compiled search space and optimizer state.
+2. Ask TPE for the next K suggestions without mutating the real optimizer.
+3. Decode each suggestion into a MiproProgramCandidate.
+4. Materialize a tentative RolloutQueue against the current sampled train rows.
+5. Return the queue through a proposer tool such as preview_tpe_candidates or
+   check_tpe_state.
+
+Important semantics
+-------------------
+
+The preview is not a promise. TPE is stochastic, and real observed rewards from
+pending trials can change future suggestions. The tool result should label the
+queue as tentative and include the observation count, RNG seed, and config used
+to produce it.
+
+Still, a tentative queue is useful. It answers the proposer's practical question:
+"assuming no more transformations and no new rewards, what work is the optimizer
+about to spend budget on?"
+
+Proposer tool sketch
+--------------------
+
+preview_tpe_candidates input:
+
+- candidate_count: integer, default 8
+- rows_per_candidate: integer | null, default current train wave size
+- include_rollouts: boolean, default true
+- include_prompt_payloads: boolean, default true
+
+preview_tpe_candidates output:
+
+- queue_kind: tentative
+- candidate_count
+- rollout_count
+- optimizer_observation_count
+- rng_seed
+- tpe_config
+- candidates:
+  - candidate_id
+  - parent_candidate_id
+  - lever_bundle_hash
+  - source_config
+  - instruction/demonstration intervention summary
+  - prompt payload preview
+- rollouts:
+  - rollout_id
+  - candidate_id
+  - row_id
+  - seed
+  - split
+  - evaluator_config
+
+Follow-on work
+--------------
+
+- Add a ledger table or normalized artifact for queued rollouts.
+- Add proposer tools to inspect tentative and committed queues.
+- Record queue snapshots before and after accepted proposer transforms so the
+  proposer checkpoint eval can ask whether a variant improved the next planned
+  work, not only whether the directly proposed candidates improved heldout rows.
+- Reuse QueuedRollout and CandidateIntervention across GEPA, Go-Explore,
+  Archipelago, Harbor, and OpenEnv eval harnesses so every optimizer can expose
+  scheduled work in the same shape.

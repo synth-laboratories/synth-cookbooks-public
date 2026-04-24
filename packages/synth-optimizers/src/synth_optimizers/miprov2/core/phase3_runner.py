@@ -8,13 +8,19 @@ import json
 import os
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any, Protocol, TypeAlias, cast
 from uuid import uuid4
 
 from synth_optimizers.miprov2.core.optimizer import (
     DiscreteMiproOptimizer,
     MiproTrialResult,
+)
+from synth_optimizers.miprov2.core.checkpointing import (
+    CHECKPOINT_STAGE_BEFORE_PROPOSER,
+    compiled_space_to_snapshot,
+    write_proposer_checkpoint,
 )
 from synth_optimizers.miprov2.core.phase2_runner import (
     EvaluateCandidateFn,
@@ -74,6 +80,8 @@ class MiproPhase3Config:
     proposer_trace_dir: str | None = ".out/miprov2/proposer_traces"
     write_proposer_trace_json: bool = True
     proposer_config: MiproOpenEnvProposerConfig | None = None
+    checkpoint_policy: str = "none"
+    checkpoint_dir: str | None = None
 
     def __post_init__(self) -> None:
         if int(self.proposer_rounds) < 0:
@@ -101,6 +109,11 @@ class MiproPhase3Config:
         if int(self.candidate_delta_example_limit) <= 0:
             raise ValueError(
                 "MiproPhase3Config.candidate_delta_example_limit must be > 0"
+            )
+        checkpoint_policy = str(self.checkpoint_policy or "none").strip()
+        if checkpoint_policy not in {"none", "before_each_proposer"}:
+            raise ValueError(
+                "MiproPhase3Config.checkpoint_policy must be 'none' or 'before_each_proposer'"
             )
 
 
@@ -134,6 +147,18 @@ class MiproPhase3Outcome:
     skipped_tabu_candidates: int = 0
     run_id: str | None = None
     ledger_path: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class MiproProposerStepInput:
+    round_idx: int
+    recent_failures: tuple[str, ...]
+    recent_successes: tuple[str, ...]
+    sampled_train_rows: list[dict[str, Any]]
+    recent_trial_rows: list[dict[str, Any]]
+    recent_trial_summary: dict[str, Any]
+    train_read_model: dict[str, Any]
+    proposer_context: MiproOpenEnvProposerContext
 
 
 def _aggregate_proposer_diagnostics(
@@ -912,28 +937,7 @@ async def run_phase3_loop(
     def persist_compiled_space_snapshot() -> None:
         ledger.upsert_state(
             key="compiled_space_snapshot",
-            value={
-                "search_space": {
-                    key: list(value) for key, value in working_space.search_space.items()
-                },
-                "instruction_lookup": {
-                    key: dict(value) for key, value in working_space.instruction_lookup.items()
-                },
-                "demo_lookup": {
-                    key: {
-                        option_id: demo.to_dict() for option_id, demo in value.items()
-                    }
-                    for key, value in working_space.demo_lookup.items()
-                },
-                "instruction_metadata": {
-                    key: {option_id: dict(payload) for option_id, payload in value.items()}
-                    for key, value in working_space.instruction_metadata.items()
-                },
-                "demo_metadata": {
-                    key: {option_id: dict(payload) for option_id, payload in value.items()}
-                    for key, value in working_space.demo_metadata.items()
-                },
-            },
+            value=compiled_space_to_snapshot(working_space),
         )
 
     async def refresh_train_read_model() -> dict[str, Any]:
@@ -1143,7 +1147,10 @@ async def run_phase3_loop(
             if isinstance(snapshot_payload, Mapping):
                 search_space = snapshot_payload.get("search_space")
                 instruction_lookup = snapshot_payload.get("instruction_lookup")
+                instruction_base_lookup = snapshot_payload.get("instruction_base_lookup")
+                instruction_transforms = snapshot_payload.get("instruction_transforms")
                 instruction_metadata = snapshot_payload.get("instruction_metadata")
+                instruction_base_metadata = snapshot_payload.get("instruction_base_metadata")
                 demo_metadata = snapshot_payload.get("demo_metadata")
                 if isinstance(search_space, Mapping):
                     working_space.search_space.clear()
@@ -1162,6 +1169,29 @@ async def run_phase3_loop(
                         for key, value in instruction_lookup.items()
                         if isinstance(value, Mapping)
                     })
+                if isinstance(instruction_base_lookup, Mapping):
+                    working_space.instruction_base_lookup.clear()
+                    working_space.instruction_base_lookup.update({
+                        str(key): {
+                            str(option_id): str(text)
+                            for option_id, text in value.items()
+                        }
+                        for key, value in instruction_base_lookup.items()
+                        if isinstance(value, Mapping)
+                    })
+                if isinstance(instruction_transforms, Mapping):
+                    from synth_optimizers.miprov2.core.instruction_transforms import InstructionTransform
+
+                    working_space.instruction_transforms.clear()
+                    working_space.instruction_transforms.update({
+                        str(key): {
+                            str(transform_id): InstructionTransform.from_dict(dict(payload))
+                            for transform_id, payload in value.items()
+                            if isinstance(payload, Mapping)
+                        }
+                        for key, value in instruction_transforms.items()
+                        if isinstance(value, Mapping)
+                    })
                 if isinstance(instruction_metadata, Mapping):
                     working_space.instruction_metadata.clear()
                     working_space.instruction_metadata.update({
@@ -1171,6 +1201,17 @@ async def run_phase3_loop(
                             if isinstance(payload, Mapping)
                         }
                         for key, value in instruction_metadata.items()
+                        if isinstance(value, Mapping)
+                    })
+                if isinstance(instruction_base_metadata, Mapping):
+                    working_space.instruction_base_metadata.clear()
+                    working_space.instruction_base_metadata.update({
+                        str(key): {
+                            str(option_id): dict(payload)
+                            for option_id, payload in value.items()
+                            if isinstance(payload, Mapping)
+                        }
+                        for key, value in instruction_base_metadata.items()
                         if isinstance(value, Mapping)
                     })
                 if isinstance(demo_metadata, Mapping):
@@ -1456,6 +1497,60 @@ async def run_phase3_loop(
                     "recent_trial_rows": recent_trial_rows,
                 },
             )
+            run_identifier = out.run_id or run_id or ledger.run_id
+            if cfg.checkpoint_policy == "before_each_proposer":
+                checkpoint_root = (
+                    cfg.checkpoint_dir
+                    if cfg.checkpoint_dir is not None
+                    else str(Path(ledger.workspace_root) / "checkpoints")
+                )
+                checkpoint_payload = write_proposer_checkpoint(
+                    checkpoint_dir=checkpoint_root,
+                    run_id=str(run_identifier),
+                    round_idx=proposer_round_idx,
+                    compiled_space=working_space,
+                    observations=list(out.train_observations),
+                    best_train_candidate=out.best_train_candidate,
+                    best_train_score=out.best_train_score,
+                    baseline_candidate=baseline_candidate,
+                    baseline_train_score=out.baseline_train_score,
+                    heldout_baseline_score=out.heldout_baseline_score,
+                    proposer_context=proposer_context,
+                    train_read_model=train_read_model,
+                    sampled_train_rows=sampled_rows,
+                    recent_trial_rows=recent_trial_rows,
+                    tabu_hashes=tabu_lever_bundle_hashes,
+                    config={
+                        "phase3": {
+                            "proposer_rounds": int(cfg.proposer_rounds),
+                            "train_rounds_per_proposer_round": int(
+                                cfg.train_rounds_per_proposer_round
+                            ),
+                            "bootstrap_train_rounds": int(cfg.bootstrap_train_rounds),
+                            "top_k": int(cfg.top_k),
+                            "max_concurrency": int(cfg.max_concurrency),
+                            "checkpoint_policy": str(cfg.checkpoint_policy),
+                        },
+                        "proposer_config": (
+                            asdict(cfg.proposer_config)
+                            if cfg.proposer_config is not None
+                            else None
+                        ),
+                    },
+                    ledger_path=str(ledger.ledger_path),
+                )
+                artifact_refs = dict(checkpoint_payload.get("artifact_refs") or {})
+                ledger.upsert_checkpoint(
+                    checkpoint_id=str(checkpoint_payload["checkpoint_id"]),
+                    stage=CHECKPOINT_STAGE_BEFORE_PROPOSER,
+                    round_idx=proposer_round_idx,
+                    path=str(artifact_refs.get("checkpoint") or ""),
+                    metadata={
+                        "best_train_score": out.best_train_score,
+                        "heldout_baseline_score": out.heldout_baseline_score,
+                        "candidate_count": len(candidate_rows),
+                    },
+                )
             proposer_outcome = await run_openenv_react_proposer(
                 compiled_space=working_space,
                 agent=agent,
@@ -1473,7 +1568,6 @@ async def run_phase3_loop(
             )
             persist_compiled_space_snapshot()
             proposer_summary = proposer_outcome_summary(proposer_outcome)
-            run_identifier = out.run_id or run_id
             proposer_trace_payload = {
                 "run_id": run_identifier,
                 "round_idx": proposer_round_idx,

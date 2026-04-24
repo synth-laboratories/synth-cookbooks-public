@@ -40,14 +40,64 @@ Initial migration source:
 
 ## MVP Shape
 
-1. Copy only public-safe source files and configs.
-2. Remove generated files and local caches.
+Current structure:
+
+```text
+openenv_minigrid/
+  README.md
+  pipelinerl_modal/
+  minigrid_container/
+  run.py
+  run_artifacts/
+```
+
+- `minigrid_container/` holds the public-safe MiniGrid runtime, task registry,
+  container metadata, smoke path, and snapshot/checkpoint proof path.
+- `minigrid_container/synth_service_app.py` is the public `synth-containers`
+  contract entrypoint.
+- `pipelinerl_modal/` holds the Modal PipelineRL training/inference glue.
+- `run.py` is the single public example entrypoint.
+- `run_artifacts/` holds small committed example outputs from `run.py`.
+
+## Run
+
+Generate the public-safe dry-run artifacts:
+
+```bash
+python cookbooks/openenv_minigrid/run.py
+```
+
+This writes:
+
+- `run_artifacts/dry_run/plan.json`
+- `run_artifacts/dry_run/summary.md`
+
+Run the public `synth-containers` service:
+
+```bash
+PYTHONPATH=packages/synth-containers/src:cookbooks/openenv_minigrid/minigrid_container \
+PORT=8932 python cookbooks/openenv_minigrid/minigrid_container/synth_service_app.py
+```
+
+Run the local smoke and snapshot proof only after that service is already
+running:
+
+```bash
+python cookbooks/openenv_minigrid/run.py --execute-local-smoke
+```
+
+The default command does not start local services and does not launch Modal.
+
+Implementation steps:
+
+1. Copy only public-safe source files and configs. Done for the MVP source set.
+2. Remove generated files and local caches. Done.
 3. Prefer `synth_service_app.py` as the normalized public entrypoint if it
-   already matches the `synth-containers` route vocabulary.
-4. Provide one local service startup command.
-5. Provide one smoke command.
-6. Provide one snapshot/checkpoint proof command.
-7. Add a Modal PipelineRL training config.
+   already matches the `synth-containers` route vocabulary. Done.
+4. Provide one local service startup command. Captured in `run.py` artifacts.
+5. Provide one smoke command. Captured in `run.py` artifacts.
+6. Provide one snapshot/checkpoint proof command. Captured in `run.py` artifacts.
+7. Add a Modal PipelineRL training config. Scoped in `pipelinerl_modal/`.
 8. Run a small baseline eval before training.
 9. Run Modal PipelineRL.
 10. Run a final eval and report whether the result is positive, negative, or

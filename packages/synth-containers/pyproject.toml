@@ -14,16 +14,31 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
+    "build>=1.2.1",
+    "twine>=5.0.0",
+    "ruff>=0.6.0",
+    "ty>=0.0.32",
+]
+
+[dependency-groups]
+dev = [
+    "build>=1.2.1",
+    "twine>=5.0.0",
+    "ruff>=0.6.0",
+    "ty>=0.0.32",
 ]
 
 [project.urls]
 Homepage = "https://github.com/synth-laboratories/synth-cookbooks-public/tree/main/packages/synth-containers"
 Repository = "https://github.com/synth-laboratories/synth-cookbooks-public"
+Issues = "https://github.com/synth-laboratories/synth-cookbooks-public/issues"
 
 [build-system]
 requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.uv]
+package = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -33,7 +48,3 @@ include = ["synth_containers", "synth_containers.*"]
 line-length = 100
 target-version = "py311"
 src = ["src"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]

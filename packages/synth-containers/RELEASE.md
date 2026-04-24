@@ -8,7 +8,17 @@ packages in this monorepo.
 Run from `packages/synth-containers/`:
 
 ```bash
-python -m build
+uv run --group dev ruff check src
+uv run --group dev ty check src
+uv build
+uv run --group dev twine check dist/*
+```
+
+For cookbook-facing releases, also compile the touched cookbook entrypoints
+from the repository root:
+
+```bash
+PYTHONPATH=packages/synth-containers/src python -m py_compile $(rg --files cookbooks -g '*.py')
 ```
 
 ## Publish
@@ -16,7 +26,7 @@ python -m build
 After confirming the version and inspecting the generated artifacts:
 
 ```bash
-python -m twine upload dist/*
+uv publish dist/*
 ```
 
 Publish automation is intentionally TBD until the repository-level packaging
