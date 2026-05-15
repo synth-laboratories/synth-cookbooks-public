@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import threading
+import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,7 +21,8 @@ CONFIG_PATH = COOKBOOK_ROOT / "miprov2" / "banking77_openai_split_confusable_30x
 OPTIMIZERS_SRC = REPO_ROOT / "packages" / "synth-optimizers" / "src"
 CONTAINERS_SRC = REPO_ROOT / "packages" / "synth-containers" / "src"
 BANKING77_CONTAINER_SRC = COOKBOOK_ROOT / "banking77_container"
-LOCAL_SYNTH_ENV = REPO_ROOT.parent / "synth-ai" / ".env"
+LOCAL_SYNTH_ENV = REPO_ROOT / ".env"
+_LOCAL_SYNTH_ENV_FALLBACK = REPO_ROOT.parent / "synth-ai" / ".env"
 
 
 KNOWN_EVIDENCE = {
@@ -135,9 +137,10 @@ def _ensure_local_imports() -> None:
 
 def _load_local_api_keys() -> list[str]:
     loaded: list[str] = []
-    if not LOCAL_SYNTH_ENV.exists():
+    env_path = LOCAL_SYNTH_ENV if LOCAL_SYNTH_ENV.exists() else _LOCAL_SYNTH_ENV_FALLBACK
+    if not env_path.exists():
         return loaded
-    for raw_line in LOCAL_SYNTH_ENV.read_text(encoding="utf-8").splitlines():
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -735,6 +738,7 @@ def execute_live(
     loaded_key_names = _load_local_api_keys()
     from synth_optimizers.miprov2.core import (
         DiscreteMiproOptimizer,
+        MiproCodexProposerConfig,
         MiproGroundingHooks,
         HeuristicOpenEnvReactAgent,
         MiproModuleTemplate,
@@ -782,6 +786,25 @@ def execute_live(
     heldout_details_by_candidate_id: dict[str, dict[str, Any]] = {}
     heldout_details_order: list[dict[str, Any]] = []
 
+    _prog = {
+        "start": time.time(),
+        "best_train": -1.0,
+        "train_evals": 0,
+        "heldout_evals": 0,
+        "target_rollouts": int(config.get("target_total_train_rollouts") or 9999),
+        "proposer_model": str(config.get("codex_proposer_model") or config.get("proposer_model") or "?"),
+        "policy_model": str(config.get("policy_model") or "?"),
+    }
+    _sep = "─" * 72
+    print(_sep)
+    print(
+        f"  MIPROv2  policy={_prog['policy_model']}  "
+        f"proposer={_prog['proposer_model']}  "
+        f"train={len(train_rows)}  heldout={len(heldout_rows)}  "
+        f"proposer_trigger={_prog['target_rollouts']} rollouts"
+    )
+    print(_sep, flush=True)
+
     async def evaluate_rows(rows: list[dict[str, Any]], candidate: Any, *, split: str) -> tuple[float, dict[str, Any]]:
         nonlocal metric_call_count
         batch = await adapter.evaluate(rows, _candidate_to_prompt_map(candidate), capture_traces=True)
@@ -803,11 +826,169 @@ def execute_live(
             heldout_details_order.append(dict(details))
         return (sum(scores) / len(scores) if scores else 0.0, details)
 
+    _MODULE_ABBREV = {"system_prompt": "sys", "user_prompt": "usr"}
+    _seen_option_ids: set[str] = set()  # "module_id:option_id" pairs already displayed
+    # Populated from baseline compiled space + proposer event patches (working_space is a clone)
+    _option_text_cache: dict[str, str] = {
+        f"{comp_key.replace('module:', '').replace(':instruction', '')}:{oid}": text
+        for comp_key, lookup in compiled.instruction_lookup.items()
+        for oid, text in lookup.items()
+    }
+
+    def _format_option_ids(candidate: Any) -> str:
+        base_ids: dict[str, str] = dict(getattr(candidate, "selected_instruction_base_option_ids", {}) or {})
+        if not base_ids:
+            return ""
+        parts = " ".join(
+            f"{_MODULE_ABBREV.get(mid, mid[:4])}={oid}"
+            for mid, oid in sorted(base_ids.items())
+        )
+        return f"  [{parts}]"
+
+    def _print_tpe_beliefs(candidate: Any, current_score: float) -> None:
+        try:
+            obs_list = list(optimizer.tpe.observations)
+            # Include the current trial (tell() hasn't been called yet)
+            base_ids: dict[str, str] = dict(getattr(candidate, "selected_instruction_base_option_ids", {}) or {})
+            current_config = {
+                f"module:{mid}:instruction": oid for mid, oid in base_ids.items()
+            }
+            if current_config:
+                obs_list = list(obs_list) + [type("_Obs", (), {"config": current_config, "score": current_score})()]
+            if not obs_list:
+                return
+            comp_scores: dict[str, dict[str, list[float]]] = {}
+            for obs in obs_list:
+                for comp_key, opt_id in obs.config.items():
+                    comp_scores.setdefault(comp_key, {}).setdefault(opt_id, []).append(obs.score)
+            parts = []
+            for comp_key in sorted(comp_scores):
+                mod_id = comp_key.replace("module:", "").replace(":instruction", "")
+                short = _MODULE_ABBREV.get(mod_id, mod_id[:4])
+                opt_parts = [
+                    f"{oid}(μ={sum(sc)/len(sc):.3f} n={len(sc)})"
+                    for oid, sc in sorted(comp_scores[comp_key].items())
+                ]
+                parts.append(f"{short}: {' '.join(opt_parts)}")
+            print(f"           tpe  {'   '.join(parts)}", flush=True)
+        except Exception:
+            pass
+
+    def _print_first_seen_options(candidate: Any) -> None:
+        base_ids: dict[str, str] = dict(getattr(candidate, "selected_instruction_base_option_ids", {}) or {})
+        for mid, oid in sorted(base_ids.items()):
+            key = f"{mid}:{oid}"
+            if key in _seen_option_ids:
+                continue
+            _seen_option_ids.add(key)
+            text = _option_text_cache.get(key, "")
+            if text:
+                short = _MODULE_ABBREV.get(mid, mid[:4])
+                preview = text[:100].replace("\n", " ↵ ")
+                if len(text) > 100:
+                    preview += "…"
+                print(f"           {short} {oid}  {preview!r}", flush=True)
+
     async def evaluate_train(candidate: Any) -> tuple[float, dict[str, Any]]:
-        return await evaluate_rows(train_rows, candidate, split="train")
+        _eval_num = _prog["train_evals"] + 1
+        _prog["train_evals"] = _eval_num
+        result = await evaluate_rows(train_rows, candidate, split="train")
+        score = result[0]
+        elapsed = time.time() - _prog["start"]
+        opts_str = _format_option_ids(candidate)
+        marker = ""
+        if score > _prog["best_train"]:
+            _prog["best_train"] = score
+            marker = "  ★ new best"
+        print(
+            f"  {elapsed:6.1f}s  train #{_eval_num:>3}{opts_str}"
+            f"  score={score:.3f}  best={_prog['best_train']:.3f}"
+            f"  rollouts={metric_call_count}{marker}",
+            flush=True,
+        )
+        _print_tpe_beliefs(candidate, score)
+        return result
 
     async def evaluate_heldout(candidate: Any) -> tuple[float, dict[str, Any]]:
-        return await evaluate_rows(heldout_rows, candidate, split="heldout")
+        _prog["heldout_evals"] += 1
+        result = await evaluate_rows(heldout_rows, candidate, split="heldout")
+        score = result[0]
+        elapsed = time.time() - _prog["start"]
+        cid = str(getattr(candidate, "candidate_id", "") or "")[-12:]
+        print(
+            f"  {elapsed:6.1f}s  heldout #{_prog['heldout_evals']:>2}  {cid}"
+            f"  score={score:.3f}",
+            flush=True,
+        )
+        return result
+
+    _proposer_token_totals = {"prompt": 0, "completion": 0, "total": 0}
+
+    def _on_proposer_event(event: dict[str, Any]) -> None:
+        elapsed = time.time() - _prog["start"]
+        kind = event.get("event")
+        round_idx = event.get("round_idx", "?")
+        if kind == "start":
+            print(
+                f"  {elapsed:6.1f}s  ── codex proposer round {round_idx} starting"
+                f"  (model={event.get('model', '?')}) ──",
+                flush=True,
+            )
+        elif kind == "complete":
+            n = event.get("n_new_candidates", 0)
+            secs = event.get("elapsed_s", 0.0)
+            prop_prompt = event.get("prompt_tokens", 0)
+            prop_comp = event.get("completion_tokens", 0)
+            prop_total = event.get("total_tokens", 0)
+            _proposer_token_totals["prompt"] += prop_prompt
+            _proposer_token_totals["completion"] += prop_comp
+            _proposer_token_totals["total"] += prop_total
+            tok_str = (
+                f"  proposer_tokens={prop_total} (in={prop_prompt} / out={prop_comp})"
+                if prop_total > 0 else ""
+            )
+            patches = event.get("patches", [])
+            by_module: dict[str, list[str]] = {}
+            for p in patches:
+                mid = str(p.get("module_id", "?"))
+                oid = str(p.get("option_id", "?"))
+                text = str(p.get("instruction_text", ""))
+                by_module.setdefault(mid, []).append(oid)
+                if mid and oid and text:
+                    _option_text_cache[f"{mid}:{oid}"] = text
+            module_summary = "  ".join(
+                f"{_MODULE_ABBREV.get(k, k[:4])}: +{' +'.join(ids)}"
+                for k, ids in by_module.items()
+            )
+            print(
+                f"  {elapsed:6.1f}s  ── codex proposer round {round_idx} done"
+                f"  {secs:.1f}s  {n} new transforms  [{module_summary}]{tok_str} ──",
+                flush=True,
+            )
+            for p in patches:
+                mid = str(p.get("module_id", "?"))
+                oid = str(p.get("option_id", "?"))
+                text = str(p.get("instruction_text", ""))
+                short = _MODULE_ABBREV.get(mid, mid[:4])
+                preview = text[:110].replace("\n", " ↵ ")
+                if len(text) > 110:
+                    preview += "…"
+                print(f"           {short} {oid}  {preview!r}", flush=True)
+            # Running totals
+            pol = policy_usage_totals
+            pol_in = int(pol.get("prompt_tokens") or 0)
+            pol_out = int(pol.get("completion_tokens") or 0)
+            pol_total = pol_in + pol_out
+            prop_run_total = _proposer_token_totals["total"]
+            prop_run_str = (
+                f"  proposer_total={prop_run_total}"
+                if prop_run_total > 0 else ""
+            )
+            print(
+                f"           policy_tokens={pol_total}"
+                f" (in={pol_in} / out={pol_out}){prop_run_str}",
+                flush=True,
+            )
 
     interactive_enabled = bool(interactive_proposer or config.get("interactive_proposer"))
     interactive_resume_id = str(
@@ -822,8 +1003,23 @@ def execute_live(
             else output_dir / "proposer_sessions"
         )
     )
-    if interactive_enabled:
+    proposer_backend = str(config.get("proposer_backend") or "openenv_react").strip().lower()
+    codex_cfg: MiproCodexProposerConfig | None = None
+    if proposer_backend == "codex_workspace":
+        codex_cfg = MiproCodexProposerConfig(
+            model=str(config.get("codex_proposer_model") or "gpt-5.4-mini"),
+            openai_base_url=str(config.get("codex_proposer_openai_base_url") or ""),
+            api_key_env=str(config.get("codex_proposer_api_key_env") or ""),
+            copy_host_auth=bool(config.get("codex_proposer_copy_host_auth", True)),
+            turn_timeout_seconds=float(config.get("codex_proposer_turn_timeout_seconds") or 300.0),
+            shutdown_timeout_seconds=float(config.get("codex_proposer_shutdown_timeout_seconds") or 30.0),
+            workspace_root=str(config.get("codex_proposer_workspace_root") or ""),
+        )
         proposer_agent = HeuristicOpenEnvReactAgent()
+        proposer_control = "codex_workspace"
+    elif interactive_enabled:
+        proposer_agent = HeuristicOpenEnvReactAgent()
+        proposer_control = "interactive_pause"
     else:
         api_key = os.environ.get("OPENAI_API_KEY", "").strip()
         if not api_key:
@@ -835,6 +1031,7 @@ def execute_live(
             max_tokens=int(config.get("proposer_max_completion_tokens") or 1200),
             timeout_s=float(config.get("proposer_timeout_s") or 120),
         )
+        proposer_control = "auto"
     proposer_rounds = 1 if smoke else int(config.get("max_proposer_sessions") or 6)
     train_rounds_per_proposer_round = 1 if smoke else max(
         1,
@@ -863,7 +1060,7 @@ def execute_live(
                 proposer_trace_dir=str(output_dir / "artifacts" / "proposer_traces"),
                 checkpoint_policy=str(config.get("checkpoint_policy") or "none"),
                 checkpoint_dir=str(output_dir / "checkpoints"),
-                proposer_control="interactive_pause" if interactive_enabled else "auto",
+                proposer_control=proposer_control,
                 interactive_session_root=str(configured_session_root),
                 interactive_resume_session_id=interactive_resume_id or None,
                 proposer_config=MiproOpenEnvProposerConfig(
@@ -878,6 +1075,8 @@ def execute_live(
             run_id=f"{config.get('run_id')}_native{'_smoke' if smoke else ''}",
             ledger_path=str(ledger_path),
             resume=bool(interactive_resume_id),
+            codex_config=codex_cfg,
+            on_proposer_event=_on_proposer_event if proposer_backend == "codex_workspace" else None,
         )
     )
 
@@ -1072,6 +1271,28 @@ def execute_live(
             "loaded_local_key_count": len(loaded_key_names),
         },
     )
+    _total_elapsed = time.time() - _prog["start"]
+    _best_cid = str((best_candidate or {}).get("candidate_id", "") or "")[-12:]
+    _baseline = payload.get("baseline_train_score", 0.0)
+    _best = payload.get("best_train_score", 0.0)
+    _heldout_baseline = payload.get("baseline_heldout_score")
+    _heldout_best = payload.get("best_heldout_score")
+    _pol = policy_usage_totals
+    _pol_in = int(_pol.get("prompt_tokens") or 0)
+    _pol_out = int(_pol.get("completion_tokens") or 0)
+    _prop_total = _proposer_token_totals["total"]
+    print(_sep)
+    print(
+        f"  done  {_total_elapsed:.1f}s  "
+        f"train: {_baseline:.3f} → {_best:.3f}"
+        + (f"  heldout: {_heldout_baseline:.3f} → {_heldout_best:.3f}" if _heldout_best is not None else "")
+        + f"  best={_best_cid}  rollouts={metric_call_count}"
+    )
+    print(
+        f"  policy tokens:   in={_pol_in:,}  out={_pol_out:,}  total={_pol_in+_pol_out:,}"
+        + (f"\n  proposer tokens: total={_prop_total:,}" if _prop_total > 0 else "")
+    )
+    print(_sep, flush=True)
     print(f"wrote native MIPROv2 OpenEnv artifacts to {live_dir}")
     return 0
 

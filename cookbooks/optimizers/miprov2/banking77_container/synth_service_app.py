@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import random
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,6 +81,8 @@ def _provider_api_key(policy_cfg: Mapping[str, Any], endpoint: str) -> str:
     env_name = "SYNTH_API_KEY"
     if provider == "openai" or "api.openai.com" in endpoint.lower():
         env_name = "OPENAI_API_KEY"
+    elif provider == "groq" or "api.groq.com" in endpoint.lower():
+        env_name = "GROQ_API_KEY"
     value = os.environ.get(env_name, "").strip()
     if value:
         return value
@@ -123,13 +128,52 @@ async def call_chat_completion(
         "tools": [tool_schema],
         "tool_choice": "required",
     }
+    _provider = str(policy_cfg.get("provider") or "").strip().lower()
+    if _provider == "groq" or "groq.com" in endpoint.lower():
+        payload["max_tokens"] = payload.pop("max_completion_tokens")
+        payload["temperature"] = 1.0
+        payload.pop("tools", None)
+        payload.pop("tool_choice", None)
+        # The prompts instruct the model to call a tool; override with JSON format so
+        # the model returns plain {"intent": "..."} instead of tool-call syntax.
+        _json_hint_sys = "\n\nDo NOT use tool calls. Return ONLY a JSON object: {\"intent\": \"<label>\"}"
+        _json_hint_usr = "\n\nIMPORTANT: Do not call any tool. Respond with JSON only: {\"intent\": \"<label>\"}"
+        payload["messages"] = [
+            {**msg, "content": str(msg.get("content") or "") + (
+                _json_hint_sys if msg.get("role") == "system" else
+                _json_hint_usr if msg.get("role") == "user" else ""
+            )}
+            for msg in payload.get("messages", [])
+        ]
     async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            endpoint,
-            json=payload,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        )
-        response.raise_for_status()
+        for _attempt in range(12):
+            response = await client.post(
+                endpoint,
+                json=payload,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            )
+            if response.status_code == 429:
+                # Honor the provider's retry-after time, plus jitter to stagger concurrent callers.
+                # Fall back to short exponential backoff if the time is not parseable.
+                _retry_secs = 0.1 * (2.0 ** min(_attempt, 6))
+                _body_text = response.text
+                _match = re.search(r"try again in ([\d.]+)(ms|s)", _body_text)
+                if _match:
+                    _val = float(_match.group(1))
+                    _from_header = _val / 1000.0 if _match.group(2) == "ms" else _val
+                    _retry_secs = max(_retry_secs, _from_header)
+                _retry_secs += random.uniform(0.05, 0.5)
+                await asyncio.sleep(min(_retry_secs, 60.0))
+                continue
+            if response.is_error:
+                raise RuntimeError(
+                    f"Inference request failed {response.status_code}: {response.text}"
+                )
+            break
+        else:
+            raise RuntimeError(
+                f"Inference request failed after retries {response.status_code}: {response.text}"
+            )
         body = response.json()
     choices = body.get("choices") or []
     first_message = (choices[0] or {}).get("message") if choices else {}

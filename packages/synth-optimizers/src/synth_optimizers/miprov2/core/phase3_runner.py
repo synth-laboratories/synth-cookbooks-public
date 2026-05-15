@@ -17,6 +17,7 @@ from synth_optimizers.miprov2.core.optimizer import (
     DiscreteMiproOptimizer,
     MiproTrialResult,
 )
+from synth_optimizers.miprov2.core.candidate_plugins import MiproCandidatePluginKind
 from synth_optimizers.miprov2.core.checkpointing import (
     CHECKPOINT_STAGE_BEFORE_PROPOSER,
     compiled_space_to_snapshot,
@@ -62,7 +63,11 @@ from synth_optimizers.miprov2.core.proposer_memory import (
     proposer_memory_summary,
     rollout_label_id_for,
 )
-from synth_optimizers.miprov2.core.proposer_tools import tool_category
+from synth_optimizers.miprov2.core.proposer_tools import (
+    normalize_plugin_state,
+    plugin_state_summary,
+    tool_category,
+)
 from synth_optimizers.miprov2.core.run_ledger import (
     SQLiteMiproRunLedger,
     load_resume_state,
@@ -158,9 +163,9 @@ class MiproPhase3Config:
                 "MiproPhase3Config.checkpoint_policy must be 'none' or 'before_each_proposer'"
             )
         proposer_control = str(self.proposer_control or "auto").strip()
-        if proposer_control not in {"auto", "interactive_pause"}:
+        if proposer_control not in {"auto", "interactive_pause", "codex_workspace"}:
             raise ValueError(
-                "MiproPhase3Config.proposer_control must be 'auto' or 'interactive_pause'"
+                "MiproPhase3Config.proposer_control must be 'auto', 'interactive_pause', or 'codex_workspace'"
             )
         if self.interactive_resume_session_id and proposer_control != "interactive_pause":
             raise ValueError(
@@ -423,6 +428,7 @@ def _interactive_outcome_from_committed_session(
         tool_call_count=len(tool_events),
         queue_state=dict(state.queue_state),
         memory_state=dict(state.memory_state),
+        plugin_state=dict(state.plugin_state),
         runbook_warnings=list(runbook_payload.get("warnings") or []),
         runbook_violation_count=int(runbook_payload.get("violation_count") or 0),
         runbook_summary={
@@ -444,6 +450,8 @@ def _interactive_outcome_from_committed_session(
         "queue_state": dict(state.queue_state),
         "memory_state": dict(state.memory_state),
         "memory_summary": proposer_memory_summary(state.memory_state),
+        "plugin_state": dict(state.plugin_state),
+        "plugin_summary": plugin_state_summary(state.plugin_state),
         "runbook_summary": outcome.runbook_summary,
         "runbook_warnings": list(outcome.runbook_warnings),
     }
@@ -451,13 +459,37 @@ def _interactive_outcome_from_committed_session(
 
 
 def _candidate_intervention_ref(candidate: MiproProgramCandidate) -> MiproCandidateInterventionRef:
+    plugin_kind = str(candidate.active_execution_mode or MiproCandidatePluginKind.PROMPT_CONTEXT.value)
+    if candidate.active_finetune_ref:
+        plugin_kind = MiproCandidatePluginKind.SFT.value
+    elif plugin_kind in {"prompt", "prompt_only"}:
+        plugin_kind = MiproCandidatePluginKind.PROMPT_CONTEXT.value
+    materialization_status = "succeeded" if candidate.active_finetune_ref else "static_ready"
     return MiproCandidateInterventionRef(
         candidate_id=str(candidate.candidate_id or ""),
         parent_candidate_id=candidate.parent_candidate_id,
         lever_bundle_hash=str(candidate.lever_bundle_hash or ""),
         source_config=dict(candidate.source_config),
-        plugin_kind=str(candidate.active_execution_mode or "prompt"),
+        plugin_kind=plugin_kind,
         plugin_id=candidate.active_model_transform_id,
+        materialization_id=candidate.active_model_transform_id,
+        materialization_status=materialization_status,
+        prompt_context_intervention={
+            "selected_instructions": dict(candidate.selected_instructions),
+            "selected_instruction_base_option_ids": dict(
+                candidate.selected_instruction_base_option_ids
+            ),
+            "selected_instruction_transform_ids": {
+                key: list(value)
+                for key, value in candidate.selected_instruction_transform_ids.items()
+            },
+            "selected_demos": {
+                module_id: {
+                    slot_id: demo.to_dict() for slot_id, demo in slot_map.items()
+                }
+                for module_id, slot_map in candidate.selected_demos.items()
+            },
+        },
         prompt_intervention={
             "selected_instructions": dict(candidate.selected_instructions),
             "selected_instruction_base_option_ids": dict(
@@ -478,6 +510,14 @@ def _candidate_intervention_ref(candidate: MiproProgramCandidate) -> MiproCandid
             "active_finetune_ref": candidate.active_finetune_ref,
             "active_model_transform_id": candidate.active_model_transform_id,
         },
+        execution_binding=(
+            {"binding_kind": "sft_model_adapter", "finetune_ref": candidate.active_finetune_ref}
+            if candidate.active_finetune_ref
+            else {
+                "binding_kind": "prompt_context",
+                "source_config": dict(candidate.source_config),
+            }
+        ),
         metadata={"program_id": candidate.program_id},
     )
 
@@ -1229,6 +1269,8 @@ async def run_phase3_loop(
     run_id: str | None = None,
     ledger_path: str | None = None,
     resume: bool = False,
+    codex_config: "MiproCodexProposerConfig | None" = None,
+    on_proposer_event: "Callable[[dict], None] | None" = None,
 ) -> MiproPhase3Outcome:
     """Run proposer + train loop with evidence-rich rollout state and digests."""
 
@@ -1254,6 +1296,7 @@ async def run_phase3_loop(
     proposer_rounds_completed = 0
     latest_train_read_model: dict[str, Any] = {}
     proposer_memory_state: dict[str, Any] = normalize_memory_state({})
+    candidate_plugin_state: dict[str, Any] = normalize_plugin_state({})
     pending_interactive_proposer: dict[str, Any] | None = None
     interactive_resume_session_id = str(cfg.interactive_resume_session_id or "").strip()
 
@@ -1304,6 +1347,10 @@ async def run_phase3_loop(
         ledger.upsert_state(key="tabu_hashes", value=sorted(tabu_lever_bundle_hashes))
         ledger.upsert_state(key="tabu_hash_count", value=len(tabu_lever_bundle_hashes))
         ledger.upsert_state(key="latest_proposer_memory_state", value=dict(proposer_memory_state))
+        ledger.upsert_state(
+            key="latest_candidate_plugin_state",
+            value=dict(candidate_plugin_state),
+        )
         ledger.upsert_state(key="baseline_train_score", value=out.baseline_train_score)
         ledger.upsert_state(
             key="heldout_baseline_score", value=out.heldout_baseline_score
@@ -1877,6 +1924,9 @@ async def run_phase3_loop(
             restored_memory = resume_state.run_state.get("latest_proposer_memory_state")
             if isinstance(restored_memory, Mapping):
                 proposer_memory_state = normalize_memory_state(dict(restored_memory))
+            restored_plugins = resume_state.run_state.get("latest_candidate_plugin_state")
+            if isinstance(restored_plugins, Mapping):
+                candidate_plugin_state = normalize_plugin_state(dict(restored_plugins))
             restored_sessions = resume_state.run_state.get("proposer_sessions")
             if isinstance(restored_sessions, list):
                 out.proposer_sessions = [
@@ -2114,6 +2164,8 @@ async def run_phase3_loop(
                     "rollout_queue_state": rollout_queue_state,
                     "proposer_memory_state": proposer_memory_state,
                     "proposer_memory_summary": proposer_memory_summary(proposer_memory_state),
+                    "candidate_plugin_state": candidate_plugin_state,
+                    "candidate_plugin_summary": plugin_state_summary(candidate_plugin_state),
                 },
             )
             run_identifier = out.run_id or run_id or ledger.run_id
@@ -2213,6 +2265,7 @@ async def run_phase3_loop(
                         config=cfg.proposer_config,
                         queue_state=rollout_queue_state,
                         memory_state=proposer_memory_state,
+                        plugin_state=candidate_plugin_state,
                     )
                     pending_interactive_proposer = {
                         "run_id": str(run_identifier),
@@ -2237,6 +2290,47 @@ async def run_phase3_loop(
                     persist_common_state()
                     ledger.set_status(status="paused_for_interactive_proposer")
                     return out
+            elif cfg.proposer_control == "codex_workspace":
+                import time as _time
+                from pathlib import Path as _Path
+                from synth_optimizers.miprov2.core.proposer_codex import (
+                    MiproCodexProposerConfig,
+                    run_codex_workspace_proposer,
+                )
+                _codex_cfg = codex_config or MiproCodexProposerConfig()
+                _workspace_root = (
+                    _Path(str(_codex_cfg.workspace_root).strip()).expanduser().resolve()
+                    if str(_codex_cfg.workspace_root or "").strip()
+                    else _Path(ledger.workspace_root) / "proposer_workspace" / "codex" / f"round_{proposer_round_idx}"
+                )
+                if on_proposer_event is not None:
+                    on_proposer_event({
+                        "event": "start",
+                        "round_idx": proposer_round_idx,
+                        "model": str(_codex_cfg.model),
+                    })
+                _proposer_t0 = _time.time()
+                proposer_outcome = await run_codex_workspace_proposer(
+                    compiled_space=working_space,
+                    proposer_context=proposer_context,
+                    config=_codex_cfg,
+                    workspace_root=_workspace_root,
+                )
+                if on_proposer_event is not None:
+                    on_proposer_event({
+                        "event": "complete",
+                        "round_idx": proposer_round_idx,
+                        "elapsed_s": _time.time() - _proposer_t0,
+                        "n_new_candidates": proposer_outcome.patch_action_count,
+                        "stop_reason": str(proposer_outcome.stop_reason),
+                        "prompt_tokens": proposer_outcome.prompt_tokens,
+                        "completion_tokens": proposer_outcome.completion_tokens,
+                        "total_tokens": proposer_outcome.total_tokens,
+                        "patches": [
+                            {"module_id": p.module_id, "option_id": p.option_id, "instruction_text": p.instruction_text}
+                            for p in proposer_outcome.instruction_patches
+                        ],
+                    })
             else:
                 proposer_outcome = await run_openenv_react_proposer(
                     compiled_space=working_space,
@@ -2245,6 +2339,7 @@ async def run_phase3_loop(
                     config=cfg.proposer_config,
                     queue_state=rollout_queue_state,
                     memory_state=proposer_memory_state,
+                    plugin_state=candidate_plugin_state,
                 )
             stop_reason = str(proposer_outcome.stop_reason)
             out.stop_reason_frequency[stop_reason] = (
@@ -2258,6 +2353,7 @@ async def run_phase3_loop(
             persist_compiled_space_snapshot()
             proposer_summary = proposer_outcome_summary(proposer_outcome)
             proposer_memory_state = normalize_memory_state(proposer_outcome.memory_state)
+            candidate_plugin_state = normalize_plugin_state(proposer_outcome.plugin_state)
             proposer_memory_artifact = ledger.upsert_proposer_memory(
                 memory_state=proposer_memory_state,
                 round_idx=proposer_round_idx,
@@ -2265,6 +2361,10 @@ async def run_phase3_loop(
             ledger.upsert_state(
                 key="latest_proposer_memory_state",
                 value=dict(proposer_memory_state),
+            )
+            ledger.upsert_state(
+                key="latest_candidate_plugin_state",
+                value=dict(candidate_plugin_state),
             )
             proposer_trace_payload = {
                 "run_id": run_identifier,
