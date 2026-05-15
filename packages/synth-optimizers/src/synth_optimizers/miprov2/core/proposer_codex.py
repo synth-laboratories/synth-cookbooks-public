@@ -32,6 +32,7 @@ from synth_optimizers.codex_runtime import (
 from synth_optimizers.miprov2.core.program_compiler import (
     CompiledMiproSpace,
     register_instruction_candidate,
+    register_stage_candidate,
 )
 from synth_optimizers.miprov2.core.proposer_openenv import (
     MiproInstructionPatch,
@@ -103,11 +104,55 @@ def materialize_mipro_codex_workspace(
     )
 
     # proposal/PROPOSAL_SCHEMA.md — instructions for the model
-    modules_desc = "\n".join(
-        f"  - `{m.module_id}`"
-        for m in sorted(compiled_space.program_template.modules, key=lambda x: x.module_id)
-    )
-    schema_doc = f"""# MIPROv2 Codex Proposer — Proposal Schema
+    stages = compiled_space.program_template.stages
+    has_stages = len(stages) > 1 or (len(stages) == 1 and stages[0].stage_id != "stage_0")
+    if has_stages:
+        stages_desc = ""
+        for stage in stages:
+            module_lines = "\n".join(f'        "{m.module_id}": "<new instruction text>"' for m in stage.modules)
+            stages_desc += f'    {{\n      "stage_id": "{stage.stage_id}",\n      "modules": {{\n{module_lines}\n      }}\n    }},\n'
+        stage_names_desc = "\n".join(
+            f"  - `{s.stage_id}`" + (f" ({s.stage_name})" if s.stage_name else "")
+            + ": " + ", ".join(f"`{m.module_id}`" for m in s.modules)
+            for s in stages
+        )
+        schema_doc = f"""# MIPROv2 Codex Proposer — Proposal Schema
+
+Write `proposal/manifest.json` using schema_version `{_PROPOSAL_SCHEMA_VERSION}`.
+
+This is a **multi-stage pipeline**. Each patch covers one pipeline stage and must supply
+updated instruction text for every module in that stage.
+
+## Required fields
+
+```json
+{{
+  "schema_version": "{_PROPOSAL_SCHEMA_VERSION}",
+  "patches": [
+{stages_desc.rstrip()}
+  ]
+}}
+```
+
+## Stages and their modules
+
+{stage_names_desc}
+
+## Rules
+
+- Each patch must have `stage_id` (string) and `modules` (object mapping module_id → instruction_text).
+- Supply ALL modules for the stage — partial updates are rejected.
+- You may propose multiple patches per stage (different ideas for the same stage).
+- Do not reuse instruction text that already appears verbatim in `state/instruction_components.json`.
+- Read `state/run_metadata.json` for context on what has worked and what has failed.
+- Write the manifest as strict JSON to `proposal/manifest.json`.
+"""
+    else:
+        modules_desc = "\n".join(
+            f"  - `{m.module_id}`"
+            for m in sorted(compiled_space.program_template.modules, key=lambda x: x.module_id)
+        )
+        schema_doc = f"""# MIPROv2 Codex Proposer — Proposal Schema
 
 Write `proposal/manifest.json` using schema_version `{_PROPOSAL_SCHEMA_VERSION}`.
 
@@ -206,17 +251,49 @@ def import_mipro_codex_proposal(
     for patch in patches:
         if not isinstance(patch, dict):
             continue
-        module_id = str(patch.get("module_id") or "").strip()
-        instruction_text = str(patch.get("instruction_text") or "").strip()
-        if not module_id or not instruction_text:
-            continue
-        registered, option_id, _component_key = register_instruction_candidate(
-            compiled_space=compiled_space,
-            module_id=module_id,
-            instruction_text=instruction_text,
-        )
-        if registered:
-            new_candidate_ids.append(option_id)
+
+        stage_id = str(patch.get("stage_id") or "").strip()
+        if stage_id:
+            # Stage patch: {"stage_id": "...", "modules": {"mod_id": "text", ...}}
+            raw_modules = patch.get("modules")
+            if not isinstance(raw_modules, dict):
+                continue
+            module_instructions = {
+                str(k).strip(): str(v).strip()
+                for k, v in raw_modules.items()
+                if str(k).strip() and str(v).strip()
+            }
+            if not module_instructions:
+                continue
+            registered, _stage_oid = register_stage_candidate(
+                compiled_space=compiled_space,
+                stage_id=stage_id,
+                module_instructions=module_instructions,
+            )
+            if registered:
+                # Collect the per-module option IDs that were just registered
+                stage_key = f"stage:{stage_id}:instruction"
+                stage_lookup = compiled_space.stage_instruction_lookup.get(stage_key, {})
+                per_module_ids = stage_lookup.get(_stage_oid, {}).get(
+                    "__per_module_option_ids__", {}
+                )
+                for opt_id in per_module_ids.values():
+                    if opt_id not in new_candidate_ids:
+                        new_candidate_ids.append(opt_id)
+        else:
+            # Legacy per-module patch: {"module_id": "...", "instruction_text": "..."}
+            module_id = str(patch.get("module_id") or "").strip()
+            instruction_text = str(patch.get("instruction_text") or "").strip()
+            if not module_id or not instruction_text:
+                continue
+            registered, option_id, _component_key = register_instruction_candidate(
+                compiled_space=compiled_space,
+                module_id=module_id,
+                instruction_text=instruction_text,
+            )
+            if registered:
+                new_candidate_ids.append(option_id)
+
     return new_candidate_ids
 
 

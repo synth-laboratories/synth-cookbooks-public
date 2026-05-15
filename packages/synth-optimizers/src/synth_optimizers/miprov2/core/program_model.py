@@ -256,8 +256,63 @@ class MiproModuleTemplate:
 
 
 @dataclass(slots=True, frozen=True)
-class MiproProgramTemplate:
+class MiproStageTemplate:
+    """One LLM call in a multi-stage pipeline.
+
+    Groups the modules (prompt slots) that belong to a single inference step.
+    The proposer produces one transform per stage — a coordinated update to all
+    modules in that step — rather than proposing each slot independently.
+    """
+
+    stage_id: str
     modules: tuple[MiproModuleTemplate, ...]
+    stage_name: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "stage_id",
+            _require_non_empty(self.stage_id, field_name="MiproStageTemplate.stage_id"),
+        )
+        modules = tuple(self.modules)
+        if not modules:
+            raise ValueError("MiproStageTemplate.modules must contain at least one module")
+        module_ids = [item.module_id for item in modules]
+        if len(set(module_ids)) != len(module_ids):
+            raise ValueError(
+                f"MiproStageTemplate '{self.stage_id}' has duplicate module_id values"
+            )
+        object.__setattr__(self, "modules", modules)
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "stage_id": self.stage_id,
+            "modules": [m.to_dict() for m in self.modules],
+        }
+        if self.stage_name is not None:
+            d["stage_name"] = self.stage_name
+        return d
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> MiproStageTemplate:
+        raw_modules = payload.get("modules")
+        if not isinstance(raw_modules, list):
+            raise ValueError("MiproStageTemplate.modules must be a list")
+        modules = tuple(
+            MiproModuleTemplate.from_dict(item)
+            for item in raw_modules
+            if isinstance(item, Mapping)
+        )
+        return cls(
+            stage_id=str(payload.get("stage_id") or ""),
+            modules=modules,
+            stage_name=str(payload["stage_name"]) if payload.get("stage_name") else None,
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class MiproProgramTemplate:
+    stages: tuple[MiproStageTemplate, ...]
     program_id: str = "mipro_program"
 
     def __post_init__(self) -> None:
@@ -266,29 +321,50 @@ class MiproProgramTemplate:
             "program_id",
             _require_non_empty(self.program_id, field_name="MiproProgramTemplate.program_id"),
         )
-        modules = tuple(self.modules)
-        if not modules:
-            raise ValueError("MiproProgramTemplate.modules must contain at least one module")
-        module_ids = [item.module_id for item in modules]
-        if len(set(module_ids)) != len(module_ids):
-            raise ValueError("MiproProgramTemplate.modules has duplicate module_id values")
-        object.__setattr__(self, "modules", modules)
+        stages = tuple(self.stages)
+        if not stages:
+            raise ValueError("MiproProgramTemplate.stages must contain at least one stage")
+        stage_ids = [s.stage_id for s in stages]
+        if len(set(stage_ids)) != len(stage_ids):
+            raise ValueError("MiproProgramTemplate.stages has duplicate stage_id values")
+        all_module_ids = [m.module_id for s in stages for m in s.modules]
+        if len(set(all_module_ids)) != len(all_module_ids):
+            raise ValueError("MiproProgramTemplate has duplicate module_id values across stages")
+        object.__setattr__(self, "stages", stages)
+
+    @property
+    def modules(self) -> tuple[MiproModuleTemplate, ...]:
+        """Flat view of all modules across all stages (read-only)."""
+        return tuple(m for s in self.stages for m in s.modules)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "program_id": self.program_id,
-            "modules": [item.to_dict() for item in self.modules],
+            "stages": [s.to_dict() for s in self.stages],
         }
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> MiproProgramTemplate:
+        # New format: stages list
+        if payload.get("stages") is not None:
+            raw_stages = payload["stages"]
+            if not isinstance(raw_stages, list):
+                raise ValueError("MiproProgramTemplate.stages must be a list")
+            stages = tuple(
+                MiproStageTemplate.from_dict(item)
+                for item in raw_stages
+                if isinstance(item, Mapping)
+            )
+            return cls(program_id=str(payload.get("program_id") or "mipro_program"), stages=stages)
+        # Legacy format: flat modules list — auto-wrap in a single stage
         raw_modules = payload.get("modules")
         if not isinstance(raw_modules, list):
-            raise ValueError("MiproProgramTemplate.modules must be a list")
+            raise ValueError("MiproProgramTemplate requires 'stages' or 'modules'")
         modules = tuple(
             MiproModuleTemplate.from_dict(item) for item in raw_modules if isinstance(item, Mapping)
         )
-        return cls(program_id=str(payload.get("program_id") or "mipro_program"), modules=modules)
+        stage = MiproStageTemplate(stage_id="stage_0", modules=modules)
+        return cls(program_id=str(payload.get("program_id") or "mipro_program"), stages=(stage,))
 
 
 def materialized_lever_bundle_payload(

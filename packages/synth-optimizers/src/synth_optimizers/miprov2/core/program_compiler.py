@@ -21,11 +21,16 @@ from synth_optimizers.miprov2.core.program_model import (
     MiproDemo,
     MiproProgramCandidate,
     MiproProgramTemplate,
+    MiproStageTemplate,
 )
 
 
 def instruction_component_key(module_id: str) -> str:
     return f"module:{module_id}:instruction"
+
+
+def stage_component_key(stage_id: str) -> str:
+    return f"stage:{stage_id}:instruction"
 
 
 def demo_component_key(module_id: str, slot_id: str) -> str:
@@ -67,9 +72,22 @@ class CompiledMiproSpace:
         default_factory=dict
     )
     demo_metadata: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    # Stage-level lookup: stage_component_key → option_id → {module_id: instruction_text}
+    # Populated by register_stage_candidate; used by the proposer and display layer.
+    stage_instruction_lookup: dict[str, dict[str, dict[str, str]]] = field(
+        default_factory=dict
+    )
 
     def decode(self, config: Mapping[str, str]) -> MiproProgramCandidate:
         return decode_config(self, config)
+
+    def stage_for_module(self, module_id: str) -> MiproStageTemplate | None:
+        """Return the stage that owns this module_id, or None if not found."""
+        for stage in self.program_template.stages:
+            for m in stage.modules:
+                if m.module_id == module_id:
+                    return stage
+        return None
 
 
 def _ordered_modules(template: MiproProgramTemplate):
@@ -327,6 +345,56 @@ def register_instruction_candidate(
         },
     )
     return True, base_option_id, component_key
+
+
+def register_stage_candidate(
+    *,
+    compiled_space: CompiledMiproSpace,
+    stage_id: str,
+    module_instructions: Mapping[str, str],
+) -> tuple[bool, str]:
+    """Register a stage-level transform: a coordinated update to all modules in one stage.
+
+    ``module_instructions`` maps module_id → instruction_text for every module in the stage.
+    Returns (registered, option_id) where registered=False means an identical stage option
+    already existed and option_id is the existing one.
+
+    Internally, each per-module instruction is also registered in the per-module lookup via
+    ``register_instruction_candidate`` so TPE can score modules individually if desired.
+    All per-module registrations must succeed (or be deduped to the same option_id) for the
+    stage option to be accepted.
+    """
+    stage_key = stage_component_key(stage_id)
+    stage_lookup = compiled_space.stage_instruction_lookup.setdefault(stage_key, {})
+
+    # Dedup: if an existing stage option has identical per-module texts, reuse it
+    for existing_oid, existing_modules in stage_lookup.items():
+        if all(
+            str(existing_modules.get(mid, "")).strip() == str(text).strip()
+            for mid, text in module_instructions.items()
+        ) and set(existing_modules) == set(module_instructions):
+            return False, existing_oid
+
+    # Register each per-module instruction into the flat per-module search space
+    per_module_option_ids: dict[str, str] = {}
+    any_new = False
+    for mid, text in module_instructions.items():
+        registered, opt_id, _ = register_instruction_candidate(
+            compiled_space=compiled_space,
+            module_id=mid,
+            instruction_text=text,
+        )
+        per_module_option_ids[mid] = opt_id
+        if registered:
+            any_new = True
+
+    # Assign a new stage option_id
+    new_stage_oid = _next_option_id(stage_lookup, prefix="s")
+    stage_lookup[new_stage_oid] = {
+        **{mid: text for mid, text in module_instructions.items()},
+        "__per_module_option_ids__": per_module_option_ids,  # type: ignore[assignment]
+    }
+    return True, new_stage_oid
 
 
 def register_instruction_transform(

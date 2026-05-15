@@ -745,6 +745,7 @@ def execute_live(
         MiproOpenEnvProposerConfig,
         MiproPhase3Config,
         MiproProgramTemplate,
+        MiproStageTemplate,
         OpenAIOpenEnvReactAgent,
         TpeConfig,
         compile_search_space,
@@ -759,16 +760,23 @@ def execute_live(
     output_dir = live_dir / "miprov2_artifacts"
     ledger_path = live_dir / "ledger.sqlite"
     max_concurrency = min(int(config.get("concurrency") or 4), 4 if smoke else 20)
+    seed = _seed_candidate()
     program_template = MiproProgramTemplate(
         program_id="banking77_instruction_miprov2",
-        modules=(
-            MiproModuleTemplate(
-                module_id="system_prompt",
-                instruction_candidates=(_seed_candidate()["system_prompt"],),
-            ),
-            MiproModuleTemplate(
-                module_id="user_prompt",
-                instruction_candidates=(_seed_candidate()["user_prompt"],),
+        stages=(
+            MiproStageTemplate(
+                stage_id="classify",
+                stage_name="Banking77 intent classification",
+                modules=(
+                    MiproModuleTemplate(
+                        module_id="system_prompt",
+                        instruction_candidates=(seed["system_prompt"],),
+                    ),
+                    MiproModuleTemplate(
+                        module_id="user_prompt",
+                        instruction_candidates=(seed["user_prompt"],),
+                    ),
+                ),
             ),
         ),
     )
@@ -948,32 +956,74 @@ def execute_live(
                 if prop_total > 0 else ""
             )
             patches = event.get("patches", [])
-            by_module: dict[str, list[str]] = {}
+            # Group patches by stage (if multi-stage) or by module (single-stage)
+            _stages = compiled.program_template.stages
+            _multi_stage = len(_stages) > 1 or (len(_stages) == 1 and _stages[0].stage_id != "stage_0")
+            # module_id → stage_id map for display grouping
+            _mod_to_stage: dict[str, str] = {
+                m.module_id: s.stage_id for s in _stages for m in s.modules
+            }
+            # summary: per-module new option IDs, grouped by stage when multi-stage
+            # by_mod_new: module_id → [new option_ids]
+            by_mod_new: dict[str, list[str]] = {}
             for p in patches:
                 mid = str(p.get("module_id", "?"))
                 oid = str(p.get("option_id", "?"))
                 text = str(p.get("instruction_text", ""))
-                by_module.setdefault(mid, []).append(oid)
+                by_mod_new.setdefault(mid, []).append(oid)
                 if mid and oid and text:
                     _option_text_cache[f"{mid}:{oid}"] = text
-            module_summary = "  ".join(
-                f"{_MODULE_ABBREV.get(k, k[:4])}: +{' +'.join(ids)}"
-                for k, ids in by_module.items()
-            )
+            if _multi_stage:
+                # group modules under their stage label
+                by_stage_summary: dict[str, list[str]] = {}
+                for mid, oids in by_mod_new.items():
+                    sid = _mod_to_stage.get(mid, mid)
+                    short = _MODULE_ABBREV.get(mid, mid[:4])
+                    for oid in oids:
+                        by_stage_summary.setdefault(sid, []).append(f"{short}={oid}")
+                module_summary = "  ".join(
+                    f"{sid}: +{' +'.join(parts)}" for sid, parts in by_stage_summary.items()
+                )
+            else:
+                module_summary = "  ".join(
+                    f"{_MODULE_ABBREV.get(k, k[:4])}: +{' +'.join(ids)}"
+                    for k, ids in by_mod_new.items()
+                )
             print(
                 f"  {elapsed:6.1f}s  ── codex proposer round {round_idx} done"
                 f"  {secs:.1f}s  {n} new transforms  [{module_summary}]{tok_str} ──",
                 flush=True,
             )
-            for p in patches:
-                mid = str(p.get("module_id", "?"))
-                oid = str(p.get("option_id", "?"))
-                text = str(p.get("instruction_text", ""))
-                short = _MODULE_ABBREV.get(mid, mid[:4])
-                preview = text[:110].replace("\n", " ↵ ")
-                if len(text) > 110:
-                    preview += "…"
-                print(f"           {short} {oid}  {preview!r}", flush=True)
+            # Print transforms grouped by stage
+            if _multi_stage:
+                # Group patches by stage for display
+                by_stage_patches: dict[str, list[dict[str, Any]]] = {}
+                for p in patches:
+                    mid = str(p.get("module_id", "?"))
+                    sid = _mod_to_stage.get(mid, mid)
+                    by_stage_patches.setdefault(sid, []).append(p)
+                for sid, stage_patches in by_stage_patches.items():
+                    stage_obj = next((s for s in _stages if s.stage_id == sid), None)
+                    stage_label = stage_obj.stage_name if (stage_obj and stage_obj.stage_name) else sid
+                    for p in stage_patches:
+                        mid = str(p.get("module_id", "?"))
+                        oid = str(p.get("option_id", "?"))
+                        text = str(p.get("instruction_text", ""))
+                        short = _MODULE_ABBREV.get(mid, mid[:4])
+                        preview = text[:90].replace("\n", " ↵ ")
+                        if len(text) > 90:
+                            preview += "…"
+                        print(f"           [{stage_label}] {short} {oid}  {preview!r}", flush=True)
+            else:
+                for p in patches:
+                    mid = str(p.get("module_id", "?"))
+                    oid = str(p.get("option_id", "?"))
+                    text = str(p.get("instruction_text", ""))
+                    short = _MODULE_ABBREV.get(mid, mid[:4])
+                    preview = text[:110].replace("\n", " ↵ ")
+                    if len(text) > 110:
+                        preview += "…"
+                    print(f"           {short} {oid}  {preview!r}", flush=True)
             # Running totals
             pol = policy_usage_totals
             pol_in = int(pol.get("prompt_tokens") or 0)
