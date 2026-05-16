@@ -42,9 +42,12 @@ from synth_optimizers.miprov2.core import (
     run_train_loop,
     write_proposer_checkpoint,
 )
-from synth_optimizers.miprov2.container_gepa_compat import (
-    ContainerGepaAdapter,
-    ContainerGepaRolloutBinding,
+from synth_optimizers.miprov2.container_adapter import (
+    ContainerInterceptorAdapter,
+    ContainerMiproAdapter,
+    ContainerMiproInterceptorAdapter,
+    ContainerMiproRolloutBinding,
+    program_template_from_prompt_contract,
 )
 from synth_optimizers.miprov2.dspy_compat import (
     DspyBudgetSemantics,
@@ -55,7 +58,14 @@ from synth_optimizers.miprov2.dspy_compat import (
     optimize_dspy_program,
     resolve_dspy_budget,
 )
-from synth_optimizers.miprov2.gepa_ai_compat import GepaCompatAdapter, async_optimize, optimize
+from synth_optimizers.miprov2.mipro_compat import MiproCompatAdapter, async_optimize, optimize
+from synth_optimizers.miprov2.local_interceptor import (
+    InMemoryInterceptorTrialRegistry,
+    InterceptorTrialRecord,
+    apply_interceptor_deltas,
+    create_local_interceptor_app,
+    register_local_forward_app,
+)
 from synth_optimizers.miprov2.requirements import (
     assert_mipro_runtime_supported,
     evaluate_mipro_runtime_support,
@@ -87,8 +97,11 @@ _SUPPORTED_PUBLIC_API = {
     "proposer_replay_summary": proposer_replay_summary,
     "run_proposer_from_checkpoint": run_proposer_from_checkpoint,
     "write_proposer_checkpoint": write_proposer_checkpoint,
-    "ContainerGepaAdapter": ContainerGepaAdapter,
-    "ContainerGepaRolloutBinding": ContainerGepaRolloutBinding,
+    "ContainerInterceptorAdapter": ContainerInterceptorAdapter,
+    "ContainerMiproAdapter": ContainerMiproAdapter,
+    "ContainerMiproInterceptorAdapter": ContainerMiproInterceptorAdapter,
+    "ContainerMiproRolloutBinding": ContainerMiproRolloutBinding,
+    "program_template_from_prompt_contract": program_template_from_prompt_contract,
     "open_sqlite_run_ledger": open_sqlite_run_ledger,
     "run_train_loop": run_train_loop,
     "MiproArtifactManifest": MiproArtifactManifest,
@@ -97,9 +110,14 @@ _SUPPORTED_PUBLIC_API = {
     "MiproReportBenchResult": MiproReportBenchResult,
     "default_miprov2_artifact_paths": default_miprov2_artifact_paths,
     "write_miprov2_artifacts": write_miprov2_artifacts,
-    "GepaCompatAdapter": GepaCompatAdapter,
+    "MiproCompatAdapter": MiproCompatAdapter,
     "async_optimize": async_optimize,
     "optimize": optimize,
+    "InMemoryInterceptorTrialRegistry": InMemoryInterceptorTrialRegistry,
+    "InterceptorTrialRecord": InterceptorTrialRecord,
+    "apply_interceptor_deltas": apply_interceptor_deltas,
+    "create_local_interceptor_app": create_local_interceptor_app,
+    "register_local_forward_app": register_local_forward_app,
     "DspyBudgetSemantics": DspyBudgetSemantics,
     "DspyMiproAdapter": DspyMiproAdapter,
     "DspyProgramCandidateModel": DspyProgramCandidateModel,

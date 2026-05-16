@@ -1,4 +1,4 @@
-"""GEPA-shaped compatibility facade for MIPROv2."""
+"""MIPROv2 compatibility facade."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from synth_optimizers.miprov2.core.run_ledger import SQLiteMiproRunLedger
 from synth_optimizers.miprov2.requirements import assert_mipro_runtime_supported
 
 
-class GepaCompatAdapter(Protocol):
+class MiproCompatAdapter(Protocol):
     def evaluate(
         self,
         batch: Sequence[Any],
@@ -148,7 +148,7 @@ async def async_optimize(
     seed_candidate: Mapping[str, str],
     trainset: Sequence[Any],
     valset: Sequence[Any] | None = None,
-    adapter: GepaCompatAdapter,
+    adapter: MiproCompatAdapter,
     task_lm: str | None = None,
     reflection_lm: str | None = None,
     max_metric_calls: int | None = None,
@@ -192,7 +192,7 @@ async def async_optimize(
     )
     if effective_config.execution_mode != MiproCandidateExecutionMode.PROMPT_ONLY:
         raise ValueError(
-            "GEPA compatibility mode currently supports only prompt_only execution mode"
+            "compat mode currently supports only prompt_only execution mode"
         )
     if effective_config.runtime_capabilities is not None:
         assert_mipro_runtime_supported(
@@ -218,7 +218,7 @@ async def async_optimize(
             ledger = SQLiteMiproRunLedger(
                 run_id=str(effective_config.run_id or Path(effective_config.ledger_path).stem),
                 ledger_path=str(effective_config.ledger_path),
-                program_id=compiled.program_template.program_id if "compiled" in locals() else "mipro_gepa_compat",
+                program_id=compiled.program_template.program_id if "compiled" in locals() else "mipro_compat",
                 mode="phase2",
                 resume=True,
             )
@@ -272,7 +272,7 @@ async def async_optimize(
         config=effective_config,
     )
     template = MiproProgramTemplate(
-        program_id=f"mipro_gepa_{effective_config.dataset or 'task'}",
+        program_id=f"mipro_{effective_config.dataset or 'task'}",
         modules=tuple(
             MiproModuleTemplate(
                 module_id=component_id,
@@ -444,7 +444,7 @@ async def async_optimize(
     manifest = MiproArtifactManifest(
         run_id=str(phase2_outcome.run_id or ""),
         task_id=effective_config.dataset,
-        mode="gepa_ai_compat",
+        mode="mipro_compat",
         ledger_path=phase2_outcome.ledger_path,
         workspace_root=run_status.get("workspace_root"),
         metadata={
@@ -523,7 +523,7 @@ def optimize(
     seed_candidate: Mapping[str, str],
     trainset: Sequence[Any],
     valset: Sequence[Any] | None = None,
-    adapter: GepaCompatAdapter,
+    adapter: MiproCompatAdapter,
     task_lm: str | None = None,
     reflection_lm: str | None = None,
     max_metric_calls: int | None = None,
@@ -544,7 +544,7 @@ def optimize(
 
 
 __all__ = [
-    "GepaCompatAdapter",
+    "MiproCompatAdapter",
     "MiproCompatInterruptionRequested",
     "async_optimize",
     "optimize",

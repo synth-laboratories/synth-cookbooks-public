@@ -18,7 +18,7 @@ from synth_optimizers.miprov2.core import (
     MiproCompatRunConfig,
     MiproEvaluationBatch,
 )
-from synth_optimizers.miprov2.gepa_ai_compat import optimize as compat_optimize
+from synth_optimizers.miprov2.mipro_compat import optimize as compat_optimize
 
 DspyMetric = Callable[..., Any]
 

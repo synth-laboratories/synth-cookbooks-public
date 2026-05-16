@@ -4,14 +4,33 @@ import argparse
 import asyncio
 import importlib.metadata
 import json
+import math
 import os
+import random
 import sys
+import textwrap
 import threading
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# ── terminal colors (auto-disabled when stdout is not a tty) ──────────────────
+_USE_COLOR = sys.stdout.isatty()
+
+def _ansi(text: str, *codes: int) -> str:
+    return f"\033[{';'.join(str(c) for c in codes)}m{text}\033[0m" if _USE_COLOR else str(text)
+
+def _dim(t: str) -> str: return _ansi(t, 2)
+def _bold(t: str) -> str: return _ansi(t, 1)
+def _red(t: str) -> str: return _ansi(t, 31)
+def _green(t: str) -> str: return _ansi(t, 32)
+def _yellow(t: str) -> str: return _ansi(t, 33)
+def _cyan(t: str) -> str: return _ansi(t, 36)
+def _magenta(t: str) -> str: return _ansi(t, 35)
+def _bgreen(t: str) -> str: return _ansi(t, 1, 32)
+def _byellow(t: str) -> str: return _ansi(t, 1, 33)
 
 
 COOKBOOK_ROOT = Path(__file__).resolve().parent
@@ -137,6 +156,8 @@ def _ensure_local_imports() -> None:
 
 def _load_local_api_keys() -> list[str]:
     loaded: list[str] = []
+    if os.environ.get("MIPRO_SKIP_LOCAL_API_KEY_LOAD"):
+        return loaded
     env_path = LOCAL_SYNTH_ENV if LOCAL_SYNTH_ENV.exists() else _LOCAL_SYNTH_ENV_FALLBACK
     if not env_path.exists():
         return loaded
@@ -156,11 +177,18 @@ def _load_local_api_keys() -> list[str]:
 
 
 def _seed_candidate() -> dict[str, str]:
-    from synth_service_app import DEFAULT_SYSTEM_PROMPT, DEFAULT_USER_PROMPT
+    from synth_service_app import (
+        DEFAULT_STAGE1_SYSTEM_PROMPT,
+        DEFAULT_STAGE1_USER_PROMPT,
+        DEFAULT_STAGE2_SYSTEM_PROMPT,
+        DEFAULT_STAGE2_USER_PROMPT,
+    )
 
     return {
-        "system_prompt": DEFAULT_SYSTEM_PROMPT,
-        "user_prompt": DEFAULT_USER_PROMPT,
+        "stage1_system": DEFAULT_STAGE1_SYSTEM_PROMPT,
+        "stage1_user": DEFAULT_STAGE1_USER_PROMPT,
+        "stage2_system": DEFAULT_STAGE2_SYSTEM_PROMPT,
+        "stage2_user": DEFAULT_STAGE2_USER_PROMPT,
     }
 
 
@@ -217,12 +245,96 @@ def _load_rows(config: dict[str, Any], *, smoke: bool) -> tuple[list[dict[str, A
     return rows_for_split("train", train_seeds), rows_for_split("test", heldout_seeds)
 
 
+def _miprov2_contract_routes(metadata_payload: dict[str, Any]) -> dict[str, str]:
+    metadata = metadata_payload.get("metadata") if isinstance(metadata_payload.get("metadata"), dict) else {}
+    contracts = metadata.get("optimizer_contracts") if isinstance(metadata.get("optimizer_contracts"), dict) else {}
+    mipro = contracts.get("miprov2") if isinstance(contracts.get("miprov2"), dict) else {}
+    return {str(k): str(v) for k, v in mipro.items() if isinstance(v, str)}
+
+
+def _candidate_variants_from_program(program_payload: dict[str, Any]) -> dict[str, list[str]]:
+    search_space = program_payload.get("search_space") if isinstance(program_payload.get("search_space"), dict) else {}
+    raw = search_space.get("initial_candidates") if isinstance(search_space.get("initial_candidates"), dict) else {}
+    variants: dict[str, list[str]] = {}
+    for module_id, values in raw.items():
+        if isinstance(values, list):
+            clean = [str(value) for value in values if str(value).strip()]
+        elif isinstance(values, str):
+            clean = [values]
+        else:
+            clean = []
+        if clean:
+            variants[str(module_id)] = clean
+    return variants
+
+
+async def _load_container_rows(client: Any, config: dict[str, Any], *, smoke: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    filters: dict[str, Any] = {}
+    if config.get("label_ids"):
+        filters["label_ids"] = [int(label_id) for label_id in (config.get("label_ids") or [])]
+    train_seeds = [int(seed) for seed in (config.get("train_seeds") or [])]
+    heldout_seeds = [int(seed) for seed in (config.get("heldout_seeds") or [])]
+    if smoke:
+        train_seeds = train_seeds[:3]
+        heldout_seeds = heldout_seeds[:5]
+
+    async def rows_for_split(split: str, seeds: list[int]) -> list[dict[str, Any]]:
+        payload = {
+            "split": split,
+            "seeds": seeds,
+            "filters": filters,
+        }
+        response = await client.dataset_rows(payload)
+        raw_rows = response.get("rows") if isinstance(response.get("rows"), list) else []
+        rows: list[dict[str, Any]] = []
+        for item in raw_rows:
+            if not isinstance(item, dict):
+                continue
+            example = item.get("example") if isinstance(item.get("example"), dict) else item
+            row = dict(example)
+            row.setdefault("seed", item.get("seed"))
+            row.setdefault("split", split)
+            rows.append(row)
+        return rows
+
+    return await rows_for_split("train", train_seeds), await rows_for_split("test", heldout_seeds)
+
+
 def _candidate_variants() -> dict[str, list[str]]:
-    from synth_service_app import DEFAULT_SYSTEM_PROMPT, DEFAULT_USER_PROMPT
+    from synth_service_app import (
+        DEFAULT_STAGE1_SYSTEM_PROMPT,
+        DEFAULT_STAGE1_USER_PROMPT,
+        DEFAULT_STAGE2_SYSTEM_PROMPT,
+        DEFAULT_STAGE2_USER_PROMPT,
+    )
 
     return {
-        "system_prompt": [
-            DEFAULT_SYSTEM_PROMPT,
+        "stage1_system": [
+            DEFAULT_STAGE1_SYSTEM_PROMPT,
+            (
+                "Group the customer banking query into one category. "
+                "Call predict_category with the best matching group name."
+            ),
+            (
+                "Identify the broad category of this banking issue and call predict_category with it. "
+                "Choose the single most relevant category."
+            ),
+        ],
+        "stage1_user": [
+            DEFAULT_STAGE1_USER_PROMPT,
+            (
+                "Customer query:\n{query}\n\n"
+                "Category groups:\n{available_categories}\n\n"
+                "Call predict_category with the best matching category."
+            ),
+            (
+                "Query:\n{query}\n\n"
+                "Valid categories:\n{available_categories}\n\n"
+                "Return the best matching category with predict_category."
+            ),
+        ],
+        "stage2_system": [
+            DEFAULT_STAGE2_SYSTEM_PROMPT,
             (
                 "Classify the customer banking query into exactly one Banking77 intent. "
                 "Prefer the most specific available label and respond only with a banking77_classify tool call."
@@ -231,13 +343,9 @@ def _candidate_variants() -> dict[str, list[str]]:
                 "You are a precise Banking77 intent classifier. Distinguish close banking-support intents carefully, "
                 "then call banking77_classify with exactly one label from the provided intent list."
             ),
-            (
-                "Map each customer banking query to the single best Banking77 intent. Do not invent labels, "
-                "do not explain, and use only the banking77_classify tool."
-            ),
         ],
-        "user_prompt": [
-            DEFAULT_USER_PROMPT,
+        "stage2_user": [
+            DEFAULT_STAGE2_USER_PROMPT,
             (
                 "Customer query:\n{query}\n\n"
                 "Choose exactly one intent from this list:\n{available_intents}\n\n"
@@ -252,10 +360,44 @@ def _candidate_variants() -> dict[str, list[str]]:
     }
 
 
+class Banking77StageSpec:
+    """Specification for one stage in the Banking77 evaluation pipeline."""
+
+    def __init__(
+        self,
+        *,
+        module_prefix: str,
+        tool_name: str,
+        tool_description: str,
+        tool_result_field: str,
+        default_system: str,
+        default_user: str,
+        get_template_vars: Any,
+        tool_enum: list[str] | None = None,
+    ) -> None:
+        self.module_prefix = module_prefix
+        self.tool_name = tool_name
+        self.tool_description = tool_description
+        self.tool_result_field = tool_result_field
+        self.default_system = default_system
+        self.default_user = default_user
+        self.get_template_vars = get_template_vars  # (row, prev_stage_outputs) -> dict[str, str]
+        self.tool_enum = tool_enum
+
+
 class Banking77MiproAdapter:
-    def __init__(self, policy_cfg: dict[str, Any], *, max_concurrency: int) -> None:
+    def __init__(
+        self,
+        policy_cfg: dict[str, Any],
+        *,
+        max_concurrency: int,
+        stage_specs: list[Banking77StageSpec],
+        label_names: list[str],
+    ) -> None:
         self.policy_cfg = dict(policy_cfg)
         self.max_concurrency = max(1, int(max_concurrency))
+        self.stage_specs = list(stage_specs)
+        self.label_names = list(label_names)
 
     async def evaluate(
         self,
@@ -263,71 +405,63 @@ class Banking77MiproAdapter:
         candidate: dict[str, str],
         capture_traces: bool = False,
     ) -> dict[str, Any]:
-        from synth_service_app import (
-            DEFAULT_SYSTEM_PROMPT,
-            DEFAULT_USER_PROMPT,
-            Banking77Dataset,
-            call_chat_completion,
-            extract_prediction,
-            _normalize_label,
-        )
+        from synth_service_app import call_chat_completion, extract_prediction, _normalize_label
 
-        dataset = Banking77Dataset()
-        label_names = dataset.label_names
-        available_intents = "\n".join(f"{idx + 1}. {label}" for idx, label in enumerate(label_names))
-        system_prompt = str(candidate.get("system_prompt") or DEFAULT_SYSTEM_PROMPT)
-        user_template = str(candidate.get("user_prompt") or DEFAULT_USER_PROMPT)
         semaphore = asyncio.Semaphore(self.max_concurrency)
 
-        async def evaluate_row(row: dict[str, Any]) -> tuple[dict[str, Any], float, dict[str, Any] | None]:
-            user_prompt = user_template.format(
-                query=row["text"],
-                available_intents=available_intents,
-            )
-            raw_response = ""
-            response_json: dict[str, Any] = {}
-            tool_calls: list[dict[str, Any]] = []
+        async def _call(system: str, user: str, spec: Banking77StageSpec) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
             retry_attempts = 4
             for attempt in range(1, retry_attempts + 1):
                 try:
                     async with semaphore:
-                        raw_response, response_json, tool_calls = await call_chat_completion(
+                        return await call_chat_completion(
                             policy_cfg=self.policy_cfg,
-                            system_prompt=system_prompt,
-                            user_prompt=user_prompt,
+                            system_prompt=system,
+                            user_prompt=user,
+                            tool_name=spec.tool_name,
+                            tool_description=spec.tool_description,
+                            tool_result_field=spec.tool_result_field,
+                            tool_enum=spec.tool_enum,
                         )
-                    break
                 except Exception as exc:
                     status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                    is_retryable = status_code in {408, 409, 429, 500, 502, 503, 504}
-                    if attempt >= retry_attempts or not is_retryable:
+                    if attempt >= retry_attempts or status_code not in {408, 409, 429, 500, 502, 503, 504}:
                         raise
                     await asyncio.sleep(min(20.0, 1.5 * (2 ** (attempt - 1))))
-            prediction = extract_prediction(
-                raw_text=raw_response,
-                tool_calls=tool_calls,
-                label_names=label_names,
-            )
+            raise RuntimeError("unreachable")
+
+        async def evaluate_row(row: dict[str, Any]) -> tuple[dict[str, Any], float, dict[str, Any] | None]:
+            prev_stage_outputs: list[dict[str, Any]] = []
+            combined_usage = _empty_usage_totals()
+            for spec in self.stage_specs:
+                system = str(candidate.get(f"{spec.module_prefix}_system") or "") or spec.default_system
+                user_tmpl = str(candidate.get(f"{spec.module_prefix}_user") or "") or spec.default_user
+                template_vars = spec.get_template_vars(row, prev_stage_outputs)
+                user = user_tmpl.format(**template_vars)
+                raw, rj, tc = await _call(system, user, spec)
+                valid_labels = spec.tool_enum if spec.tool_enum else self.label_names
+                prediction = extract_prediction(
+                    raw_text=raw, tool_calls=tc, label_names=valid_labels,
+                    tool_name=spec.tool_name, result_field=spec.tool_result_field,
+                )
+                prev_stage_outputs.append({"module_prefix": spec.module_prefix, "prediction": prediction})
+                _add_usage_totals(combined_usage, _usage_from_response(rj))
+
+            final_prediction = prev_stage_outputs[-1]["prediction"] if prev_stage_outputs else ""
             expected = str(row["label"])
-            score = 1.0 if _normalize_label(prediction) == _normalize_label(expected) else 0.0
-            output = {
+            score = 1.0 if _normalize_label(final_prediction) == _normalize_label(expected) else 0.0
+            output: dict[str, Any] = {
                 "seed": row["seed"],
                 "index": row["index"],
                 "split": row["split"],
-                "prediction": prediction,
+                "prediction": final_prediction,
                 "expected": expected,
                 "correct": score >= 1.0,
+                "stage_predictions": {o["module_prefix"]: o["prediction"] for o in prev_stage_outputs},
             }
-            usage = _usage_from_response(response_json)
             trace = None
             if capture_traces:
-                trace = {
-                    **output,
-                    "query": row["text"],
-                    "raw_response": raw_response,
-                    "response_id": response_json.get("id") if isinstance(response_json, dict) else None,
-                    "usage": usage,
-                }
+                trace = {**output, "query": row["text"], "usage": combined_usage}
             return output, score, trace
 
         results = await asyncio.gather(*(evaluate_row(dict(row)) for row in batch))
@@ -371,10 +505,7 @@ def _policy_config(config: dict[str, Any]) -> dict[str, Any]:
 
 def _candidate_to_prompt_map(candidate: Any) -> dict[str, str]:
     selected = dict(getattr(candidate, "selected_instructions", {}) or {})
-    return {
-        "system_prompt": str(selected.get("system_prompt") or ""),
-        "user_prompt": str(selected.get("user_prompt") or ""),
-    }
+    return {k: str(v) for k, v in selected.items()}
 
 
 def _best_train_scores(observations: list[Any]) -> list[float]:
@@ -553,9 +684,25 @@ def _summarize_recent_trials(observations: list[Any], limit: int) -> dict[str, A
 
 
 def _outputs_scores_from_eval_batch(eval_batch: Any) -> tuple[list[Any], list[float]]:
+    if isinstance(eval_batch, dict):
+        outputs = list(eval_batch.get("outputs") or [])
+        scores = [float(item) for item in list(eval_batch.get("scores") or [])]
+        return outputs, scores
     outputs = list(getattr(eval_batch, "outputs", []) or [])
     scores = [float(item) for item in list(getattr(eval_batch, "scores", []) or [])]
     return outputs, scores
+
+
+def _eval_batch_payload(eval_batch: Any) -> tuple[list[Any], list[float], list[Any], dict[str, Any]]:
+    outputs, scores = _outputs_scores_from_eval_batch(eval_batch)
+    if isinstance(eval_batch, dict):
+        return outputs, scores, list(eval_batch.get("traces") or []), dict(eval_batch.get("metadata") or {})
+    return (
+        outputs,
+        scores,
+        list(getattr(eval_batch, "traces", []) or []),
+        dict(getattr(eval_batch, "metadata", {}) or {}),
+    )
 
 
 def _heldout_details_from_batch(
@@ -725,6 +872,321 @@ def _write_comparison_artifacts(
     )
 
 
+# ── GSM8K task ────────────────────────────────────────────────────────────────
+
+_GSM8K_DEFAULT_SYSTEM = (
+    "You are a precise math problem solver. Read the problem carefully, reason step by step, "
+    "and call submit_answer with the final numerical answer."
+)
+_GSM8K_DEFAULT_USER = (
+    "Problem: {question}\n\n"
+    "Solve step by step. Call submit_answer with only the final number (digits only, no units or commas)."
+)
+
+
+def _gsm8k_extract_answer(text: str) -> str:
+    if "####" in text:
+        return text.split("####")[-1].strip().replace(",", "")
+    return text.strip().replace(",", "")
+
+
+def _gsm8k_normalize(text: str) -> str:
+    import re
+    text = re.sub(r"[,$%]", "", str(text).strip().lower()).rstrip(".")
+    try:
+        v = float(text)
+        return str(int(v)) if v == int(v) else str(v)
+    except (ValueError, OverflowError):
+        return text
+
+
+def _load_rows_gsm8k(config: dict[str, Any], *, smoke: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    from datasets import load_dataset
+
+    def rows_for_split(split: str, seeds: list[int]) -> list[dict[str, Any]]:
+        dataset = load_dataset("gsm8k", "main", split=split)
+        n = len(dataset)
+        rows: list[dict[str, Any]] = []
+        for seed in seeds:
+            idx = int(seed) % n
+            row = dataset[idx]
+            rows.append({
+                "seed": int(seed),
+                "index": idx,
+                "split": split,
+                "question": str(row["question"]),
+                "answer": str(row["answer"]),
+            })
+        return rows
+
+    train_seeds = [int(s) for s in (config.get("train_seeds") or [])]
+    heldout_seeds = [int(s) for s in (config.get("heldout_seeds") or [])]
+    if smoke:
+        train_seeds = train_seeds[:3]
+        heldout_seeds = heldout_seeds[:5]
+    return rows_for_split("train", train_seeds), rows_for_split("test", heldout_seeds)
+
+
+# ── HotpotQA task ─────────────────────────────────────────────────────────────
+
+_HOTPOTQA_DEFAULT_SYSTEM = (
+    "You are a multi-hop question answering system. Read the provided passages carefully "
+    "and reason across them. Call submit_answer with a short, direct answer."
+)
+_HOTPOTQA_DEFAULT_USER = (
+    "Question: {question}\n\n"
+    "Passages:\n{context}\n\n"
+    "Call submit_answer with the answer (a name, date, number, or short phrase)."
+)
+
+
+def _hotpotqa_normalize(text: str) -> str:
+    import re
+    text = str(text).lower().strip()
+    text = re.sub(r"\b(a|an|the)\b", " ", text)
+    text = re.sub(r"[^\w\s]", " ", text)
+    return " ".join(text.split())
+
+
+def _load_rows_hotpotqa(config: dict[str, Any], *, smoke: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    from datasets import load_dataset
+
+    def _fmt_context(ctx: dict[str, Any]) -> str:
+        parts = []
+        for title, sents in zip(ctx.get("title") or [], ctx.get("sentences") or []):
+            parts.append(f"[{title}]\n" + " ".join(str(s) for s in sents))
+        return "\n\n".join(parts)
+
+    def rows_for_split(split: str, seeds: list[int]) -> list[dict[str, Any]]:
+        dataset = load_dataset("hotpot_qa", "distractor", split=split)
+        n = len(dataset)
+        rows: list[dict[str, Any]] = []
+        for seed in seeds:
+            idx = int(seed) % n
+            row = dataset[idx]
+            rows.append({
+                "seed": int(seed),
+                "index": idx,
+                "split": split,
+                "question": str(row["question"]),
+                "answer": str(row["answer"]),
+                "context": _fmt_context(dict(row.get("context") or {})),
+            })
+        return rows
+
+    train_seeds = [int(s) for s in (config.get("train_seeds") or [])]
+    heldout_seeds = [int(s) for s in (config.get("heldout_seeds") or [])]
+    if smoke:
+        train_seeds = train_seeds[:3]
+        heldout_seeds = heldout_seeds[:5]
+    return rows_for_split("train", train_seeds), rows_for_split("validation", heldout_seeds)
+
+
+# ── Shared direct LLM tool-call (no container service) ────────────────────────
+
+async def _direct_tool_call(
+    policy_cfg: dict[str, Any],
+    system: str,
+    user: str,
+    tool_name: str,
+    tool_description: str,
+    answer_description: str,
+    semaphore: asyncio.Semaphore,
+    *,
+    retry_attempts: int = 4,
+) -> tuple[str, dict[str, Any]]:
+    from openai import AsyncOpenAI
+
+    provider = str(policy_cfg.get("provider") or "openai").lower()
+    model = str(policy_cfg.get("model") or "gpt-4.1-nano")
+    temperature = float(policy_cfg.get("temperature") or 0.0)
+    max_tokens = int(policy_cfg.get("max_completion_tokens") or 512)
+
+    if provider == "groq":
+        client = AsyncOpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=os.environ.get("GROQ_API_KEY", ""),
+        )
+    else:
+        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+
+    tool = {
+        "type": "function",
+        "function": {
+            "name": tool_name,
+            "description": tool_description,
+            "parameters": {
+                "type": "object",
+                "properties": {"answer": {"type": "string", "description": answer_description}},
+                "required": ["answer"],
+            },
+        },
+    }
+
+    resp = None
+    _use_tools = True
+    for attempt in range(1, retry_attempts + 1):
+        try:
+            async with semaphore:
+                if _use_tools:
+                    resp = await client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                        tools=[tool],  # type: ignore[arg-type]
+                        tool_choice="required",
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                else:
+                    resp = await client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+            break
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            # 400 from Groq means the model hallucinated a wrong tool name; retry without tools
+            if status == 400 and _use_tools and attempt < retry_attempts:
+                _use_tools = False
+                continue
+            if attempt >= retry_attempts or status not in {408, 409, 429, 500, 502, 503, 504}:
+                raise
+            await asyncio.sleep(min(20.0, 1.5 * (2 ** (attempt - 1))))
+
+    rj = resp.model_dump() if resp is not None else {}
+    answer = ""
+    for choice in rj.get("choices") or []:
+        msg = choice.get("message") or {}
+        for tc in msg.get("tool_calls") or []:
+            args_str = (tc.get("function") or {}).get("arguments") or ""
+            try:
+                answer = str(json.loads(args_str).get("answer") or "").strip()
+                if answer:
+                    break
+            except (json.JSONDecodeError, KeyError):
+                pass
+        if not answer:
+            answer = str(msg.get("content") or "").strip()
+        if answer:
+            break
+    return answer, rj
+
+
+class Gsm8kMiproAdapter:
+    def __init__(self, policy_cfg: dict[str, Any], *, max_concurrency: int) -> None:
+        self.policy_cfg = dict(policy_cfg)
+        self.max_concurrency = max(1, int(max_concurrency))
+
+    async def evaluate(
+        self,
+        batch: list[dict[str, Any]],
+        candidate: dict[str, str],
+        capture_traces: bool = False,
+    ) -> dict[str, Any]:
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+
+        async def evaluate_row(row: dict[str, Any]) -> tuple[dict[str, Any], float, dict[str, Any] | None]:
+            system = str(candidate.get("stage1_system") or _GSM8K_DEFAULT_SYSTEM)
+            user_tmpl = str(candidate.get("stage1_user") or _GSM8K_DEFAULT_USER)
+            user = user_tmpl.format(question=row["question"])
+            answer, rj = await _direct_tool_call(
+                self.policy_cfg, system, user,
+                tool_name="submit_answer",
+                tool_description="Submit the final numerical answer to the math problem.",
+                answer_description="The final numerical answer (digits only, no units or commas).",
+                semaphore=semaphore,
+            )
+            gold = _gsm8k_extract_answer(row["answer"])
+            pred = _gsm8k_extract_answer(answer)  # handles both bare number and #### N in CoT text
+            score = 1.0 if _gsm8k_normalize(pred) == _gsm8k_normalize(gold) else 0.0
+            output: dict[str, Any] = {
+                "seed": row["seed"],
+                "index": row["index"],
+                "split": row["split"],
+                "prediction": answer,
+                "expected": gold,
+                "correct": score >= 1.0,
+            }
+            trace = None
+            if capture_traces:
+                trace = {**output, "question": row["question"], "usage": _usage_from_response(rj)}
+            return output, score, trace
+
+        results = await asyncio.gather(*(evaluate_row(dict(row)) for row in batch))
+        outputs = [r[0] for r in results]
+        scores = [float(r[1]) for r in results]
+        traces = [r[2] for r in results if r[2] is not None]
+        usage_totals = _empty_usage_totals()
+        for t in traces:
+            if isinstance(t, dict):
+                _add_usage_totals(usage_totals, dict(t.get("usage") or {}))
+        return {
+            "outputs": outputs, "scores": scores, "traces": traces,
+            "metadata": {"candidate": dict(candidate), "capture_traces": bool(capture_traces), "usage": usage_totals},
+        }
+
+
+class HotpotQaMiproAdapter:
+    def __init__(self, policy_cfg: dict[str, Any], *, max_concurrency: int) -> None:
+        self.policy_cfg = dict(policy_cfg)
+        self.max_concurrency = max(1, int(max_concurrency))
+
+    async def evaluate(
+        self,
+        batch: list[dict[str, Any]],
+        candidate: dict[str, str],
+        capture_traces: bool = False,
+    ) -> dict[str, Any]:
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+
+        async def evaluate_row(row: dict[str, Any]) -> tuple[dict[str, Any], float, dict[str, Any] | None]:
+            system = str(candidate.get("stage1_system") or _HOTPOTQA_DEFAULT_SYSTEM)
+            user_tmpl = str(candidate.get("stage1_user") or _HOTPOTQA_DEFAULT_USER)
+            user = user_tmpl.format(question=row["question"], context=row["context"])
+            answer, rj = await _direct_tool_call(
+                self.policy_cfg, system, user,
+                tool_name="submit_answer",
+                tool_description="Submit the answer to the multi-hop question.",
+                answer_description="A concise answer: a name, date, number, or short phrase.",
+                semaphore=semaphore,
+            )
+            gold = row["answer"]
+            score = 1.0 if _hotpotqa_normalize(answer) == _hotpotqa_normalize(gold) else 0.0
+            output: dict[str, Any] = {
+                "seed": row["seed"],
+                "index": row["index"],
+                "split": row["split"],
+                "prediction": answer,
+                "expected": gold,
+                "correct": score >= 1.0,
+            }
+            trace = None
+            if capture_traces:
+                trace = {**output, "question": row["question"], "usage": _usage_from_response(rj)}
+            return output, score, trace
+
+        results = await asyncio.gather(*(evaluate_row(dict(row)) for row in batch))
+        outputs = [r[0] for r in results]
+        scores = [float(r[1]) for r in results]
+        traces = [r[2] for r in results if r[2] is not None]
+        usage_totals = _empty_usage_totals()
+        for t in traces:
+            if isinstance(t, dict):
+                _add_usage_totals(usage_totals, dict(t.get("usage") or {}))
+        return {
+            "outputs": outputs, "scores": scores, "traces": traces,
+            "metadata": {"candidate": dict(candidate), "capture_traces": bool(capture_traces), "usage": usage_totals},
+        }
+
+
 def execute_live(
     artifacts_dir: Path,
     *,
@@ -736,63 +1198,158 @@ def execute_live(
 ) -> int:
     _ensure_local_imports()
     loaded_key_names = _load_local_api_keys()
+    from proposer import PROPOSER_SEGMENT_GUIDANCE, resolve_proposer_backend
     from synth_optimizers.miprov2.core import (
         DiscreteMiproOptimizer,
-        MiproCodexProposerConfig,
         MiproGroundingHooks,
-        HeuristicOpenEnvReactAgent,
         MiproModuleTemplate,
         MiproOpenEnvProposerConfig,
+        MiproOpenEnvProposerVariant,
         MiproPhase3Config,
         MiproProgramTemplate,
         MiproStageTemplate,
-        OpenAIOpenEnvReactAgent,
         TpeConfig,
         compile_search_space,
+        decode_config,
         export_candidate_train_scores_from_ledger,
         run_phase3_loop,
     )
     from synth_optimizers.miprov2.core.run_ledger import SQLiteMiproRunLedger
 
     config = _load_config(config_path)
-    train_rows, heldout_rows = _load_rows(config, smoke=smoke)
+    task = str(config.get("task") or "banking77").lower().strip()
+    if task == "gsm8k":
+        train_rows, heldout_rows = _load_rows_gsm8k(config, smoke=smoke)
+    elif task == "hotpotqa":
+        train_rows, heldout_rows = _load_rows_hotpotqa(config, smoke=smoke)
+    else:
+        train_rows, heldout_rows = [], []
     live_dir = artifacts_dir / ("live_native_smoke" if smoke else "live_native_run")
     output_dir = live_dir / "miprov2_artifacts"
     ledger_path = live_dir / "ledger.sqlite"
     max_concurrency = min(int(config.get("concurrency") or 4), 4 if smoke else 20)
-    seed = _seed_candidate()
-    program_template = MiproProgramTemplate(
-        program_id="banking77_instruction_miprov2",
-        stages=(
-            MiproStageTemplate(
-                stage_id="classify",
-                stage_name="Banking77 intent classification",
-                modules=(
-                    MiproModuleTemplate(
-                        module_id="system_prompt",
-                        instruction_candidates=(seed["system_prompt"],),
-                    ),
-                    MiproModuleTemplate(
-                        module_id="user_prompt",
-                        instruction_candidates=(seed["user_prompt"],),
+    native_run_id = f"{config.get('run_id')}_native{'_smoke' if smoke else ''}"
+
+    # ── Task-specific program template + adapter ───────────────────────────────
+    if task == "gsm8k":
+        program_template = MiproProgramTemplate(
+            program_id="gsm8k_miprov2",
+            stages=(
+                MiproStageTemplate(
+                    stage_id="stage_1_solve",
+                    stage_name="Math problem solving",
+                    modules=(
+                        MiproModuleTemplate(module_id="stage1_system", instruction_candidates=(_GSM8K_DEFAULT_SYSTEM,)),
+                        MiproModuleTemplate(module_id="stage1_user", instruction_candidates=(_GSM8K_DEFAULT_USER,)),
                     ),
                 ),
             ),
-        ),
-    )
+        )
+        adapter: Any = Gsm8kMiproAdapter(_policy_config(config), max_concurrency=max_concurrency)
+    elif task == "hotpotqa":
+        program_template = MiproProgramTemplate(
+            program_id="hotpotqa_miprov2",
+            stages=(
+                MiproStageTemplate(
+                    stage_id="stage_1_answer",
+                    stage_name="Multi-hop question answering",
+                    modules=(
+                        MiproModuleTemplate(module_id="stage1_system", instruction_candidates=(_HOTPOTQA_DEFAULT_SYSTEM,)),
+                        MiproModuleTemplate(module_id="stage1_user", instruction_candidates=(_HOTPOTQA_DEFAULT_USER,)),
+                    ),
+                ),
+            ),
+        )
+        adapter = HotpotQaMiproAdapter(_policy_config(config), max_concurrency=max_concurrency)
+    else:
+        from synth_service_app import (
+            TASK_ID,
+            app,
+        )
+        from synth_containers.http_client import HTTPContainerClient
+        from synth_optimizers.miprov2 import (
+            ContainerMiproInterceptorAdapter,
+            ContainerMiproRolloutBinding,
+            program_template_from_prompt_contract,
+        )
+
+        client = HTTPContainerClient.from_app(app)
+        metadata_payload = asyncio.run(client.metadata())
+        route_contract = _miprov2_contract_routes(metadata_payload)
+        program_payload = asyncio.run(client.program())
+        if not program_payload:
+            program_payload = (metadata_payload.get("metadata") or {}).get("policy_prompt_contract")
+        if not isinstance(program_payload, dict):
+            seed = _seed_candidate()
+            program_payload = {
+                "version": "prompt_program.v1",
+                "program_id": "banking77_2stage_miprov2",
+                "pipeline_id": "banking77",
+                "search_space": {"initial_candidates": _candidate_variants()},
+                "stages": [
+                    {
+                        "stage_id": "stage_1_coarse",
+                        "stage_name": "Coarse category classification",
+                        "messages": [
+                            {"module_id": "stage1_system", "role": "system", "content": seed["stage1_system"]},
+                            {"module_id": "stage1_user", "role": "user", "content": seed["stage1_user"]},
+                        ],
+                    },
+                    {
+                        "stage_id": "stage_2_fine",
+                        "stage_name": "Fine-grained intent classification",
+                        "messages": [
+                            {"module_id": "stage2_system", "role": "system", "content": seed["stage2_system"]},
+                            {"module_id": "stage2_user", "role": "user", "content": seed["stage2_user"]},
+                        ],
+                    },
+                ],
+            }
+        program_template = program_template_from_prompt_contract(program_payload)
+        train_rows, heldout_rows = asyncio.run(_load_container_rows(client, config, smoke=smoke))
+        if not train_rows or not heldout_rows:
+            rows_route = route_contract.get("dataset_rows_route") or "/dataset/rows"
+            raise RuntimeError(f"container returned no MIPRO rows via {rows_route}")
+        policy_config = _policy_config(config)
+        component_candidates = _candidate_variants_from_program(program_payload) or _candidate_variants()
+        adapter = ContainerMiproInterceptorAdapter(
+            client=client,
+            binding=ContainerMiproRolloutBinding(
+                task_id=TASK_ID,
+                extra_request={"policy": {"config": policy_config}},
+            ),
+            component_candidates=component_candidates,
+            max_concurrency=max_concurrency,
+            run_id=native_run_id,
+            program_template=program_template,
+            interceptor_base_url=str(
+                config.get("mipro_proxy_base_url")
+                or config.get("interceptor_base_url")
+                or ""
+            ).strip() or None,
+            direct_inference_url=str(config.get("mipro_direct_inference_url") or "").strip() or None,
+            pipeline_id="banking77",
+            stage_id="stage_default",
+            interceptor_roles=("system",),
+            policy_candidate_fields=("stage1_user", "stage2_user"),
+        )
     compiled = compile_search_space(program_template)
     optimizer = asyncio.run(
         DiscreteMiproOptimizer.from_search_space(
             search_space=compiled.search_space,
-            tpe_config=TpeConfig(),
-            rng_seed=int(config.get("rng_seed") or 41),
+            tpe_config=TpeConfig(
+                n_startup_trials=int(config.get("initial_candidate_count") or 2),
+            ),
+            rng_seed=int(config.get("rng_seed") or 42),
         )
     )
-    adapter = Banking77MiproAdapter(_policy_config(config), max_concurrency=max_concurrency)
     metric_call_count = 0
     policy_usage_totals = _empty_usage_totals()
     heldout_details_by_candidate_id: dict[str, dict[str, Any]] = {}
     heldout_details_order: list[dict[str, Any]] = []
+
+    def _frac(score: float, n: int) -> str:
+        return f"{round(score * n)}/{n}"
 
     _prog = {
         "start": time.time(),
@@ -802,12 +1359,14 @@ def execute_live(
         "target_rollouts": int(config.get("target_total_train_rollouts") or 9999),
         "proposer_model": str(config.get("codex_proposer_model") or config.get("proposer_model") or "?"),
         "policy_model": str(config.get("policy_model") or "?"),
+        "policy_wall_s": 0.0,
+        "proposer_wall_s": 0.0,
     }
-    _sep = "─" * 72
+    _sep = _dim("─" * 72)
     print(_sep)
     print(
-        f"  MIPROv2  policy={_prog['policy_model']}  "
-        f"proposer={_prog['proposer_model']}  "
+        f"  {_bold('MIPROv2')}  policy={_bold(_cyan(_prog['policy_model']))}  "
+        f"proposer={_bold(_cyan(_prog['proposer_model']))}  "
         f"train={len(train_rows)}  heldout={len(heldout_rows)}  "
         f"proposer_trigger={_prog['target_rollouts']} rollouts"
     )
@@ -815,18 +1374,31 @@ def execute_live(
 
     async def evaluate_rows(rows: list[dict[str, Any]], candidate: Any, *, split: str) -> tuple[float, dict[str, Any]]:
         nonlocal metric_call_count
-        batch = await adapter.evaluate(rows, _candidate_to_prompt_map(candidate), capture_traces=True)
-        scores = [float(score) for score in batch["scores"]]
+        candidate_map = _candidate_to_prompt_map(candidate)
+        evaluate_kwargs: dict[str, Any] = {"capture_traces": True}
+        if callable(getattr(adapter, "_prepare_interceptor_rollout", None)):
+            evaluate_kwargs["candidate_id"] = str(getattr(candidate, "candidate_id", "") or "")
+        batch = await adapter.evaluate(rows, candidate_map, **evaluate_kwargs)
+        outputs, scores, traces, metadata = _eval_batch_payload(batch)
         metric_call_count += len(rows)
-        _add_usage_totals(policy_usage_totals, dict((batch.get("metadata") or {}).get("usage") or {}))
-        details = {
+        _add_usage_totals(policy_usage_totals, dict(metadata.get("usage") or {}))
+        _achieve_acc: dict[str, list[float]] = {}
+        for _tr in traces:
+            _tr_dict = _tr if isinstance(_tr, dict) else {}
+            _ri = _tr_dict.get("reward_info") or {}
+            _tr_achieve = (_ri.get("details") or {}).get("achievements") or {}
+            for _ak, _av in _tr_achieve.items():
+                _achieve_acc.setdefault(str(_ak), []).append(float(_av))
+        details: dict[str, Any] = {
             "candidate_id": str(getattr(candidate, "candidate_id", "") or ""),
             "split": split,
             "scores": scores,
-            "outputs": batch["outputs"],
-            "traces": batch["traces"],
+            "outputs": outputs,
+            "traces": traces,
             "selected_instructions": dict(getattr(candidate, "selected_instructions", {}) or {}),
         }
+        if _achieve_acc:
+            details["achievements"] = {k: sum(v) / len(v) for k, v in _achieve_acc.items()}
         if split == "heldout":
             candidate_id = str(getattr(candidate, "candidate_id", "") or "")
             if candidate_id:
@@ -834,8 +1406,17 @@ def execute_live(
             heldout_details_order.append(dict(details))
         return (sum(scores) / len(scores) if scores else 0.0, details)
 
-    _MODULE_ABBREV = {"system_prompt": "sys", "user_prompt": "usr"}
-    _seen_option_ids: set[str] = set()  # "module_id:option_id" pairs already displayed
+    _MODULE_ABBREV = {
+        "stage1_system": "s1sys",
+        "stage1_user": "s1usr",
+        "stage2_system": "s2sys",
+        "stage2_user": "s2usr",
+    }
+    _seen_option_ids: set[str] = set()  # "module_id:option_id" pairs already displayed in proposer banner
+    _seen_eval_oids: set[str] = set()   # option_ids already shown in an eval-time diff
+    _patch_annotations: dict[str, str] = {}  # option_id → proposer annotation
+    _tpe_history: list[dict[str, Any]] = []  # {trial, snap: {mid → {oid → mean}}}
+    _cid_to_config: dict[str, dict[str, str]] = {}  # candidate_id → {mid → oid}
     # Populated from baseline compiled space + proposer event patches (working_space is a clone)
     _option_text_cache: dict[str, str] = {
         f"{comp_key.replace('module:', '').replace(':instruction', '')}:{oid}": text
@@ -853,96 +1434,330 @@ def execute_live(
         )
         return f"  [{parts}]"
 
-    def _print_tpe_beliefs(candidate: Any, current_score: float) -> None:
+    def _print_tpe_beliefs(candidate: Any, current_score: float) -> dict[str, dict[str, float]] | None:
         try:
-            obs_list = list(optimizer.tpe.observations)
-            # Include the current trial (tell() hasn't been called yet)
+            before_obs = list(optimizer.tpe.observations)
             base_ids: dict[str, str] = dict(getattr(candidate, "selected_instruction_base_option_ids", {}) or {})
-            current_config = {
-                f"module:{mid}:instruction": oid for mid, oid in base_ids.items()
-            }
-            if current_config:
-                obs_list = list(obs_list) + [type("_Obs", (), {"config": current_config, "score": current_score})()]
-            if not obs_list:
-                return
-            comp_scores: dict[str, dict[str, list[float]]] = {}
-            for obs in obs_list:
-                for comp_key, opt_id in obs.config.items():
-                    comp_scores.setdefault(comp_key, {}).setdefault(opt_id, []).append(obs.score)
+            current_config = {f"module:{mid}:instruction": oid for mid, oid in base_ids.items()}
+
+            def _build(obs_list: list[Any]) -> dict[str, dict[str, list[float]]]:
+                c: dict[str, dict[str, list[float]]] = {}
+                for obs in obs_list:
+                    for k, v in obs.config.items():
+                        c.setdefault(k, {}).setdefault(v, []).append(obs.score)
+                return c
+
+            before_comp = _build(before_obs)
+            after_obs = before_obs + (
+                [type("_O", (), {"config": current_config, "score": current_score})()] if current_config else []
+            )
+            after_comp = _build(after_obs)
+            if not after_comp:
+                return None
+
+            def _mu(sc: list[float]) -> float:
+                return sum(sc) / len(sc)
+
+            def _ranked(opts: dict[str, list[float]]) -> dict[str, int]:
+                return {oid: i + 1 for i, (oid, _) in enumerate(sorted(opts.items(), key=lambda x: _mu(x[1]), reverse=True))}
+
             parts = []
-            for comp_key in sorted(comp_scores):
+            any_rank_change = False
+            for comp_key in sorted(after_comp):
                 mod_id = comp_key.replace("module:", "").replace(":instruction", "")
                 short = _MODULE_ABBREV.get(mod_id, mod_id[:4])
-                opt_parts = [
-                    f"{oid}(μ={sum(sc)/len(sc):.3f} n={len(sc)})"
-                    for oid, sc in sorted(comp_scores[comp_key].items())
-                ]
+                before_opts = before_comp.get(comp_key, {})
+                after_opts = after_comp[comp_key]
+                multi = len(after_opts) > 1
+                after_rank = _ranked(after_opts) if multi else {}
+                before_rank = _ranked(before_opts) if (multi and before_opts) else {}
+                opt_parts = []
+                for oid in sorted(after_opts):
+                    amu = _mu(after_opts[oid])
+                    ar = after_rank.get(oid)
+                    if oid not in before_opts:
+                        rank_str = f",#{ar}" if ar else ""
+                        opt_parts.append(f"{oid}({_cyan('new→' + f'{amu:.3f}')}{rank_str})")
+                    else:
+                        bmu = _mu(before_opts[oid])
+                        br = before_rank.get(oid)
+                        delta = amu - bmu
+                        if abs(delta) > 1e-6:
+                            mu_str = _green(f"{bmu:.3f}→{amu:.3f}") if delta > 0 else _red(f"{bmu:.3f}→{amu:.3f}")
+                        else:
+                            mu_str = f"{amu:.3f}"
+                        if multi and ar is not None:
+                            if br is not None and br != ar:
+                                any_rank_change = True
+                                arrow = _green("↑") if ar < br else _red("↓")
+                                rank_str = f",#{br}→#{ar}{arrow}"
+                            else:
+                                rank_str = f",#{ar}"
+                        else:
+                            rank_str = ""
+                        opt_parts.append(f"{oid}({mu_str}{rank_str})")
                 parts.append(f"{short}: {' '.join(opt_parts)}")
-            print(f"           tpe  {'   '.join(parts)}", flush=True)
+
+            rank_suffix = f"  {_byellow('↕')}" if any_rank_change else ""
+
+            # Explore/exploit mode display
+            cfg = optimizer.tpe.config
+            def _split(n: int) -> tuple[str, int, int]:
+                if n < cfg.n_startup_trials:
+                    return "random", 0, 0
+                ng = max(1, math.ceil(n * cfg.gamma))
+                if ng >= n:
+                    ng = n - 1
+                return "tpe", ng, n - ng
+
+            bm, bg, bb = _split(len(before_obs))
+            am, ag, ab = _split(len(after_obs))
+            if bm == "random" and am == "random":
+                mode_suffix = f"  {_dim(_yellow(f'[random {len(after_obs)}/{cfg.n_startup_trials}]'))}"
+            elif bm == "random" and am == "tpe":
+                mode_suffix = f"  {_byellow(f'[random→tpe g={ag}/b={ab} ε={cfg.epsilon}]')}"
+            elif bg != ag:
+                mode_suffix = f"  {_yellow(f'[tpe g={bg}→{ag}/b={bb}→{ab}]')}"
+            else:
+                mode_suffix = f"  {_dim(_cyan(f'[tpe g={ag}/b={ab}]'))}"
+
+            print(f"           {_dim('tpe')}  {'   '.join(parts)}{rank_suffix}{mode_suffix}", flush=True)
+            return {
+                comp_key.replace("module:", "").replace(":instruction", ""): {
+                    oid: _mu(scores) for oid, scores in opts.items()
+                }
+                for comp_key, opts in after_comp.items()
+            }
         except Exception:
-            pass
+            return None
 
     def _print_first_seen_options(candidate: Any) -> None:
+        """Show a full diff for each option appearing in eval for the first time."""
         base_ids: dict[str, str] = dict(getattr(candidate, "selected_instruction_base_option_ids", {}) or {})
+        _stages = compiled.program_template.stages
+        _multi_stage = len(_stages) > 1 or (len(_stages) == 1 and _stages[0].stage_id != "stage_0")
+        _mod_to_stage: dict[str, str] = {m.module_id: s.stage_id for s in _stages for m in s.modules}
+        _W = 110
+
+        def _fmt(text: str) -> str:
+            flat = text.replace("\n", " ↵ ")
+            return flat[:_W] + ("…" if len(flat) > _W else "")
+
         for mid, oid in sorted(base_ids.items()):
-            key = f"{mid}:{oid}"
-            if key in _seen_option_ids:
+            if oid == "i0":
                 continue
-            _seen_option_ids.add(key)
-            text = _option_text_cache.get(key, "")
-            if text:
-                short = _MODULE_ABBREV.get(mid, mid[:4])
-                preview = text[:100].replace("\n", " ↵ ")
-                if len(text) > 100:
-                    preview += "…"
-                print(f"           {short} {oid}  {preview!r}", flush=True)
+            if oid in _seen_eval_oids:
+                continue
+            _seen_eval_oids.add(oid)
+            new_text = _option_text_cache.get(f"{mid}:{oid}", "")
+            if not new_text:
+                continue
+            short = _MODULE_ABBREV.get(mid, mid[:4])
+            sid = _mod_to_stage.get(mid, "")
+            stage_obj = next((s for s in _stages if s.stage_id == sid), None) if sid else None
+            stage_label = stage_obj.stage_name if (stage_obj and stage_obj.stage_name) else ""
+            prefix = _bold(_cyan(f"[{stage_label}] ")) if stage_label else ""
+            old_text = _option_text_cache.get(f"{mid}:i0", "")
+            print(f"           {prefix}{_cyan(short)} {_dim(oid)}", flush=True)
+            if old_text:
+                print(f"             {_red('---')} {_dim(_fmt(old_text))}", flush=True)
+            print(f"             {_green('+++')} {_green(_fmt(new_text))}", flush=True)
+            annotation = _patch_annotations.get(oid, "")
+            if annotation:
+                print(f"             {_dim('↳')} {_yellow(annotation[:140])}", flush=True)
 
     async def evaluate_train(candidate: Any) -> tuple[float, dict[str, Any]]:
         _eval_num = _prog["train_evals"] + 1
         _prog["train_evals"] = _eval_num
+        _t0 = time.time()
         result = await evaluate_rows(train_rows, candidate, split="train")
+        _prog["policy_wall_s"] += time.time() - _t0
         score = result[0]
         elapsed = time.time() - _prog["start"]
         opts_str = _format_option_ids(candidate)
-        marker = ""
-        if score > _prog["best_train"]:
+        is_best = score > _prog["best_train"]
+        if is_best:
             _prog["best_train"] = score
-            marker = "  ★ new best"
+        _nt = len(train_rows)
+        _score_frac = _frac(score, _nt)
+        _best_frac = _frac(_prog["best_train"], _nt)
+        score_str = _green(f"{_score_frac} {score:.3f}") if is_best else f"{_score_frac} {score:.3f}"
+        marker = f"  {_bgreen('★ new best')}" if is_best else ""
+        _train_achievements = result[1].get("achievements") or {}
+        _achieve_parts = [
+            f"{_ak}={_frac(_av, _nt)} {_av:.3f}"
+            for _ak, _av in _train_achievements.items()
+        ]
+        _achieve_str = ("  " + "  ".join(_achieve_parts)) if _achieve_parts else ""
         print(
-            f"  {elapsed:6.1f}s  train #{_eval_num:>3}{opts_str}"
-            f"  score={score:.3f}  best={_prog['best_train']:.3f}"
+            f"  {_dim(f'{elapsed:6.1f}s')}  {_bold('train')} #{_eval_num:>3}  {_dim(f'N={_nt}')}  {opts_str.strip()}"
+            f"  score={score_str}{_achieve_str}  best={_best_frac} {_prog['best_train']:.3f}"
             f"  rollouts={metric_call_count}{marker}",
             flush=True,
         )
-        _print_tpe_beliefs(candidate, score)
+        _snap = _print_tpe_beliefs(candidate, score)
+        if _snap:
+            _tpe_history.append({"trial": _eval_num, "snap": _snap})
+        _cid = str(getattr(candidate, "candidate_id", "") or "")
+        if _cid:
+            _cid_to_config[_cid] = dict(getattr(candidate, "selected_instruction_base_option_ids", {}) or {})
+        _print_first_seen_options(candidate)
         return result
 
     async def evaluate_heldout(candidate: Any) -> tuple[float, dict[str, Any]]:
         _prog["heldout_evals"] += 1
+        _t0 = time.time()
         result = await evaluate_rows(heldout_rows, candidate, split="heldout")
+        _prog["policy_wall_s"] += time.time() - _t0
         score = result[0]
         elapsed = time.time() - _prog["start"]
+        _nh = len(heldout_rows)
         cid = str(getattr(candidate, "candidate_id", "") or "")[-12:]
         print(
-            f"  {elapsed:6.1f}s  heldout #{_prog['heldout_evals']:>2}  {cid}"
-            f"  score={score:.3f}",
+            f"  {_dim(f'{elapsed:6.1f}s')}  {_cyan('heldout')} #{_prog['heldout_evals']:>2}  {_dim(f'N={_nh}')}  {_dim(cid)}"
+            f"  score={_cyan(f'{_frac(score, _nh)} {score:.3f}')}",
             flush=True,
         )
         return result
 
     _proposer_token_totals = {"prompt": 0, "completion": 0, "total": 0}
+    _dashes = _dim("──")
+
+    # Proposer live-status state (in-place overwriting status line, go-explore style)
+    _pst: dict[str, Any] = {
+        "started_at": None,
+        "status": "starting",
+        "active_turn_id": "",
+        "tokens": 0,
+        "raw_events": 0,
+        "manifest_status": "missing",
+        "manifest_bytes": None,
+        "last_detail": "",
+        "counts": {"r": 0, "tool": 0, "cmd": 0, "file": 0, "msg": 0},
+        "line_active": False,
+    }
+
+    def _pst_elapsed() -> float:
+        t0 = _pst["started_at"]
+        return (time.time() - t0) if t0 else 0.0
+
+    def _status_line(detail: str) -> None:
+        el = _pst_elapsed()
+        sp = "|/-\\"[int(el * 4) % 4]
+        c = _pst["counts"]
+        mb = _pst["manifest_bytes"]
+        msize = f"{mb}B" if mb is not None else "-"
+        turn = _pst["active_turn_id"][-8:] if _pst["active_turn_id"] else "-"
+        text = (
+            f"proposer {sp} {el:5.1f}s | "
+            f"state={_pst['status']} turn={turn} events={_pst['raw_events']} "
+            f"tok={_pst['tokens']} manifest={_pst['manifest_status']}:{msize} | "
+            f"r={c['r']} tool={c['tool']} cmd={c['cmd']} file={c['file']} msg={c['msg']} | "
+            f"{detail[:70]}"
+        )
+        line = f"  {_dim(text[:180])}"
+        if _USE_COLOR:
+            print("\r\033[2K" + line, end="", flush=True)
+        else:
+            print(line, flush=True)
+        _pst["line_active"] = True
+
+    def _clear_status_line() -> None:
+        if _pst["line_active"] and _USE_COLOR:
+            print("\r\033[2K", end="", flush=True)
+        elif _pst["line_active"]:
+            print(flush=True)
+        _pst["line_active"] = False
 
     def _on_proposer_event(event: dict[str, Any]) -> None:
         elapsed = time.time() - _prog["start"]
         kind = event.get("event")
         round_idx = event.get("round_idx", "?")
+
+        if kind == "codex_workspace_stream_event":
+            item_type = str(event.get("item_type") or "")
+            if item_type == "command_execution":
+                _pst["counts"]["cmd"] += 1
+                detail = f"cmd {str(event.get('command') or '')[:60]}"
+            elif item_type == "file_change":
+                _pst["counts"]["file"] += 1
+                detail = f"file {str(event.get('path') or '')[:60]}"
+            elif item_type == "agent_message":
+                _pst["counts"]["msg"] += 1
+                detail = f"msg {str(event.get('text_preview') or '')[:60]}"
+            elif item_type == "mcp_tool_call":
+                _pst["counts"]["tool"] += 1
+                _tname = str(event.get("tool_name") or "")
+                _tstatus = str(event.get("status") or "")
+                _clear_status_line()
+                _status_suffix = f"  {_dim('[' + _tstatus + ']')}" if _tstatus else ""
+                print(
+                    f"           {_dim('tool')}  {_cyan(_tname)}{_status_suffix}",
+                    flush=True,
+                )
+                _pst["last_detail"] = f"tool {_tname}"
+                return
+            else:
+                detail = item_type or "activity"
+            _pst["last_detail"] = detail
+            _status_line(detail)
+            return
+
+        if kind == "codex_workspace_progress_poll":
+            _pst["status"] = str(event.get("session_status") or _pst["status"])
+            _pst["active_turn_id"] = str(event.get("active_turn_id") or _pst["active_turn_id"])
+            _pst["raw_events"] = int(event.get("raw_event_count") or _pst["raw_events"])
+            _pst["manifest_status"] = str(event.get("manifest_status") or _pst["manifest_status"])
+            mb = event.get("manifest_bytes")
+            if mb is not None:
+                _pst["manifest_bytes"] = int(mb)
+            usage = dict(event.get("usage") or {})
+            _pst["tokens"] = int(usage.get("total_tokens") or _pst["tokens"])
+            _status_line(_pst["last_detail"] or "running")
+            return
+
+        if kind == "codex_workspace_patch_annotations":
+            _patch_annotations.update(dict(event.get("annotations") or {}))
+            return
+
+        if kind == "codex_workspace_materialized":
+            counts = dict(event.get("counts") or {})
+            parts = [
+                f"rollouts={counts.get('rollouts', '?')}",
+                f"candidates={counts.get('candidates', '?')}",
+                f"deltas={counts.get('delta_digests', '?')}",
+                f"verdicts={counts.get('verdict_digests', '?')}",
+                f"train_rows={counts.get('sampled_train_rows', '?')}",
+            ]
+            print(f"           {_dim('workspace ready  '  + '  '.join(parts))}", flush=True)
+            return
+
         if kind == "start":
+            _pst["started_at"] = time.time()
+            _pst["status"] = "starting"
+            _pst["active_turn_id"] = ""
+            _pst["tokens"] = 0
+            _pst["raw_events"] = 0
+            _pst["manifest_status"] = "missing"
+            _pst["manifest_bytes"] = None
+            _pst["last_detail"] = ""
+            _pst["counts"] = {"r": 0, "tool": 0, "cmd": 0, "file": 0, "msg": 0}
+            _pst["line_active"] = False
+            best = event.get("best_train_score")
+            score_str = f"best={best:.3f}" if best is not None else "best=—"
+            ws = str(event.get("workspace_root") or "")
             print(
-                f"  {elapsed:6.1f}s  ── codex proposer round {round_idx} starting"
-                f"  (model={event.get('model', '?')}) ──",
+                f"  {_dim(f'{elapsed:6.1f}s')}  {_dashes} {_bold(_magenta(f'codex proposer round {round_idx} starting'))}"
+                f"  {_dim('model=' + str(event.get('model', '?')))} {_dashes}",
+                flush=True,
+            )
+            print(
+                f"           {_dim(score_str + '  obs=' + str(event.get('observation_count', 0)))}"
+                + (f"  {_dim('workspace: ' + ws)}" if ws else ""),
                 flush=True,
             )
         elif kind == "complete":
+            _clear_status_line()
             n = event.get("n_new_candidates", 0)
             secs = event.get("elapsed_s", 0.0)
             prop_prompt = event.get("prompt_tokens", 0)
@@ -951,6 +1766,7 @@ def execute_live(
             _proposer_token_totals["prompt"] += prop_prompt
             _proposer_token_totals["completion"] += prop_comp
             _proposer_token_totals["total"] += prop_total
+            _prog["proposer_wall_s"] += float(secs)
             tok_str = (
                 f"  proposer_tokens={prop_total} (in={prop_prompt} / out={prop_comp})"
                 if prop_total > 0 else ""
@@ -989,14 +1805,36 @@ def execute_live(
                     f"{_MODULE_ABBREV.get(k, k[:4])}: +{' +'.join(ids)}"
                     for k, ids in by_mod_new.items()
                 )
+            _tok_str_display = _dim(tok_str) if tok_str else ""
             print(
-                f"  {elapsed:6.1f}s  ── codex proposer round {round_idx} done"
-                f"  {secs:.1f}s  {n} new transforms  [{module_summary}]{tok_str} ──",
+                _dim("  ") + f"{elapsed:6.1f}s  "
+                + _bold(_cyan(f"── codex proposer round {round_idx} done"))
+                + f"  {secs:.1f}s  "
+                + _bold(f"{n} new transforms")
+                + f"  [{module_summary}]"
+                + _tok_str_display
+                + _bold(_cyan("  ──")),
                 flush=True,
             )
-            # Print transforms grouped by stage
+            # Print transforms as diffs against the baseline (i0) instruction
+            _W = 110
+
+            def _fmt(text: str) -> str:
+                flat = text.replace("\n", " ↵ ")
+                return flat[:_W] + ("…" if len(flat) > _W else "")
+
+            def _print_transform_diff(mid: str, oid: str, new_text: str, stage_label: str = "", annotation: str = "") -> None:
+                short = _MODULE_ABBREV.get(mid, mid[:4])
+                prefix = _bold(_cyan(f"[{stage_label}] ")) if stage_label else ""
+                old_text = _option_text_cache.get(f"{mid}:i0", "")
+                print(f"           {prefix}{_cyan(short)} {_dim(oid)}", flush=True)
+                if old_text:
+                    print(f"             {_red('---')} {_dim(_fmt(old_text))}", flush=True)
+                print(f"             {_green('+++')} {_green(_fmt(new_text))}", flush=True)
+                if annotation:
+                    print(f"             {_dim('↳')} {_yellow(annotation[:140])}", flush=True)
+
             if _multi_stage:
-                # Group patches by stage for display
                 by_stage_patches: dict[str, list[dict[str, Any]]] = {}
                 for p in patches:
                     mid = str(p.get("module_id", "?"))
@@ -1006,24 +1844,23 @@ def execute_live(
                     stage_obj = next((s for s in _stages if s.stage_id == sid), None)
                     stage_label = stage_obj.stage_name if (stage_obj and stage_obj.stage_name) else sid
                     for p in stage_patches:
-                        mid = str(p.get("module_id", "?"))
-                        oid = str(p.get("option_id", "?"))
-                        text = str(p.get("instruction_text", ""))
-                        short = _MODULE_ABBREV.get(mid, mid[:4])
-                        preview = text[:90].replace("\n", " ↵ ")
-                        if len(text) > 90:
-                            preview += "…"
-                        print(f"           [{stage_label}] {short} {oid}  {preview!r}", flush=True)
+                        _oid = str(p.get("option_id", "?"))
+                        _print_transform_diff(
+                            str(p.get("module_id", "?")),
+                            _oid,
+                            str(p.get("instruction_text", "")),
+                            stage_label=stage_label,
+                            annotation=_patch_annotations.get(_oid, ""),
+                        )
             else:
                 for p in patches:
-                    mid = str(p.get("module_id", "?"))
-                    oid = str(p.get("option_id", "?"))
-                    text = str(p.get("instruction_text", ""))
-                    short = _MODULE_ABBREV.get(mid, mid[:4])
-                    preview = text[:110].replace("\n", " ↵ ")
-                    if len(text) > 110:
-                        preview += "…"
-                    print(f"           {short} {oid}  {preview!r}", flush=True)
+                    _oid = str(p.get("option_id", "?"))
+                    _print_transform_diff(
+                        str(p.get("module_id", "?")),
+                        _oid,
+                        str(p.get("instruction_text", "")),
+                        annotation=_patch_annotations.get(_oid, ""),
+                    )
             # Running totals
             pol = policy_usage_totals
             pol_in = int(pol.get("prompt_tokens") or 0)
@@ -1035,53 +1872,27 @@ def execute_live(
                 if prop_run_total > 0 else ""
             )
             print(
-                f"           policy_tokens={pol_total}"
-                f" (in={pol_in} / out={pol_out}){prop_run_str}",
+                _dim(
+                    f"           policy_tokens={pol_total}"
+                    f" (in={pol_in} / out={pol_out}){prop_run_str}"
+                ),
                 flush=True,
             )
 
-    interactive_enabled = bool(interactive_proposer or config.get("interactive_proposer"))
-    interactive_resume_id = str(
-        interactive_resume_session_id or config.get("interactive_resume_session_id") or ""
-    ).strip()
-    configured_session_root = (
-        Path(interactive_session_root)
-        if interactive_session_root is not None
-        else (
-            Path(str(config["interactive_session_root"]))
-            if config.get("interactive_session_root")
-            else output_dir / "proposer_sessions"
-        )
+    resolved_proposer = resolve_proposer_backend(
+        config,
+        smoke=smoke,
+        output_dir=output_dir,
+        interactive_proposer=interactive_proposer,
+        interactive_session_root=interactive_session_root,
+        interactive_resume_session_id=interactive_resume_session_id,
     )
-    proposer_backend = str(config.get("proposer_backend") or "openenv_react").strip().lower()
-    codex_cfg: MiproCodexProposerConfig | None = None
-    if proposer_backend == "codex_workspace":
-        codex_cfg = MiproCodexProposerConfig(
-            model=str(config.get("codex_proposer_model") or "gpt-5.4-mini"),
-            openai_base_url=str(config.get("codex_proposer_openai_base_url") or ""),
-            api_key_env=str(config.get("codex_proposer_api_key_env") or ""),
-            copy_host_auth=bool(config.get("codex_proposer_copy_host_auth", True)),
-            turn_timeout_seconds=float(config.get("codex_proposer_turn_timeout_seconds") or 300.0),
-            shutdown_timeout_seconds=float(config.get("codex_proposer_shutdown_timeout_seconds") or 30.0),
-            workspace_root=str(config.get("codex_proposer_workspace_root") or ""),
-        )
-        proposer_agent = HeuristicOpenEnvReactAgent()
-        proposer_control = "codex_workspace"
-    elif interactive_enabled:
-        proposer_agent = HeuristicOpenEnvReactAgent()
-        proposer_control = "interactive_pause"
-    else:
-        api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-        if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for native MIPRO OpenEnv proposer execution.")
-        proposer_agent = OpenAIOpenEnvReactAgent(
-            api_key=api_key,
-            model=str(config.get("proposer_model") or "gpt-5.4-mini"),
-            temperature=float(config.get("proposer_temperature") or 1.0),
-            max_tokens=int(config.get("proposer_max_completion_tokens") or 1200),
-            timeout_s=float(config.get("proposer_timeout_s") or 120),
-        )
-        proposer_control = "auto"
+    proposer_backend = resolved_proposer.backend
+    proposer_agent = resolved_proposer.agent
+    proposer_control = resolved_proposer.control
+    codex_cfg = resolved_proposer.codex_config
+    configured_session_root = resolved_proposer.interactive_session_root
+    interactive_resume_id = resolved_proposer.interactive_resume_session_id
     proposer_rounds = 1 if smoke else int(config.get("max_proposer_sessions") or 6)
     train_rounds_per_proposer_round = 1 if smoke else max(
         1,
@@ -1121,14 +1932,239 @@ def execute_live(
                     max_demo_patches=0,
                     archive_root=str(output_dir / "artifacts" / "proposer_archives"),
                 ),
+                proposer_variant=MiproOpenEnvProposerVariant(
+                    system_prompt_append=PROPOSER_SEGMENT_GUIDANCE,
+                ),
             ),
-            run_id=f"{config.get('run_id')}_native{'_smoke' if smoke else ''}",
+            run_id=native_run_id,
             ledger_path=str(ledger_path),
             resume=bool(interactive_resume_id),
             codex_config=codex_cfg,
             on_proposer_event=_on_proposer_event if proposer_backend == "codex_workspace" else None,
         )
     )
+
+    # ── Top-N heldout evaluation ───────────────────────────────────────────────
+    _top_n = 4
+    _N_BOOT = 10_000
+    _final_space = outcome.final_compiled_space
+    _heldout_table: list[dict[str, Any]] = []
+
+    def _boot_ci(scores: list[float]) -> tuple[float, float]:
+        n = len(scores)
+        if n == 0:
+            return (0.0, 0.0)
+        rng = random.Random(42)
+        means = sorted(sum(rng.choices(scores, k=n)) / n for _ in range(_N_BOOT))
+        lo = means[int(0.025 * _N_BOOT)]
+        hi = means[int(0.975 * _N_BOOT)]
+        return lo, hi
+
+    def _boot_lift_ci(cand_scores: list[float], base_scores: list[float]) -> tuple[float, float, bool]:
+        n = len(cand_scores)
+        if n == 0 or len(base_scores) != n:
+            return (0.0, 0.0, False)
+        diffs = [c - b for c, b in zip(cand_scores, base_scores)]
+        rng = random.Random(42)
+        means = sorted(sum(rng.choices(diffs, k=n)) / n for _ in range(_N_BOOT))
+        lo = means[int(0.025 * _N_BOOT)]
+        hi = means[int(0.975 * _N_BOOT)]
+        return lo, hi, lo > 0
+
+    if _final_space is not None and not smoke:
+        _score_by_cid: dict[str, float] = {}
+        _config_by_cid: dict[str, dict[str, str]] = {}
+        for obs in outcome.train_observations:
+            cid = str(obs.candidate_id or "")
+            if not cid:
+                continue
+            if cid not in _score_by_cid or obs.score > _score_by_cid[cid]:
+                _score_by_cid[cid] = float(obs.score)
+                _config_by_cid[cid] = dict(obs.config)
+        _baseline_cid = str(
+            (outcome.train_observations[0].candidate_id if outcome.train_observations else None) or ""
+        )
+        _best_cid = str((outcome.best_train_candidate.candidate_id if outcome.best_train_candidate else None) or "")
+        _ranked = sorted(_score_by_cid.items(), key=lambda x: x[1], reverse=True)
+        _top_cids = [cid for cid, _ in _ranked[:_top_n]]
+        if _baseline_cid and _baseline_cid not in _top_cids:
+            _top_cids.append(_baseline_cid)
+        _N_h = len(heldout_rows)
+        print(_sep)
+        print(
+            f"  {_bold('heldout sweep')}  N={_N_h}  {len(_top_cids)} candidates"
+            f"  {_dim(f'bootstrap 95% CI  {_N_BOOT:,} samples')}",
+            flush=True,
+        )
+        for _cid in _top_cids:
+            _train_score = _score_by_cid.get(_cid, 0.0)
+            _cfg = _config_by_cid.get(_cid, {})
+            try:
+                _candidate = decode_config(_final_space, _cfg)
+            except Exception:
+                continue
+            _elapsed_h = time.time() - _prog["start"]
+            _is_baseline = _cid == _baseline_cid
+            _is_best = _cid == _best_cid
+            _tag = "baseline" if _is_baseline else ("best" if _is_best else "")
+            _tag_str = f"  {_dim('[' + _tag + ']')}" if _tag else ""
+            print(
+                f"  {_dim(f'{_elapsed_h:6.1f}s')}  heldout  {_dim(f'N={_N_h}')}  {_dim(_cid[-12:])}  train={_train_score:.3f}{_tag_str}",
+                flush=True,
+            )
+            _h_t0 = time.time()
+            _h_score, _h_details = asyncio.run(evaluate_rows(heldout_rows, _candidate, split="heldout"))
+            _prog["policy_wall_s"] += time.time() - _h_t0
+            _row_scores = [float(s) for s in (_h_details.get("scores") or [])]
+            heldout_details_by_candidate_id[_cid] = dict(_h_details)
+            heldout_details_order.append(dict(_h_details))
+            _ci_lo, _ci_hi = _boot_ci(_row_scores)
+            _heldout_table.append({
+                "cid": _cid,
+                "train": _train_score,
+                "heldout": _h_score,
+                "scores": _row_scores,
+                "outputs": list(_h_details.get("outputs") or []),
+                "achievements": dict(_h_details.get("achievements") or {}),
+                "eval_idx": len(_heldout_table),
+                "ci_lo": _ci_lo,
+                "ci_hi": _ci_hi,
+                "is_baseline": _is_baseline,
+                "is_best": _is_best,
+            })
+            print(
+                f"           heldout={_cyan(f'{_frac(_h_score, _N_h)} {_h_score:.3f}')}  {_dim(f'95% CI [{_ci_lo:.3f}, {_ci_hi:.3f}]')}",
+                flush=True,
+            )
+
+        if _heldout_table:
+            _base_row = next((r for r in _heldout_table if r["is_baseline"]), None)
+            _base_scores = _base_row["scores"] if _base_row else []
+            _base_h = _base_row["heldout"] if _base_row else None
+            # Compute paired lift CIs for all candidates
+            for _row in _heldout_table:
+                if _row["is_baseline"]:
+                    _row["lift_lo"] = _row["lift_hi"] = 0.0
+                    _row["sig"] = False
+                else:
+                    _lo, _hi, _sig = _boot_lift_ci(_row["scores"], _base_scores)
+                    _row["lift_lo"] = _lo
+                    _row["lift_hi"] = _hi
+                    _row["sig"] = _sig
+            print(_sep)
+            _N_str = f"N={_N_h}"
+            _col_tr = max(len(_frac(s, len(train_rows))) + 6 for s in _score_by_cid.values()) if _score_by_cid else 12
+            _col_h = max(len(_frac(r["heldout"], _N_h)) + 6 for r in _heldout_table) if _heldout_table else 12
+            print(
+                _bold(f"  {'candidate':>12}  {'train':>{_col_tr}}  {'heldout':>{_col_h}}  {'95% CI':^13}  {'lift':>6}  {'lift 95% CI':^15}  sig  note"),
+                flush=True,
+            )
+            for _row in sorted(_heldout_table, key=lambda r: r["heldout"], reverse=True):
+                _lift = (_row["heldout"] - _base_h) if _base_h is not None else 0.0
+                _sig = _row.get("sig", False)
+                _sig_str = _bgreen("✓") if _sig else _dim("·")
+                _note = ("baseline" if _row["is_baseline"] else "") + ("  ★" if _row["is_best"] else "")
+                _ci_str = f"[{_row['ci_lo']:.3f} {_row['ci_hi']:.3f}]"
+                _lift_str = f"{_lift:+.3f}" if _base_h is not None else "   —"
+                if _row["is_baseline"]:
+                    _lift_ci_str = _dim("     —     ")
+                else:
+                    _lift_ci_str = f"[{_row['lift_lo']:+.3f} {_row['lift_hi']:+.3f}]"
+                    _lift_ci_str = _green(_lift_ci_str) if _sig else _dim(_lift_ci_str)
+                _tr_frac = _frac(_row["train"], len(train_rows))
+                _h_frac = _frac(_row["heldout"], _N_h)
+                _tr_str = f"{_tr_frac} {_row['train']:.3f}"
+                _h_raw = f"{_h_frac} {_row['heldout']:.3f}"
+                _h_col = _bgreen(_h_raw) if _sig else (_dim(_h_raw) if _row["is_baseline"] else _h_raw)
+                _lift_col = _green(_lift_str) if _lift > 0 else (_red(_lift_str) if _lift < 0 else _dim(_lift_str))
+                print(
+                    f"  {_dim(_row['cid'][-12:]):>12}  {_tr_str:>{_col_tr}}  {_h_col:>{_col_h}}  {_dim(_ci_str):^13}  {_lift_col:>6}  {_lift_ci_str:^15}  {_sig_str}  {_dim(_note)}",
+                    flush=True,
+                )
+            print(_dim(f"  {_N_str}  sig = paired bootstrap 95% CI on lift excludes 0"), flush=True)
+
+            # ── Achievement breakdown ──────────────────────────────────────────
+            _achieve_base_row = next((r for r in _heldout_table if r["is_baseline"]), None)
+            _achieve_best_row = next((r for r in _heldout_table if r["is_best"]), None)
+            if _achieve_best_row is None:
+                _achieve_best_row = max(
+                    (r for r in _heldout_table if not r["is_baseline"]),
+                    key=lambda r: r["heldout"], default=None,
+                )
+            _achieve_keys: list[str] = []
+            for _ar in _heldout_table:
+                for _ak in (_ar.get("achievements") or {}).keys():
+                    if _ak not in _achieve_keys:
+                        _achieve_keys.append(_ak)
+            if _achieve_keys and (_achieve_base_row or _achieve_best_row):
+                print(_sep)
+                _col_a = max(len(k) for k in _achieve_keys)
+                print(
+                    _bold(f"  {'achievement':<{_col_a}}  {'base':>12}  {'best':>12}  {'Δ':>6}"),
+                    flush=True,
+                )
+                for _ak in _achieve_keys:
+                    _a_base = (_achieve_base_row.get("achievements") or {}).get(_ak) if _achieve_base_row else None
+                    _a_best = (_achieve_best_row.get("achievements") or {}).get(_ak) if _achieve_best_row else None
+                    _ab_str = f"{_frac(_a_base, _N_h)} {_a_base:.3f}" if _a_base is not None else "—"
+                    _ax_str = f"{_frac(_a_best, _N_h)} {_a_best:.3f}" if _a_best is not None else "—"
+                    if _a_base is not None and _a_best is not None:
+                        _ad = _a_best - _a_base
+                        _ad_str = _green(f"{_ad:+.3f}") if _ad > 0.005 else (_red(f"{_ad:+.3f}") if _ad < -0.005 else _dim(f"{_ad:+.3f}"))
+                        _a_star = f"  {_bgreen('★')}" if _ad > 0.005 else ""
+                    else:
+                        _ad_str = _dim("     —")
+                        _a_star = ""
+                    print(
+                        f"  {_ak:<{_col_a}}  {_ab_str:>12}  {_ax_str:>12}  {_ad_str}{_a_star}",
+                        flush=True,
+                    )
+                _ab_cid = _achieve_base_row["cid"][-8:] if _achieve_base_row else "—"
+                _ax_cid = _achieve_best_row["cid"][-8:] if _achieve_best_row else "—"
+                print(_dim(f"  base={_ab_cid}  best={_ax_cid}"), flush=True)
+
+            # ── Candidate timeline: train run order vs heldout score ───────────
+            _cid_to_train_order: dict[str, int] = {}
+            for _oi, _obs in enumerate(outcome.train_observations):
+                _ocid = str(_obs.candidate_id or "")
+                if _ocid and _ocid not in _cid_to_train_order:
+                    _cid_to_train_order[_ocid] = _oi
+            _chart_pts = [
+                (_cid_to_train_order.get(r["cid"], 0), r["heldout"], r["is_baseline"], r["is_best"])
+                for r in _heldout_table
+            ]
+            if len(_chart_pts) > 1:
+                _CW, _CH = 58, 10
+                _x_vals = [p[0] for p in _chart_pts]
+                _y_vals = [p[1] for p in _chart_pts]
+                _xmin, _xmax = min(_x_vals), max(_x_vals)
+                _ymin = max(0.0, min(_y_vals) - 0.04)
+                _ymax = min(1.0, max(_y_vals) + 0.04)
+                _xr = max(1, _xmax - _xmin)
+                _yr = max(0.001, _ymax - _ymin)
+                _cgrid = [[" "] * _CW for _ in range(_CH)]
+                for _px, _py, _pbase, _pbest in _chart_pts:
+                    _col = int(round((_px - _xmin) / _xr * (_CW - 1)))
+                    _row = _CH - 1 - int(round((_py - _ymin) / _yr * (_CH - 1)))
+                    _col, _row = max(0, min(_CW - 1, _col)), max(0, min(_CH - 1, _row))
+                    _cgrid[_row][_col] = "○" if _pbase else ("★" if _pbest else "●")
+                print(_sep)
+                print(
+                    f"  {_bold('heldout score vs train run order')}  {_dim('○=baseline  ●=candidate  ★=best train')}",
+                    flush=True,
+                )
+                for _ri in range(_CH):
+                    _yv = _ymax - (_ri / max(_CH - 1, 1)) * _yr
+                    print(f"  {_yv:.3f} │{''.join(_cgrid[_ri])}", flush=True)
+                print(f"  {'':5} └{'─' * _CW}", flush=True)
+                _xlbl = [" "] * _CW
+                for _px, _, _, _ in _chart_pts:
+                    _col = int(round((_px - _xmin) / _xr * (_CW - 1)))
+                    _lbl = str(_px)
+                    for _li, _lc in enumerate(_lbl):
+                        if _col + _li < _CW:
+                            _xlbl[_col + _li] = _lc
+                print(f"  {'':5}  {''.join(_xlbl)}  {_dim('← train rollout #')}", flush=True)
 
     run_read_model: dict[str, Any] = {}
     candidate_train_scores: dict[str, Any] = {}
@@ -1145,7 +2181,7 @@ def execute_live(
             run_read_model = ledger.build_run_read_model()
             candidate_train_scores = export_candidate_train_scores_from_ledger(
                 ledger,
-                task_id="banking77",
+                task_id=task,
                 output_path=output_dir / "artifacts" / "candidate_train_scores.json",
             )
             events = list(reversed(ledger.query_events(limit=1000)))
@@ -1331,19 +2367,149 @@ def execute_live(
     _pol_in = int(_pol.get("prompt_tokens") or 0)
     _pol_out = int(_pol.get("completion_tokens") or 0)
     _prop_total = _proposer_token_totals["total"]
+    _improved = _best > _baseline
+    _star = f"  {_bgreen('★')}" if _improved else ""
+    _policy_cost_usd, _ = _cost_estimate_from_config(
+        config=config, policy_usage=policy_usage_totals, proposer_usage=_empty_usage_totals()
+    )
+    _proposer_cost_usd, _ = _cost_estimate_from_config(
+        config=config, policy_usage=_empty_usage_totals(), proposer_usage=proposer_usage_totals
+    )
+    _policy_wall = _prog.get("policy_wall_s", 0.0)
+    _proposer_wall = _prog.get("proposer_wall_s", 0.0)
     print(_sep)
+    _nt_done = len(train_rows)
+    _nh_done = len(heldout_rows)
     print(
-        f"  done  {_total_elapsed:.1f}s  "
-        f"train: {_baseline:.3f} → {_best:.3f}"
-        + (f"  heldout: {_heldout_baseline:.3f} → {_heldout_best:.3f}" if _heldout_best is not None else "")
-        + f"  best={_best_cid}  rollouts={metric_call_count}"
+        f"  {_bold('done')}  {_dim(f'{_total_elapsed:.1f}s')}  "
+        f"train: {_dim(f'{_frac(_baseline, _nt_done)} {_baseline:.3f}')} → "
+        f"{(_bgreen if _improved else _bold)(f'{_frac(_best, _nt_done)} {_best:.3f}')}"
+        + (
+            f"  heldout: {_dim(f'{_frac(_heldout_baseline, _nh_done)} {_heldout_baseline:.3f}')} → "
+            f"{_cyan(f'{_frac(_heldout_best, _nh_done)} {_heldout_best:.3f}')}"
+            if _heldout_best is not None else ""
+        )
+        + f"  {_dim(f'best={_best_cid}  rollouts={metric_call_count}')}"
+        + _star
     )
     print(
-        f"  policy tokens:   in={_pol_in:,}  out={_pol_out:,}  total={_pol_in+_pol_out:,}"
-        + (f"\n  proposer tokens: total={_prop_total:,}" if _prop_total > 0 else "")
+        _dim(
+            f"  policy tokens:   in={_pol_in:,}  out={_pol_out:,}  total={_pol_in+_pol_out:,}"
+            + (f"\n  proposer tokens: total={_prop_total:,}" if _prop_total > 0 else "")
+        )
     )
+    print(_sep)
+    print(f"  {_bold('run stats')}", flush=True)
+    print(f"  {'rollouts':>16}  {metric_call_count}", flush=True)
+
+    def _fmt_cost(c: float | None) -> str:
+        return f"${c:.4f}" if c is not None else "—"
+
+    print(f"  {'policy cost':>16}  {_fmt_cost(_policy_cost_usd)}", flush=True)
+    print(f"  {'proposer cost':>16}  {_fmt_cost(_proposer_cost_usd)}", flush=True)
+    print(f"  {'policy time':>16}  {_policy_wall:.1f}s", flush=True)
+    print(f"  {'proposer time':>16}  {_proposer_wall:.1f}s", flush=True)
     print(_sep, flush=True)
-    print(f"wrote native MIPROv2 OpenEnv artifacts to {live_dir}")
+    # ── Best candidate full instructions ──────────────────────────────────────
+    _best_h_row_for_display = max(_heldout_table, key=lambda r: r["heldout"]) if _heldout_table else None
+    if _best_h_row_for_display and not smoke:
+        _bh_cid = _best_h_row_for_display["cid"]
+        _bh_details = heldout_details_by_candidate_id.get(_bh_cid, {})
+        _bh_instrs = dict(_bh_details.get("selected_instructions") or {})
+        if _bh_instrs:
+            def _wrap_text(text: str, first_indent: str = "    ", cont_indent: str = "    ", width: int = 96) -> list[str]:
+                lines = []
+                for para in text.split("\n"):
+                    wrapped = textwrap.fill(para or " ", width=width, initial_indent=first_indent, subsequent_indent=cont_indent)
+                    lines.extend(wrapped.splitlines())
+                return lines
+            _bh_score = _best_h_row_for_display["heldout"]
+            print(flush=True)
+            print(
+                f"  {_bold('best candidate')}  {_dim(_bh_cid[-12:])}  "
+                f"heldout={_cyan(f'{_bh_score:.3f}')}",
+                flush=True,
+            )
+            _stages_disp = compiled.program_template.stages
+            for _s in _stages_disp:
+                _slabel = _s.stage_name or _s.stage_id
+                print(f"\n  {_bold(_cyan(f'[{_slabel}]'))}", flush=True)
+                for _m in _s.modules:
+                    _mid = _m.module_id
+                    _text = _bh_instrs.get(_mid, "")
+                    if not _text:
+                        continue
+                    _short = _MODULE_ABBREV.get(_mid, _mid)
+                    _base = _option_text_cache.get(f"{_mid}:i0", "")
+                    _changed = bool(_base) and _base != _text
+                    print(f"  {_bold(_short)}", flush=True)
+                    if _changed:
+                        for _wl in _wrap_text(_base, "    ", "    "):
+                            print(f"  {_red('---')} {_dim(_wl.strip())}", flush=True)
+                        for _wl in _wrap_text(_text, "    ", "    "):
+                            print(f"  {_green('+++')} {_green(_wl.strip())}", flush=True)
+                    else:
+                        for _wl in _wrap_text(_text, "    ", "    "):
+                            print(f"  {_dim(_wl)}", flush=True)
+            print(flush=True)
+    # ── TPE evolution table ────────────────────────────────────────────────────
+    if _tpe_history and not smoke:
+        print(_sep, flush=True)
+        print(f"  {_bold('transform evolution')}  {_dim('TPE mean per training trial')}", flush=True)
+        _ev_stages = compiled.program_template.stages
+        _ev_mids = [m.module_id for s in _ev_stages for m in s.modules]
+        _ev_mids_present = [mid for mid in _ev_mids if any(mid in e["snap"] for e in _tpe_history)]
+        for _ev_mid in _ev_mids_present:
+            _ev_short = _MODULE_ABBREV.get(_ev_mid, _ev_mid)
+            # Collect all option IDs ever seen for this module, sorted
+            _ev_oids: list[str] = sorted({
+                oid
+                for e in _tpe_history
+                for oid in (e["snap"].get(_ev_mid) or {}).keys()
+            })
+            if not _ev_oids:
+                continue
+            _cw = 7  # cell width
+            print(f"\n  {_bold(_cyan(_ev_short)):<14}" + "".join(f"{oid:>{_cw}}" for oid in _ev_oids), flush=True)
+            for _ev_entry in _tpe_history:
+                _mod_snap = _ev_entry["snap"].get(_ev_mid, {})
+                row = f"  {'#' + str(_ev_entry['trial']):<14}"
+                for _ev_oid in _ev_oids:
+                    if _ev_oid in _mod_snap:
+                        row += f"{_mod_snap[_ev_oid]:>{_cw}.3f}"
+                    else:
+                        row += f"{'':>{_cw}}"
+                print(row, flush=True)
+        # Top candidates composition
+        if _heldout_table and _cid_to_config:
+            _ev_sorted = sorted(_heldout_table, key=lambda r: r["heldout"], reverse=True)
+            _ev_top = _ev_sorted[:4]
+            print(flush=True)
+            print(f"  {_bold('top candidates by heldout score')}", flush=True)
+            _ev_shorts = [_MODULE_ABBREV.get(m, m) for m in _ev_mids_present]
+            _tcw = 8
+            print(
+                f"  {'rank':<5}{'heldout':<10}{'train':<10}" +
+                "".join(f"{s:>{_tcw}}" for s in _ev_shorts),
+                flush=True,
+            )
+            for _ev_rank, _ev_row in enumerate(_ev_top, 1):
+                _ev_cid = _ev_row["cid"]
+                _ev_cfg = _cid_to_config.get(_ev_cid, {})
+                _ev_h = _ev_row["heldout"]
+                _ev_tr = _ev_row["train"]
+                _ev_tag = " [baseline]" if _ev_row["is_baseline"] else ""
+                line = f"  {_ev_rank:<5}{_ev_h:.3f}{'':>4}{_ev_tr:.3f}{'':>4}"
+                for _ev_mid in _ev_mids_present:
+                    _ev_oid = _ev_cfg.get(_ev_mid, "?")
+                    _ev_star = "★" if _ev_oid not in ("i0", "?") else ""
+                    line += f"{(_ev_star + _ev_oid):>{_tcw}}"
+                print(line + _ev_tag, flush=True)
+    print(_sep, flush=True)
+    print(_dim(f"wrote native MIPROv2 OpenEnv artifacts to {live_dir}"))
+    close_adapter = getattr(adapter, "aclose", None)
+    if callable(close_adapter):
+        asyncio.run(close_adapter())
     return 0
 
 
@@ -1353,7 +2519,7 @@ def execute_gepa(artifacts_dir: Path, *, config_path: Path, smoke: bool) -> int:
     from gepa import optimize
     from gepa.core.adapter import EvaluationBatch
     from synth_containers.http_client import HTTPContainerClient
-    from synth_optimizers.miprov2 import ContainerGepaAdapter, ContainerGepaRolloutBinding
+    from synth_optimizers.miprov2 import ContainerMiproAdapter, ContainerMiproRolloutBinding
     from synth_service_app import app
 
     config = _load_config(config_path)
@@ -1363,9 +2529,9 @@ def execute_gepa(artifacts_dir: Path, *, config_path: Path, smoke: bool) -> int:
     live_dir.mkdir(parents=True, exist_ok=True)
     policy_config = _policy_config(config)
     client = HTTPContainerClient.from_app(app)
-    adapter = ContainerGepaAdapter(
+    adapter = ContainerMiproAdapter(
         client=client,
-        binding=ContainerGepaRolloutBinding(
+        binding=ContainerMiproRolloutBinding(
             task_id="banking77.intent_classification",
             extra_request={"policy": {"config": policy_config}},
         ),
