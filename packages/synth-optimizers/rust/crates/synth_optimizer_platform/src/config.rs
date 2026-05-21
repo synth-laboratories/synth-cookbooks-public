@@ -73,6 +73,26 @@ fn default_rollout_async_timeout_seconds() -> u64 {
     600
 }
 
+fn default_gepa_pipeline_config() -> GepaPipelineConfig {
+    GepaPipelineConfig::default()
+}
+
+fn default_pipeline_max_in_flight_candidates() -> usize {
+    8
+}
+
+fn default_pipeline_proposal_workers() -> usize {
+    1
+}
+
+fn default_pipeline_rollout_workers() -> usize {
+    8
+}
+
+fn default_pipeline_evaluate_workers() -> usize {
+    1
+}
+
 fn default_cache_mode() -> CacheConfigMode {
     CacheConfigMode::Readwrite
 }
@@ -165,6 +185,15 @@ impl SynthOptimizerConfig {
                 &timeout_seconds,
             )?;
         }
+        if let Some(pipeline_mode) = read_env_override(&["SYNTH_OPTIMIZERS_GEPA_PIPELINE_MODE"]) {
+            self.gepa.pipeline.mode = parse_gepa_pipeline_mode_override(&pipeline_mode)?;
+        }
+        if let Some(staleness_policy) =
+            read_env_override(&["SYNTH_OPTIMIZERS_GEPA_STALENESS_POLICY"])
+        {
+            self.gepa.pipeline.staleness_policy =
+                parse_gepa_staleness_policy_override(&staleness_policy)?;
+        }
         Ok(())
     }
 
@@ -241,6 +270,7 @@ impl SynthOptimizerConfig {
                 "gepa.rollout_async_timeout_seconds must be positive".to_string(),
             ));
         }
+        validate_gepa_pipeline_config(&self.gepa.pipeline)?;
         if !self.gepa.max_cost_usd.is_finite() || self.gepa.max_cost_usd < 0.0 {
             return Err(OptimizerError::Config(
                 "gepa.max_cost_usd must be finite and non-negative".to_string(),
@@ -477,6 +507,8 @@ pub struct GepaConfig {
     pub rollout_poll_interval_ms: u64,
     #[serde(default = "default_rollout_async_timeout_seconds")]
     pub rollout_async_timeout_seconds: u64,
+    #[serde(default = "default_gepa_pipeline_config")]
+    pub pipeline: GepaPipelineConfig,
     #[serde(default)]
     pub max_cost_usd: f64,
     #[serde(default)]
@@ -517,6 +549,7 @@ impl Default for GepaConfig {
             rollout_submission_mode: default_rollout_submission_mode(),
             rollout_poll_interval_ms: default_rollout_poll_interval_ms(),
             rollout_async_timeout_seconds: default_rollout_async_timeout_seconds(),
+            pipeline: default_gepa_pipeline_config(),
             max_cost_usd: 0.0,
             max_time_seconds: None,
             max_prompt_tokens: None,
@@ -531,6 +564,97 @@ impl Default for GepaConfig {
             rollout_estimated_completion_tokens: None,
             rollout_estimated_total_tokens: None,
             rollout_estimated_wall_seconds: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GepaPipelineMode {
+    SyncSerial,
+    AsyncPipelined,
+}
+
+impl GepaPipelineMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SyncSerial => "sync_serial",
+            Self::AsyncPipelined => "async_pipelined",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GepaStalenessPolicy {
+    Full,
+    Guarded,
+    Reflective,
+}
+
+impl GepaStalenessPolicy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Guarded => "guarded",
+            Self::Reflective => "reflective",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GepaPipelineConfig {
+    #[serde(default)]
+    pub mode: GepaPipelineMode,
+    #[serde(default)]
+    pub staleness_policy: GepaStalenessPolicy,
+    #[serde(default = "default_pipeline_max_in_flight_candidates")]
+    pub max_in_flight_candidates: usize,
+    #[serde(default)]
+    pub workers: GepaPipelineWorkers,
+}
+
+impl Default for GepaPipelineConfig {
+    fn default() -> Self {
+        Self {
+            mode: GepaPipelineMode::SyncSerial,
+            staleness_policy: GepaStalenessPolicy::Full,
+            max_in_flight_candidates: default_pipeline_max_in_flight_candidates(),
+            workers: GepaPipelineWorkers::default(),
+        }
+    }
+}
+
+impl Default for GepaPipelineMode {
+    fn default() -> Self {
+        Self::SyncSerial
+    }
+}
+
+impl Default for GepaStalenessPolicy {
+    fn default() -> Self {
+        Self::Full
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GepaPipelineWorkers {
+    #[serde(default = "default_pipeline_proposal_workers")]
+    pub propose: usize,
+    #[serde(default = "default_pipeline_rollout_workers")]
+    pub rollout: usize,
+    #[serde(default = "default_pipeline_evaluate_workers")]
+    pub evaluate: usize,
+}
+
+impl Default for GepaPipelineWorkers {
+    fn default() -> Self {
+        Self {
+            propose: default_pipeline_proposal_workers(),
+            rollout: default_pipeline_rollout_workers(),
+            evaluate: default_pipeline_evaluate_workers(),
         }
     }
 }
@@ -648,4 +772,49 @@ fn parse_u64_override(name: &str, raw_value: &str) -> Result<u64> {
     raw_value.trim().parse::<u64>().map_err(|source| {
         OptimizerError::Config(format!("invalid {name} override {raw_value:?}: {source}"))
     })
+}
+
+fn parse_gepa_pipeline_mode_override(raw_mode: &str) -> Result<GepaPipelineMode> {
+    match raw_mode.trim().to_ascii_lowercase().as_str() {
+        "sync_serial" | "sync" | "serial" => Ok(GepaPipelineMode::SyncSerial),
+        "async_pipelined" | "async" | "pipelined" => Ok(GepaPipelineMode::AsyncPipelined),
+        _ => Err(OptimizerError::Config(format!(
+            "unknown GEPA pipeline mode override: {raw_mode}"
+        ))),
+    }
+}
+
+fn parse_gepa_staleness_policy_override(raw_policy: &str) -> Result<GepaStalenessPolicy> {
+    match raw_policy.trim().to_ascii_lowercase().as_str() {
+        "full" | "full_async" => Ok(GepaStalenessPolicy::Full),
+        "guarded" => Ok(GepaStalenessPolicy::Guarded),
+        "reflective" => Ok(GepaStalenessPolicy::Reflective),
+        _ => Err(OptimizerError::Config(format!(
+            "unknown GEPA staleness policy override: {raw_policy}"
+        ))),
+    }
+}
+
+fn validate_gepa_pipeline_config(config: &GepaPipelineConfig) -> Result<()> {
+    if config.max_in_flight_candidates == 0 {
+        return Err(OptimizerError::Config(
+            "gepa.pipeline.max_in_flight_candidates must be positive".to_string(),
+        ));
+    }
+    if config.workers.propose == 0 {
+        return Err(OptimizerError::Config(
+            "gepa.pipeline.workers.propose must be positive".to_string(),
+        ));
+    }
+    if config.workers.rollout == 0 {
+        return Err(OptimizerError::Config(
+            "gepa.pipeline.workers.rollout must be positive".to_string(),
+        ));
+    }
+    if config.workers.evaluate == 0 {
+        return Err(OptimizerError::Config(
+            "gepa.pipeline.workers.evaluate must be positive".to_string(),
+        ));
+    }
+    Ok(())
 }

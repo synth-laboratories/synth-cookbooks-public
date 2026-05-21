@@ -238,6 +238,26 @@ token, or time limits are set, proposer and rollout estimate fields must be
 positive so the runtime can reject spending work before dispatch instead of
 falling back to an implicit zero estimate.
 
+Rollout transport and optimizer pipeline mode are separate axes. Transport is
+controlled by `gepa.rollout_submission_mode = "sync" | "async"`. Pipeline mode
+is controlled by the nested `gepa.pipeline` table:
+
+```toml
+[gepa.pipeline]
+mode = "sync_serial"        # default, correctness baseline
+staleness_policy = "full"   # guarded/reflective are reserved for later phases
+max_in_flight_candidates = 8
+
+[gepa.pipeline.workers]
+propose = 1
+rollout = 8
+evaluate = 1
+```
+
+`async_pipelined` is a recognized internal mode for the FlashEvolve-style
+runtime sketch. It is intentionally not executable until the queue workers and
+pool-version staleness handling land.
+
 ## Boundary Rules
 
 - `synth-containers` is the only runtime task boundary.

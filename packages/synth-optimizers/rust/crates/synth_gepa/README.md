@@ -61,6 +61,24 @@ except through `synth_optimizer_platform` traits and structs.
 - `GepaStep`: next action requested by the engine.
 - `GepaOutcome`: final best candidate and artifact refs.
 
+### Runtime Pipeline
+
+The GEPA crate keeps rollout transport separate from optimizer pipeline mode.
+`gepa.rollout_submission_mode` chooses the container wire protocol
+(`sync` blocking POST or `async` submit/poll/fetch). `gepa.pipeline.mode`
+chooses orchestration:
+
+- `sync_serial` is the default correctness baseline. It runs the durable
+  one-transition tick state machine already used by `/worker/tick`.
+- `async_pipelined` is the FlashEvolve-style runtime target. Stages declare
+  work, while the runtime owns queues, workers, scheduling, and pool-version
+  staleness. The initial sketch names three lanes: `propose`, `rollout`, and
+  `evaluate`.
+
+The async-pipelined path is intentionally recognized before it is executable,
+so config and event surfaces can distinguish a real async pipeline from async
+rollout transport.
+
 ## State Machine
 
 ```text

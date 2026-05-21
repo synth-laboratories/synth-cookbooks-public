@@ -30,10 +30,12 @@ use synth_optimizer_platform::{
 };
 
 mod codex_app_server;
+pub mod pipeline;
 pub mod planner;
 pub mod runtime;
 pub mod service;
 
+use pipeline::{GepaAsyncPipelinedPlan, GepaPipelineRuntimePlan};
 use planner::{GepaCursor, GepaCursorPhase, GEPA_CURSOR_CHECKPOINT_KIND};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1017,6 +1019,22 @@ fn advance_gepa_once(
     mode: GepaAdvanceMode,
     options: &GepaExecutionOptions,
 ) -> Result<GepaAdvanceOutcome> {
+    match GepaPipelineRuntimePlan::from_config(&context.config)? {
+        GepaPipelineRuntimePlan::SyncSerial(_) => {
+            advance_gepa_sync_serial_once(context, state, mode, options)
+        }
+        GepaPipelineRuntimePlan::AsyncPipelined(plan) => {
+            advance_gepa_async_pipelined_once(context, state, &plan)
+        }
+    }
+}
+
+fn advance_gepa_sync_serial_once(
+    context: &mut GepaRunContext,
+    state: &mut GepaRunState,
+    mode: GepaAdvanceMode,
+    options: &GepaExecutionOptions,
+) -> Result<GepaAdvanceOutcome> {
     if matches!(state.cursor.phase, GepaCursorPhase::Completed) {
         let result = state
             .cursor
@@ -1071,6 +1089,37 @@ fn advance_gepa_once(
             unreachable!("terminal cursor phases are handled before phase dispatch")
         }
     }
+}
+
+fn advance_gepa_async_pipelined_once(
+    context: &mut GepaRunContext,
+    state: &mut GepaRunState,
+    plan: &GepaAsyncPipelinedPlan,
+) -> Result<GepaAdvanceOutcome> {
+    let mut metadata = state
+        .cursor
+        .metadata
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    metadata.insert("pipeline".to_string(), plan_metadata(plan));
+    state.cursor.metadata = Value::Object(metadata);
+    let resources = ensure_step_resources(context, state)?;
+    let phase = state.cursor.phase.clone();
+    persist_gepa_run_state(
+        context,
+        state,
+        &resources,
+        phase,
+        "blocked",
+        "async-pipelined GEPA runtime is recognized but not executable yet",
+        Map::new(),
+    )?;
+    Err(plan.not_executable_error())
+}
+
+fn plan_metadata(plan: &GepaAsyncPipelinedPlan) -> Value {
+    GepaPipelineRuntimePlan::AsyncPipelined(plan.clone()).metadata()
 }
 
 fn advance_pending_runtime_job(
