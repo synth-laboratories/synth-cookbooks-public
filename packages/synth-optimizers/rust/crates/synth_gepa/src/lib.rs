@@ -73,11 +73,70 @@ pub struct CandidateEvaluation {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProposerOutcome {
-    pub proposals: Vec<BTreeMap<String, String>>,
+    pub proposals: Vec<ProposedCandidate>,
     pub usage: UsageTotals,
     pub cost_usd: f64,
     pub backend: String,
     pub workspace: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ProposedCandidate {
+    #[serde(default)]
+    pub payload: BTreeMap<String, String>,
+    #[serde(default)]
+    pub proposal_type: String,
+    #[serde(default)]
+    pub parent_candidate_ids: Vec<String>,
+    #[serde(default)]
+    pub rationale: String,
+    #[serde(default)]
+    pub evidence: Value,
+    #[serde(default)]
+    pub metadata: Map<String, Value>,
+    #[serde(default, flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl ProposedCandidate {
+    fn payload_map(&self) -> BTreeMap<String, String> {
+        if !self.payload.is_empty() {
+            return self.payload.clone();
+        }
+        self.extra
+            .iter()
+            .filter_map(|(key, value)| value.as_str().map(|text| (key.clone(), text.to_string())))
+            .collect()
+    }
+
+    fn proposal_type_or_default(&self) -> String {
+        let proposal_type = self.proposal_type.trim();
+        if proposal_type.is_empty() {
+            "frontier_variation".to_string()
+        } else {
+            proposal_type.to_string()
+        }
+    }
+
+    fn metadata_value(&self) -> Value {
+        let mut metadata = self.metadata.clone();
+        metadata.insert(
+            "proposal_type".to_string(),
+            json!(self.proposal_type_or_default()),
+        );
+        metadata.insert(
+            "parent_candidate_ids".to_string(),
+            json!(self.parent_candidate_ids),
+        );
+        metadata.insert("rationale".to_string(), json!(self.rationale));
+        if !self.evidence.is_null() {
+            metadata.insert("evidence".to_string(), self.evidence.clone());
+        }
+        if !self.extra.is_empty() {
+            metadata.insert("raw_extra".to_string(), Value::Object(self.extra.clone()));
+        }
+        Value::Object(metadata)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -110,6 +169,12 @@ pub struct FrontierMember {
     pub source: String,
     pub train_reward: f64,
     pub heldout_reward: Option<f64>,
+}
+
+#[derive(Clone, Debug)]
+struct ParentSelectionDecision {
+    candidate_index: usize,
+    metadata: Value,
 }
 
 struct ProposerCall<'a> {
@@ -411,7 +476,7 @@ impl GepaActiveCandidateEvaluation {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum StoredRuntimeOutcome {
     Proposer {
-        proposals: Vec<BTreeMap<String, String>>,
+        proposals: Vec<ProposedCandidate>,
         usage: UsageTotals,
         cost_usd: f64,
         backend: String,
@@ -450,7 +515,7 @@ struct GepaRunState {
     cursor: GepaCursor,
     candidates: Vec<CandidateRecord>,
     best_idx: Option<usize>,
-    proposal_queue: Vec<BTreeMap<String, String>>,
+    proposal_queue: Vec<ProposedCandidate>,
     active_evaluation: Option<GepaActiveEvaluation>,
     heldout_candidate_index: usize,
     total_usage: UsageTotals,
@@ -1325,13 +1390,6 @@ fn consume_async_lane_work(
                     {
                         state.cursor.pipeline_state.parent_candidate_id =
                             Some(parent_id.to_string());
-                        if let Some(parent_idx) = state
-                            .candidates
-                            .iter()
-                            .position(|candidate| candidate.candidate_id == parent_id)
-                        {
-                            state.best_idx = Some(parent_idx);
-                        }
                     }
                     if let Some(active) = state.active_evaluation.as_ref() {
                         state.cursor.generation = active.generation;
@@ -1630,15 +1688,6 @@ fn schedule_async_candidate_minibatches(
         return Ok(None);
     }
     state.cursor.phase = GepaCursorPhase::ProposerWaiting;
-    if let Some(parent_id) = state.cursor.pipeline_state.parent_candidate_id.as_ref() {
-        if let Some(parent_idx) = state
-            .candidates
-            .iter()
-            .position(|candidate| &candidate.candidate_id == parent_id)
-        {
-            state.best_idx = Some(parent_idx);
-        }
-    }
     let before_generation = state.cursor.generation;
     let mut outcome = advance_proposer_waiting(context, state, resources)?;
     if let Some(active) = state.active_evaluation.clone() {
@@ -1702,7 +1751,14 @@ fn schedule_async_proposer_job(
     )? {
         state.best_idx = Some(train_best_idx);
     }
-    let parent_idx = state.best_idx.unwrap_or(0);
+    let parent_selection = select_proposer_parent_candidate(
+        &state.candidates,
+        &resources.train_rows,
+        state.cursor.generation,
+        &context.config.run.run_id,
+        state.best_idx,
+    )?;
+    let parent_idx = parent_selection.candidate_index;
     let parent_id = state
         .candidates
         .get(parent_idx)
@@ -1720,7 +1776,11 @@ fn schedule_async_proposer_job(
             OptimizerRunState::Proposing,
             OptimizerTransitionTrigger::ProposerStarted,
             "Async proposer started",
-            json!({"generation": state.cursor.generation, "parent_candidate_id": parent_id}),
+            json!({
+                "generation": state.cursor.generation,
+                "parent_candidate_id": parent_id,
+                "parent_selection": parent_selection.metadata.clone(),
+            }),
         )?;
     }
     let queued = plan_proposer_runtime_job(context, resources, parent_idx, state)?;
@@ -1769,7 +1829,10 @@ fn schedule_async_proposer_job(
         effect_id: Some(queued.effect.runtime_effect_id.clone()),
         reservation_ids: vec![queued.reservation.budget_reservation_id.clone()],
         status: "pending".to_string(),
-        metadata: json!({"parent_candidate_id": parent_id}),
+        metadata: json!({
+            "parent_candidate_id": parent_id,
+            "parent_selection": parent_selection.metadata.clone(),
+        }),
     };
     state
         .cursor
@@ -3152,7 +3215,7 @@ fn consume_proposer_outcome(
     context: &mut GepaRunContext,
     state: &mut GepaRunState,
     _resources: &GepaStepResources,
-    proposals: Vec<BTreeMap<String, String>>,
+    proposals: Vec<ProposedCandidate>,
     usage: UsageTotals,
     cost_usd: f64,
     backend: String,
@@ -3161,12 +3224,24 @@ fn consume_proposer_outcome(
     let active = state.active_evaluation.take().ok_or_else(|| {
         OptimizerError::Invariant("proposer outcome has no active evaluation".to_string())
     })?;
-    let parent_idx = state.best_idx.ok_or_else(|| {
-        OptimizerError::Invariant("proposer outcome has no best candidate".to_string())
-    })?;
+    let parent_idx = active
+        .candidate_index
+        .or_else(|| {
+            active.candidate_id.as_ref().and_then(|candidate_id| {
+                state
+                    .candidates
+                    .iter()
+                    .position(|candidate| &candidate.candidate_id == candidate_id)
+            })
+        })
+        .ok_or_else(|| {
+            OptimizerError::Invariant(
+                "proposer outcome has no selected parent candidate".to_string(),
+            )
+        })?;
     let parent = state.candidates.get(parent_idx).ok_or_else(|| {
         OptimizerError::Invariant(format!(
-            "best candidate index {parent_idx} is outside candidate registry"
+            "selected parent index {parent_idx} is outside candidate registry"
         ))
     })?;
     let outcome = ProposerOutcome {
@@ -3216,6 +3291,7 @@ fn consume_proposer_outcome(
     )?;
     state.proposal_queue = proposals;
     state.cursor.proposal_index = 0;
+    state.cursor.pipeline_state.parent_candidate_id = Some(parent.candidate_id.clone());
     state.cursor.phase = GepaCursorPhase::ProposerWaiting;
     if context.state_machine.state() == OptimizerRunState::Proposing {
         transition_run(
@@ -5052,7 +5128,23 @@ fn advance_generation_start(
     )? {
         state.best_idx = Some(train_best_idx);
     }
-    let parent_idx = state.best_idx.unwrap_or(0);
+    let parent_selection = select_proposer_parent_candidate(
+        &state.candidates,
+        &resources.train_rows,
+        state.cursor.generation,
+        &context.config.run.run_id,
+        state.best_idx,
+    )?;
+    let parent_idx = parent_selection.candidate_index;
+    let parent_id = state
+        .candidates
+        .get(parent_idx)
+        .map(|candidate| candidate.candidate_id.clone())
+        .ok_or_else(|| {
+            OptimizerError::Invariant(format!(
+                "parent index {parent_idx} is outside candidate registry"
+            ))
+        })?;
     if context.state_machine.state() == OptimizerRunState::Ready {
         transition_run(
             &context.workspace,
@@ -5061,13 +5153,20 @@ fn advance_generation_start(
             OptimizerRunState::Proposing,
             OptimizerTransitionTrigger::ProposerStarted,
             "Proposer started",
-            json!({"generation": state.cursor.generation}),
+            json!({
+                "generation": state.cursor.generation,
+                "parent_candidate_id": parent_id,
+                "parent_selection": parent_selection.metadata.clone(),
+            }),
         )?;
     }
     let queued = plan_proposer_runtime_job(context, resources, parent_idx, state)?;
+    state.cursor.pipeline_state.parent_pool_version =
+        Some(state.cursor.pipeline_state.pool_version);
+    state.cursor.pipeline_state.parent_candidate_id = Some(parent_id.clone());
     state.active_evaluation = Some(GepaActiveEvaluation {
         stage: "proposer".to_string(),
-        candidate_id: Some(state.candidates[parent_idx].candidate_id.clone()),
+        candidate_id: Some(parent_id),
         candidate_index: Some(parent_idx),
         generation: state.cursor.generation,
         proposal_index: 0,
@@ -5205,12 +5304,7 @@ fn advance_proposer_waiting(
         state.cursor.proposal_index = state.proposal_queue.len();
         return complete_generation_boundary(context, state, resources);
     }
-    let parent_idx = state.best_idx.unwrap_or(0);
-    let parent = state.candidates.get(parent_idx).cloned().ok_or_else(|| {
-        OptimizerError::Invariant(format!(
-            "parent index {parent_idx} is outside candidate registry"
-        ))
-    })?;
+    let parent_idx = current_proposal_parent_idx(state)?;
     let minibatch_rows = minibatch_rows(
         &resources.train_rows,
         context.config.gepa.minibatch_size,
@@ -5224,7 +5318,7 @@ fn advance_proposer_waiting(
     let mut proposal_index = state.cursor.proposal_index;
     let admission_limit = pipeline_candidate_admission_limit(&context.config);
     while proposal_index < state.proposal_queue.len() && active_candidates.len() < admission_limit {
-        let raw_payload = state
+        let proposal = state
             .proposal_queue
             .get(proposal_index)
             .cloned()
@@ -5233,11 +5327,21 @@ fn advance_proposer_waiting(
                     "proposal index {proposal_index} is outside proposal queue"
                 ))
             })?;
+        let proposal_parent_idx = proposal_parent_idx(state, &proposal, parent_idx);
+        let proposal_parent = state
+            .candidates
+            .get(proposal_parent_idx)
+            .cloned()
+            .ok_or_else(|| {
+                OptimizerError::Invariant(format!(
+                    "proposal parent index {proposal_parent_idx} is outside candidate registry"
+                ))
+            })?;
         let payload = normalize_candidate_payload(
             &resources.program,
             &context.config,
-            &parent.payload,
-            raw_payload,
+            &proposal_parent.payload,
+            proposal.payload_map(),
         )?;
         let candidate_id = candidate_id(&payload);
         if planned_candidate_ids.contains(&candidate_id) {
@@ -5264,16 +5368,20 @@ fn advance_proposer_waiting(
             continue;
         }
         planned_candidate_ids.insert(candidate_id.clone());
+        let proposal_type = proposal.proposal_type_or_default();
+        let proposal_parent_id = proposal_parent.candidate_id.clone();
+        let mut acceptance_metadata = Map::new();
+        acceptance_metadata.insert("proposal".to_string(), proposal.metadata_value());
         let candidate = CandidateRecord {
             lever_bundle: LeverBundle::from_prompt_payload(
                 candidate_id.clone(),
-                Some(parent.candidate_id.clone()),
+                Some(proposal_parent_id.clone()),
                 &payload,
             ),
             candidate_id,
             payload,
-            parent_id: Some(parent.candidate_id.clone()),
-            source: format!("generation_{}", state.cursor.generation),
+            parent_id: Some(proposal_parent_id),
+            source: format!("reflector:{proposal_type}"),
             status: "registered".to_string(),
             minibatch_reward: None,
             train_reward: None,
@@ -5282,7 +5390,7 @@ fn advance_proposer_waiting(
             train_scores: Vec::new(),
             sensor_frames: Vec::new(),
             acceptance_score: Value::Null,
-            acceptance_metadata: Map::new(),
+            acceptance_metadata,
         };
         persist_candidate_snapshot(
             &mut context.workspace,
@@ -5344,7 +5452,7 @@ fn advance_proposer_waiting(
             proposal_index,
             None,
         )?;
-        active.parent_id = Some(parent.candidate_id.clone());
+        active.parent_id = state.candidates[candidate_idx].parent_id.clone();
         active_candidates.push(active);
         planned_rollouts = planned_rollouts.saturating_add(minibatch_rows.len());
         proposal_index += 1;
@@ -6717,15 +6825,6 @@ fn execute_gepa_monolithic_with_options(
             )?;
             break;
         }
-        transition_run(
-            &workspace,
-            &mut events,
-            &mut state_machine,
-            OptimizerRunState::Proposing,
-            OptimizerTransitionTrigger::ProposerStarted,
-            "Proposer started",
-            json!({"generation": generation}),
-        )?;
         if let Some(train_best_idx) = select_best_train_candidate(
             &candidates,
             &objective_set,
@@ -6734,7 +6833,27 @@ fn execute_gepa_monolithic_with_options(
         )? {
             best_idx = train_best_idx;
         }
-        let parent = candidates[best_idx].clone();
+        let parent_selection = select_proposer_parent_candidate(
+            &candidates,
+            &train_rows,
+            generation,
+            &config.run.run_id,
+            Some(best_idx),
+        )?;
+        let parent = candidates[parent_selection.candidate_index].clone();
+        transition_run(
+            &workspace,
+            &mut events,
+            &mut state_machine,
+            OptimizerRunState::Proposing,
+            OptimizerTransitionTrigger::ProposerStarted,
+            "Proposer started",
+            json!({
+                "generation": generation,
+                "parent_candidate_id": parent.candidate_id,
+                "parent_selection": parent_selection.metadata,
+            }),
+        )?;
         check_cancelled(options.cancellation.as_ref())?;
         let proposer_outcome = match propose_candidates(ProposerCall {
             client: &client,
@@ -6847,14 +6966,7 @@ fn execute_gepa_monolithic_with_options(
         )?;
 
         let minibatch_rows = minibatch_rows(&train_rows, config.gepa.minibatch_size, generation);
-        let parent_minibatch_reward =
-            average_reward_for_rows(&parent.train_scores, &minibatch_rows)?.ok_or_else(|| {
-                OptimizerError::Invariant(format!(
-                    "parent candidate {} is missing minibatch reference scores for generation {}",
-                    parent.candidate_id, generation
-                ))
-            })?;
-        for payload in proposer_outcome.proposals {
+        for proposal in proposer_outcome.proposals {
             check_cancelled(options.cancellation.as_ref())?;
             if rollout_count >= config.gepa.max_total_rollouts {
                 let mut metadata = Map::new();
@@ -6904,7 +7016,38 @@ fn execute_gepa_monolithic_with_options(
                 );
                 break;
             }
-            let payload = normalize_candidate_payload(&program, &config, &parent.payload, payload)?;
+            let proposal_parent_idx = proposal
+                .parent_candidate_ids
+                .iter()
+                .find_map(|candidate_id| {
+                    candidates
+                        .iter()
+                        .position(|candidate| &candidate.candidate_id == candidate_id)
+                })
+                .unwrap_or(parent_selection.candidate_index);
+            let proposal_parent =
+                candidates
+                    .get(proposal_parent_idx)
+                    .cloned()
+                    .ok_or_else(|| {
+                        OptimizerError::Invariant(format!(
+                        "proposal parent index {proposal_parent_idx} is outside candidate registry"
+                    ))
+                    })?;
+            let parent_minibatch_reward =
+                average_reward_for_rows(&proposal_parent.train_scores, &minibatch_rows)?
+                    .ok_or_else(|| {
+                        OptimizerError::Invariant(format!(
+                    "parent candidate {} is missing minibatch reference scores for generation {}",
+                    proposal_parent.candidate_id, generation
+                ))
+                    })?;
+            let payload = normalize_candidate_payload(
+                &program,
+                &config,
+                &proposal_parent.payload,
+                proposal.payload_map(),
+            )?;
             let candidate_id = candidate_id(&payload);
             if candidates
                 .iter()
@@ -6917,16 +7060,20 @@ fn execute_gepa_monolithic_with_options(
                 )?;
                 continue;
             }
+            let proposal_type = proposal.proposal_type_or_default();
+            let proposal_parent_id = proposal_parent.candidate_id.clone();
+            let mut acceptance_metadata = Map::new();
+            acceptance_metadata.insert("proposal".to_string(), proposal.metadata_value());
             let mut candidate = CandidateRecord {
                 lever_bundle: LeverBundle::from_prompt_payload(
                     candidate_id.clone(),
-                    Some(parent.candidate_id.clone()),
+                    Some(proposal_parent_id.clone()),
                     &payload,
                 ),
                 candidate_id,
                 payload,
-                parent_id: Some(parent.candidate_id.clone()),
-                source: format!("generation_{generation}"),
+                parent_id: Some(proposal_parent_id),
+                source: format!("reflector:{proposal_type}"),
                 status: "registered".to_string(),
                 minibatch_reward: None,
                 train_reward: None,
@@ -6935,7 +7082,7 @@ fn execute_gepa_monolithic_with_options(
                 train_scores: Vec::new(),
                 sensor_frames: Vec::new(),
                 acceptance_score: Value::Null,
-                acceptance_metadata: Map::new(),
+                acceptance_metadata,
             };
             persist_candidate_snapshot(&mut workspace, &config.run.run_id, &candidate)?;
             let minibatch_rollout_capacity =
@@ -7137,7 +7284,7 @@ fn execute_gepa_monolithic_with_options(
                 })?;
             let parent_minibatch_vector = score_vector_for_candidate(CandidateScoreVectorInput {
                 objective_set: &objective_set,
-                candidate: &parent,
+                candidate: &proposal_parent,
                 rows: &minibatch_rows,
                 split: &config.dataset.train_split,
                 source_stages: &["seed_full_train", "candidate_full_train"],
@@ -7166,7 +7313,7 @@ fn execute_gepa_monolithic_with_options(
             )?;
             let mut decision = AcceptanceDecision {
                 candidate_id: candidate.candidate_id.clone(),
-                parent_id: parent.candidate_id.clone(),
+                parent_id: proposal_parent.candidate_id.clone(),
                 accepted_minibatch: minibatch_preference.preferred,
                 accepted_full_train: false,
                 reason: String::new(),
@@ -8565,6 +8712,197 @@ fn frontier_members(candidates: &[CandidateRecord]) -> Vec<FrontierMember> {
         .collect::<Vec<_>>();
     frontier.sort_by(|left, right| left.candidate_id.cmp(&right.candidate_id));
     frontier
+}
+
+fn select_proposer_parent_candidate(
+    candidates: &[CandidateRecord],
+    train_rows: &[Value],
+    generation: usize,
+    run_id: &str,
+    fallback_idx: Option<usize>,
+) -> Result<ParentSelectionDecision> {
+    if candidates.is_empty() {
+        return Err(OptimizerError::Invariant(
+            "GEPA has no candidate to select as proposer parent".to_string(),
+        ));
+    }
+    let fallback_idx = fallback_idx
+        .filter(|idx| *idx < candidates.len())
+        .or_else(|| {
+            candidates
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, candidate)| candidate.train_reward.is_some())
+                .map(|(idx, _)| idx)
+        })
+        .unwrap_or(0);
+    let train_example_ids = train_rows
+        .iter()
+        .map(row_example_id)
+        .collect::<Result<BTreeSet<_>>>()?;
+    let mut winners_by_example: BTreeMap<String, (usize, String, f64)> = BTreeMap::new();
+    for (idx, candidate) in candidates.iter().enumerate() {
+        if candidate.train_reward.is_none() {
+            continue;
+        }
+        for score in &candidate.train_scores {
+            if !train_example_ids.is_empty() && !train_example_ids.contains(&score.example_id) {
+                continue;
+            }
+            let candidate_key = candidate.candidate_id.clone();
+            let should_replace = winners_by_example
+                .get(&score.example_id)
+                .map(|(_, incumbent_id, incumbent_reward)| {
+                    score.reward > *incumbent_reward + f64::EPSILON
+                        || ((score.reward - *incumbent_reward).abs() <= f64::EPSILON
+                            && candidate_key < *incumbent_id)
+                })
+                .unwrap_or(true);
+            if should_replace {
+                winners_by_example
+                    .insert(score.example_id.clone(), (idx, candidate_key, score.reward));
+            }
+        }
+    }
+    let mut win_counts: BTreeMap<usize, usize> = BTreeMap::new();
+    for (idx, _, _) in winners_by_example.values() {
+        *win_counts.entry(*idx).or_default() += 1;
+    }
+    if win_counts.is_empty() {
+        let candidate = &candidates[fallback_idx];
+        return Ok(ParentSelectionDecision {
+            candidate_index: fallback_idx,
+            metadata: json!({
+                "strategy": "pareto_weighted",
+                "reason": "fallback_no_train_frontier_cells",
+                "frontier_type": "per_example",
+                "candidate_id": candidate.candidate_id,
+                "win_count": 0,
+                "weight": 1.0,
+            }),
+        });
+    }
+    let mut members = win_counts.keys().copied().collect::<Vec<_>>();
+    members.sort_by(|left, right| {
+        candidates[*left]
+            .candidate_id
+            .cmp(&candidates[*right].candidate_id)
+    });
+    let weights = members
+        .iter()
+        .map(|idx| {
+            (
+                *idx,
+                std::cmp::max(1usize, *win_counts.get(idx).unwrap_or(&0)),
+            )
+        })
+        .collect::<Vec<_>>();
+    let total_weight = weights
+        .iter()
+        .fold(0usize, |acc, (_, weight)| acc.saturating_add(*weight));
+    let bucket =
+        deterministic_weight_bucket(run_id, generation, candidates, &weights, total_weight);
+    let mut running = 0usize;
+    let mut selected_idx = fallback_idx;
+    for (idx, weight) in &weights {
+        running = running.saturating_add(*weight);
+        if bucket < running {
+            selected_idx = *idx;
+            break;
+        }
+    }
+    let selected_weight = std::cmp::max(1usize, *win_counts.get(&selected_idx).unwrap_or(&0));
+    let frontier_members = members
+        .iter()
+        .map(|idx| {
+            json!({
+                "candidate_id": candidates[*idx].candidate_id,
+                "win_count": win_counts.get(idx).copied().unwrap_or(0),
+                "weight": std::cmp::max(1usize, *win_counts.get(idx).unwrap_or(&0)),
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(ParentSelectionDecision {
+        candidate_index: selected_idx,
+        metadata: json!({
+            "strategy": "pareto_weighted",
+            "reason": "pareto_weighted_frontier",
+            "frontier_type": "per_example",
+            "candidate_id": candidates[selected_idx].candidate_id,
+            "win_count": win_counts.get(&selected_idx).copied().unwrap_or(0),
+            "weight": if total_weight == 0 { 1.0 } else { selected_weight as f64 / total_weight as f64 },
+            "total_weight": total_weight,
+            "frontier_size": members.len(),
+            "frontier": frontier_members,
+        }),
+    })
+}
+
+fn deterministic_weight_bucket(
+    run_id: &str,
+    generation: usize,
+    candidates: &[CandidateRecord],
+    weights: &[(usize, usize)],
+    total_weight: usize,
+) -> usize {
+    if total_weight == 0 {
+        return 0;
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(run_id.as_bytes());
+    hasher.update(b":parent:");
+    hasher.update(generation.to_le_bytes());
+    for (idx, weight) in weights {
+        hasher.update(candidates[*idx].candidate_id.as_bytes());
+        hasher.update(b"=");
+        hasher.update(weight.to_le_bytes());
+        hasher.update(b";");
+    }
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    (u64::from_le_bytes(bytes) as usize) % total_weight
+}
+
+fn current_proposal_parent_idx(state: &GepaRunState) -> Result<usize> {
+    if let Some(parent_id) = state.cursor.pipeline_state.parent_candidate_id.as_ref() {
+        if let Some(parent_idx) = state
+            .candidates
+            .iter()
+            .position(|candidate| &candidate.candidate_id == parent_id)
+        {
+            return Ok(parent_idx);
+        }
+    }
+    state
+        .best_idx
+        .filter(|idx| *idx < state.candidates.len())
+        .or(if state.candidates.is_empty() {
+            None
+        } else {
+            Some(0)
+        })
+        .ok_or_else(|| {
+            OptimizerError::Invariant("GEPA has no candidate to use as proposal parent".to_string())
+        })
+}
+
+fn proposal_parent_idx(
+    state: &GepaRunState,
+    proposal: &ProposedCandidate,
+    fallback_idx: usize,
+) -> usize {
+    proposal
+        .parent_candidate_ids
+        .iter()
+        .find_map(|candidate_id| {
+            state
+                .candidates
+                .iter()
+                .position(|candidate| &candidate.candidate_id == candidate_id)
+        })
+        .unwrap_or(fallback_idx)
 }
 
 fn frontier_snapshot_value(

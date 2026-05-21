@@ -14,7 +14,8 @@ use synth_optimizer_platform::{
 
 use crate::{
     cached_profiled_call_with_access, record_runtime_effect_completed, run_proposer,
-    CandidateRecord, RuntimeEffectCompletionInput, UsageTotals, GEPA_ALGORITHM_ID,
+    CandidateRecord, ProposedCandidate, RuntimeEffectCompletionInput, UsageTotals,
+    GEPA_ALGORITHM_ID,
 };
 
 pub const GEPA_RUNTIME_JOB_SCHEMA_VERSION: &str = "gepa_runtime_job.v1";
@@ -250,7 +251,7 @@ pub enum RuntimeEffectOutcome {
 #[derive(Clone, Debug)]
 pub struct RuntimeProposerOutcome {
     pub response: Value,
-    pub proposals: Vec<BTreeMap<String, String>>,
+    pub proposals: Vec<ProposedCandidate>,
     pub usage: UsageTotals,
     pub cost_usd: f64,
     pub backend: String,
@@ -505,7 +506,7 @@ impl<'a> GepaRuntimeExecutor<'a> {
                 Value::String(workspace_dir.display().to_string()),
             );
         }
-        let proposals = proposer_payloads(&response);
+        let proposals = proposed_candidates(&response);
         let mut usage = UsageTotals {
             proposer_calls: 1,
             ..Default::default()
@@ -978,7 +979,7 @@ fn terminal_metadata(
     }
 }
 
-fn proposer_payloads(response: &Value) -> Vec<BTreeMap<String, String>> {
+fn proposed_candidates(response: &Value) -> Vec<ProposedCandidate> {
     let proposals = response
         .get("proposals")
         .and_then(Value::as_array)
@@ -986,11 +987,37 @@ fn proposer_payloads(response: &Value) -> Vec<BTreeMap<String, String>> {
         .unwrap_or_default();
     let mut out = Vec::new();
     for item in proposals {
+        let default_evidence = response
+            .get("manifest")
+            .and_then(|manifest| manifest.get("evidence"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let proposal_type = item
+            .get("proposal_type")
+            .and_then(Value::as_str)
+            .unwrap_or("frontier_variation")
+            .to_string();
+        let parent_candidate_ids = item
+            .get("parent_candidate_ids")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let rationale = item
+            .get("rationale")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let evidence = item.get("evidence").cloned().unwrap_or(default_evidence);
         let candidate = item
             .get("candidate")
             .or_else(|| item.get("proposed_payload"))
             .cloned()
-            .unwrap_or(item);
+            .unwrap_or_else(|| item.clone());
         let Some(map) = candidate.as_object() else {
             continue;
         };
@@ -1001,7 +1028,31 @@ fn proposer_payloads(response: &Value) -> Vec<BTreeMap<String, String>> {
             }
         }
         if !payload.is_empty() {
-            out.push(payload);
+            let mut metadata = Map::new();
+            if let Some(object) = item.as_object() {
+                for (key, value) in object {
+                    if !matches!(
+                        key.as_str(),
+                        "candidate"
+                            | "proposed_payload"
+                            | "proposal_type"
+                            | "parent_candidate_ids"
+                            | "rationale"
+                            | "evidence"
+                    ) {
+                        metadata.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            out.push(ProposedCandidate {
+                payload,
+                proposal_type,
+                parent_candidate_ids,
+                rationale,
+                evidence,
+                metadata,
+                extra: Map::new(),
+            });
         }
     }
     out
