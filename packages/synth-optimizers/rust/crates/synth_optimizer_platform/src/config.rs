@@ -97,6 +97,14 @@ fn default_seed_pools_config() -> GepaSeedPoolsConfig {
     GepaSeedPoolsConfig::default()
 }
 
+fn default_acceptance_criterion() -> String {
+    "primary_improvement".to_string()
+}
+
+fn default_objective_acceptance_config() -> GepaObjectiveAcceptanceConfig {
+    GepaObjectiveAcceptanceConfig::default()
+}
+
 fn default_gepa_pipeline_config() -> GepaPipelineConfig {
     GepaPipelineConfig::default()
 }
@@ -358,6 +366,14 @@ impl SynthOptimizerConfig {
             }
             validate_gepa_objective_direction("gepa.objective_directions", direction)?;
         }
+        if !self.gepa.minibatch_accept_margin.is_finite() || self.gepa.minibatch_accept_margin < 0.0
+        {
+            return Err(OptimizerError::Config(
+                "gepa.minibatch_accept_margin must be finite and non-negative".to_string(),
+            ));
+        }
+        validate_gepa_acceptance_criterion(&self.gepa.acceptance_criterion)?;
+        validate_gepa_objective_acceptance_config(&self.gepa.objective_acceptance)?;
         validate_gepa_candidate_selector_config(&self.gepa.candidate_selector)?;
         validate_gepa_batch_sampler_config(&self.gepa.batch_sampler)?;
         validate_gepa_pipeline_config(&self.gepa.pipeline)?;
@@ -627,6 +643,17 @@ pub struct GepaSeedPoolsConfig {
     pub validation: Vec<i64>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GepaObjectiveAcceptanceConfig {
+    #[serde(default)]
+    pub min_objective_delta: Option<f64>,
+    #[serde(default)]
+    pub objective_regression_tolerance: Option<f64>,
+    #[serde(default)]
+    pub protected_objectives: Vec<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GepaConfig {
@@ -636,6 +663,8 @@ pub struct GepaConfig {
     pub proposals_per_generation: usize,
     #[serde(default = "default_minibatch_size")]
     pub minibatch_size: usize,
+    #[serde(default)]
+    pub minibatch_accept_margin: f64,
     #[serde(default = "default_max_total_rollouts")]
     pub max_total_rollouts: usize,
     #[serde(default = "default_rollout_submission_mode")]
@@ -652,6 +681,10 @@ pub struct GepaConfig {
     pub objective_keys: Vec<String>,
     #[serde(default)]
     pub objective_directions: BTreeMap<String, String>,
+    #[serde(default = "default_acceptance_criterion")]
+    pub acceptance_criterion: String,
+    #[serde(default = "default_objective_acceptance_config")]
+    pub objective_acceptance: GepaObjectiveAcceptanceConfig,
     #[serde(default = "default_candidate_selector_config")]
     pub candidate_selector: GepaCandidateSelectorConfig,
     #[serde(default = "default_batch_sampler_config")]
@@ -696,6 +729,7 @@ impl Default for GepaConfig {
             max_generations: default_max_generations(),
             proposals_per_generation: default_proposals_per_generation(),
             minibatch_size: default_minibatch_size(),
+            minibatch_accept_margin: 0.0,
             max_total_rollouts: default_max_total_rollouts(),
             rollout_submission_mode: default_rollout_submission_mode(),
             rollout_poll_interval_ms: default_rollout_poll_interval_ms(),
@@ -704,6 +738,8 @@ impl Default for GepaConfig {
             selection_objective: None,
             objective_keys: Vec::new(),
             objective_directions: BTreeMap::new(),
+            acceptance_criterion: default_acceptance_criterion(),
+            objective_acceptance: default_objective_acceptance_config(),
             candidate_selector: default_candidate_selector_config(),
             batch_sampler: default_batch_sampler_config(),
             seed_pools: default_seed_pools_config(),
@@ -957,6 +993,56 @@ fn validate_gepa_batch_sampler_config(config: &GepaBatchSamplerConfig) -> Result
     {
         return Err(OptimizerError::Config(
             "gepa.batch_sampler.field must be non-empty when set".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_gepa_acceptance_criterion(criterion: &str) -> Result<()> {
+    let criterion = criterion.trim().to_ascii_lowercase().replace('-', "_");
+    if matches!(
+        criterion.as_str(),
+        "primary_improvement"
+            | "improvement_or_equal"
+            | "primary_or_objective"
+            | "any_objective_improved"
+            | "protected_objective_guard"
+    ) {
+        Ok(())
+    } else {
+        Err(OptimizerError::Config(format!(
+            "gepa.acceptance_criterion must be primary_improvement, improvement_or_equal, primary_or_objective, any_objective_improved, or protected_objective_guard; got {:?}",
+            criterion
+        )))
+    }
+}
+
+fn validate_gepa_objective_acceptance_config(config: &GepaObjectiveAcceptanceConfig) -> Result<()> {
+    if config
+        .min_objective_delta
+        .is_some_and(|value| !value.is_finite() || value < 0.0)
+    {
+        return Err(OptimizerError::Config(
+            "gepa.objective_acceptance.min_objective_delta must be finite and non-negative"
+                .to_string(),
+        ));
+    }
+    if config
+        .objective_regression_tolerance
+        .is_some_and(|value| !value.is_finite() || value < 0.0)
+    {
+        return Err(OptimizerError::Config(
+            "gepa.objective_acceptance.objective_regression_tolerance must be finite and non-negative"
+                .to_string(),
+        ));
+    }
+    if config
+        .protected_objectives
+        .iter()
+        .any(|objective| objective.trim().is_empty())
+    {
+        return Err(OptimizerError::Config(
+            "gepa.objective_acceptance.protected_objectives entries must be non-empty".to_string(),
         ));
     }
     Ok(())

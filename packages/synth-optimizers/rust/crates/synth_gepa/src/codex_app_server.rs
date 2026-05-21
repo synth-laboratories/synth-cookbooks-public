@@ -137,6 +137,7 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
     let gepa_summary = gepa_summary_read_model(input, &rollouts);
     let candidate_selector = candidate_selector_read_model(input);
     let batch_sampler = batch_sampler_read_model(input);
+    let acceptance = acceptance_read_model(input);
     let seed_pools = seed_pools_read_model(input);
     let algorithm_read_model = json!({
         "schema_version": "gepa_algorithm_read_model_v1",
@@ -146,6 +147,7 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
         "proposals_per_round": input.config.gepa.proposals_per_generation,
         "candidate_selector": candidate_selector,
         "batch_sampler": batch_sampler,
+        "acceptance": acceptance.clone(),
         "seed_pools": seed_pools,
         "reflection_examples": reflection_examples_read_model(input),
         "parent_payload": parent_payload,
@@ -171,6 +173,7 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
             "proposals_per_generation": input.config.gepa.proposals_per_generation,
             "proposals_per_round": input.config.gepa.proposals_per_generation,
             "parent_candidate_id": input.parent.candidate_id,
+            "acceptance": acceptance,
             "seed_pool_counts": seed_pool_counts(input),
         }),
     )?;
@@ -356,6 +359,7 @@ fn proposal_request(input: &CodexProposerInput<'_>) -> Value {
         "parent_candidate_id": input.parent.candidate_id,
         "candidate_selector": candidate_selector_read_model(input),
         "batch_sampler": batch_sampler_read_model(input),
+        "acceptance": acceptance_read_model(input),
         "seed_pool_counts": seed_pool_counts(input),
     })
 }
@@ -382,6 +386,35 @@ fn batch_sampler_read_model(input: &CodexProposerInput<'_>) -> Value {
         "objective_keys": input.config.gepa.objective_keys,
         "objective_directions": input.config.gepa.objective_directions,
     })
+}
+
+fn acceptance_read_model(input: &CodexProposerInput<'_>) -> Value {
+    json!({
+        "acceptance_criterion": normalize_acceptance_criterion(&input.config.gepa.acceptance_criterion),
+        "configured_acceptance_criterion": input.config.gepa.acceptance_criterion,
+        "minibatch_accept_margin": input.config.gepa.minibatch_accept_margin,
+        "objective_directions": input.config.gepa.objective_directions,
+        "objective_acceptance": {
+            "min_objective_delta": input.config.gepa.objective_acceptance.min_objective_delta.unwrap_or(0.05),
+            "objective_regression_tolerance": input.config.gepa.objective_acceptance.objective_regression_tolerance.unwrap_or(0.10),
+            "protected_objectives": input.config.gepa.objective_acceptance.protected_objectives,
+        },
+    })
+}
+
+fn normalize_acceptance_criterion(criterion: &str) -> String {
+    match criterion
+        .trim()
+        .to_ascii_lowercase()
+        .replace('-', "_")
+        .as_str()
+    {
+        "improvement_or_equal" => "improvement_or_equal".to_string(),
+        "primary_or_objective" => "primary_or_objective".to_string(),
+        "any_objective_improved" => "any_objective_improved".to_string(),
+        "protected_objective_guard" => "protected_objective_guard".to_string(),
+        _ => "primary_improvement".to_string(),
+    }
 }
 
 fn seed_pools_read_model(input: &CodexProposerInput<'_>) -> Value {

@@ -17,16 +17,16 @@ use synth_optimizer_platform::{
     ContainerContractSnapshotInput, ContainerContractSnapshotRecord, DatasetResponse,
     DatasetRowsRequest, DatasetRowsResponse, DatasetSnapshotInput, DatasetSnapshotRecord,
     EvaluationCacheRecord, EvaluationCacheRecordInput, EventWriter, FailurePayload,
-    GepaBatchSamplerConfig, GepaCandidateSelectorConfig, GepaRunResult, LeverBundle, LeverManifest,
-    ManagedContainerProcess, MaterializationRecord, MaterializationRecordInput, ObjectiveScore,
-    ObjectiveSetRecord, ObjectiveSpec, OptimizerError, OptimizerJob, OptimizerJobKind,
-    OptimizerJobStatus, OptimizerRunState, OptimizerStateMachine, OptimizerTransition,
-    OptimizerTransitionTrigger, ParetoComparisonRecord, PromptCandidatePayload, PromptProgram,
-    PromptProgramSnapshotInput, PromptProgramSnapshotRecord, RequestCache, ResolvedRunConfigInput,
-    ResolvedRunConfigRecord, Result, RolloutMaterializationIdentity, RunRegistry, RunRegistryEntry,
-    RuntimeEffectInput, RuntimeEffectRecord, ScoreVectorRecord, SensorFrame, SensorScoreRecords,
-    StopperStateInput, StopperStateRecord, SynthOptimizerConfig, UsageLedgerInput,
-    UsageLedgerRecord, WorkspaceStore,
+    GepaBatchSamplerConfig, GepaCandidateSelectorConfig, GepaObjectiveAcceptanceConfig,
+    GepaRunResult, LeverBundle, LeverManifest, ManagedContainerProcess, MaterializationRecord,
+    MaterializationRecordInput, ObjectiveScore, ObjectiveSetRecord, ObjectiveSpec, OptimizerError,
+    OptimizerJob, OptimizerJobKind, OptimizerJobStatus, OptimizerRunState, OptimizerStateMachine,
+    OptimizerTransition, OptimizerTransitionTrigger, ParetoComparisonRecord,
+    PromptCandidatePayload, PromptProgram, PromptProgramSnapshotInput, PromptProgramSnapshotRecord,
+    RequestCache, ResolvedRunConfigInput, ResolvedRunConfigRecord, Result,
+    RolloutMaterializationIdentity, RunRegistry, RunRegistryEntry, RuntimeEffectInput,
+    RuntimeEffectRecord, ScoreVectorRecord, SensorFrame, SensorScoreRecords, StopperStateInput,
+    StopperStateRecord, SynthOptimizerConfig, UsageLedgerInput, UsageLedgerRecord, WorkspaceStore,
 };
 
 mod codex_app_server;
@@ -220,6 +220,9 @@ struct ScoreVectorPreferenceInput<'a> {
     challenger: &'a ScoreVectorRecord,
     incumbent: &'a ScoreVectorRecord,
     accept_equal: bool,
+    acceptance_criterion: Option<&'a str>,
+    objective_acceptance: Option<&'a GepaObjectiveAcceptanceConfig>,
+    margin: f64,
 }
 
 struct ScoreVectorPreference {
@@ -4493,6 +4496,9 @@ fn finalize_candidate_minibatch(
         challenger: &candidate_minibatch_vector,
         incumbent: &parent_minibatch_vector,
         accept_equal: true,
+        acceptance_criterion: Some(&context.config.gepa.acceptance_criterion),
+        objective_acceptance: Some(&context.config.gepa.objective_acceptance),
+        margin: context.config.gepa.minibatch_accept_margin,
     })?;
     let best_idx = state.best_idx.unwrap_or(parent_idx);
     let mut decision = AcceptanceDecision {
@@ -4730,6 +4736,9 @@ fn finalize_candidate_minibatch_group(
             challenger: &candidate_minibatch_vector,
             incumbent: &parent_minibatch_vector,
             accept_equal: true,
+            acceptance_criterion: Some(&context.config.gepa.acceptance_criterion),
+            objective_acceptance: Some(&context.config.gepa.objective_acceptance),
+            margin: context.config.gepa.minibatch_accept_margin,
         })?;
         let best_idx = state.best_idx.unwrap_or(parent_idx);
         let mut decision = AcceptanceDecision {
@@ -4958,6 +4967,9 @@ fn finalize_candidate_full_train(
         challenger: &candidate_train_vector,
         incumbent: &best_train_vector,
         accept_equal: true,
+        acceptance_criterion: Some(&context.config.gepa.acceptance_criterion),
+        objective_acceptance: Some(&context.config.gepa.objective_acceptance),
+        margin: 0.0,
     })?;
     let accepted = train_preference.preferred;
     let mut decision = active.decision.unwrap_or_else(|| AcceptanceDecision {
@@ -5117,6 +5129,9 @@ fn finalize_candidate_full_train_group(
             challenger: &candidate_train_vector,
             incumbent: &best_train_vector,
             accept_equal: true,
+            acceptance_criterion: Some(&context.config.gepa.acceptance_criterion),
+            objective_acceptance: Some(&context.config.gepa.objective_acceptance),
+            margin: 0.0,
         })?;
         let accepted = train_preference.preferred;
         let mut decision =
@@ -7475,6 +7490,9 @@ fn execute_gepa_monolithic_with_options(
                 challenger: &candidate_minibatch_vector,
                 incumbent: &parent_minibatch_vector,
                 accept_equal: true,
+                acceptance_criterion: Some(&config.gepa.acceptance_criterion),
+                objective_acceptance: Some(&config.gepa.objective_acceptance),
+                margin: config.gepa.minibatch_accept_margin,
             })?;
             candidate.acceptance_score = minibatch_preference.score.clone();
             candidate.acceptance_metadata = minibatch_preference.metadata.clone();
@@ -7762,6 +7780,9 @@ fn execute_gepa_monolithic_with_options(
                 challenger: &candidate_train_vector,
                 incumbent: &best_train_vector,
                 accept_equal: true,
+                acceptance_criterion: Some(&config.gepa.acceptance_criterion),
+                objective_acceptance: Some(&config.gepa.objective_acceptance),
+                margin: 0.0,
             })?;
             candidate.acceptance_score = train_preference.score.clone();
             candidate.acceptance_metadata = train_preference.metadata.clone();
@@ -8952,6 +8973,23 @@ fn compare_score_vectors(input: ScoreVectorPreferenceInput<'_>) -> Result<ScoreV
         .selection_score
         .zip(incumbent.selection_score)
         .map(|(left, right)| (left - right) * direction);
+    if let Some(criterion) = input.acceptance_criterion {
+        let criterion = criterion.to_string();
+        let default_acceptance;
+        let objective_acceptance = if let Some(config) = input.objective_acceptance {
+            config
+        } else {
+            default_acceptance = GepaObjectiveAcceptanceConfig::default();
+            &default_acceptance
+        };
+        return acceptance_preference_from_vectors(
+            &input,
+            comparison,
+            selection_delta,
+            &criterion,
+            objective_acceptance,
+        );
+    }
     let selection_prefers = selection_delta.map(|delta| {
         if input.accept_equal {
             delta >= -f64::EPSILON
@@ -9021,6 +9059,221 @@ fn compare_score_vectors(input: ScoreVectorPreferenceInput<'_>) -> Result<ScoreV
         score,
         metadata,
     })
+}
+
+fn acceptance_preference_from_vectors(
+    input: &ScoreVectorPreferenceInput<'_>,
+    comparison: ParetoComparisonRecord,
+    selection_delta: Option<f64>,
+    criterion: &str,
+    config: &GepaObjectiveAcceptanceConfig,
+) -> Result<ScoreVectorPreference> {
+    let criterion = normalize_gepa_acceptance_criterion(criterion);
+    let primary_delta = selection_delta.ok_or_else(|| {
+        OptimizerError::Invariant(format!(
+            "acceptance criterion {criterion} needs selection scores for split={} evaluation_stage={}",
+            input.split, input.evaluation_stage
+        ))
+    })?;
+    let margin = input.margin.max(0.0);
+    let (accepted, reason, objective_deltas) = match criterion.as_str() {
+        "improvement_or_equal" => {
+            let accepted = primary_delta >= -margin - f64::EPSILON;
+            (
+                accepted,
+                if accepted {
+                    "primary_improvement_or_equal".to_string()
+                } else {
+                    "primary_regressed".to_string()
+                },
+                BTreeMap::new(),
+            )
+        }
+        "primary_improvement" => {
+            let accepted = primary_delta > margin + f64::EPSILON;
+            (
+                accepted,
+                if accepted {
+                    "primary_improvement".to_string()
+                } else {
+                    "primary_not_improved".to_string()
+                },
+                BTreeMap::new(),
+            )
+        }
+        _ => {
+            let scalar_accepted = primary_delta > margin + f64::EPSILON;
+            let objective_deltas = objective_deltas_for_vectors(
+                input.objective_set,
+                input.challenger,
+                input.incumbent,
+            );
+            if scalar_accepted {
+                (true, "primary_improvement".to_string(), objective_deltas)
+            } else if objective_deltas.is_empty() {
+                (false, "no_objective_scores".to_string(), objective_deltas)
+            } else if criterion == "any_objective_improved" {
+                let (best_objective, best_delta) = best_objective_delta(&objective_deltas);
+                let min_delta = config.min_objective_delta.unwrap_or(0.05);
+                let accepted = best_delta >= min_delta;
+                (
+                    accepted,
+                    if accepted {
+                        format!("objective_improvement:{best_objective}")
+                    } else {
+                        "objective_delta_below_threshold".to_string()
+                    },
+                    objective_deltas,
+                )
+            } else {
+                let (best_objective, best_delta) = best_objective_delta(&objective_deltas);
+                let min_delta = config.min_objective_delta.unwrap_or(0.05);
+                let tolerance = config.objective_regression_tolerance.unwrap_or(0.10);
+                let protected = protected_objectives(config, &objective_deltas);
+                let protected_ok = protected.iter().all(|objective| {
+                    objective_deltas.get(objective).copied().unwrap_or(0.0) >= -tolerance
+                });
+                let accepted = best_delta >= min_delta && protected_ok;
+                (
+                    accepted,
+                    if accepted {
+                        format!("objective_improvement:{best_objective}")
+                    } else if !protected_ok {
+                        "protected_objective_regression".to_string()
+                    } else {
+                        "objective_delta_below_threshold".to_string()
+                    },
+                    objective_deltas,
+                )
+            }
+        }
+    };
+    let candidate_objectives = objective_values_as_f64(&input.challenger.objective_values);
+    let parent_objectives = objective_values_as_f64(&input.incumbent.objective_values);
+    let score = json!({
+        "schema_version": "gepa_decision_score.v1",
+        "decision_source": "acceptance_criterion",
+        "acceptance_criterion": criterion,
+        "acceptance_reason": reason,
+        "accepted": accepted,
+        "selection_objective": input.objective_set.selection_objective,
+        "objective_set_id": input.objective_set.objective_set_id,
+        "objective_set_hash": input.objective_set.objective_set_hash,
+        "frontier_type": input.objective_set.frontier_type,
+        "split": input.split,
+        "evaluation_stage": input.evaluation_stage,
+        "comparison_result": comparison.result,
+        "comparison": comparison,
+        "challenger_score_vector_id": input.challenger.score_vector_id,
+        "incumbent_score_vector_id": input.incumbent.score_vector_id,
+        "challenger_selection_score": input.challenger.selection_score,
+        "incumbent_selection_score": input.incumbent.selection_score,
+        "selection_delta": selection_delta,
+        "primary_delta": primary_delta,
+        "margin": margin,
+        "objective_deltas": objective_deltas,
+        "candidate_objectives": candidate_objectives,
+        "parent_objectives": parent_objectives,
+        "objective_acceptance": {
+            "min_objective_delta": config.min_objective_delta.unwrap_or(0.05),
+            "objective_regression_tolerance": config.objective_regression_tolerance.unwrap_or(0.10),
+            "protected_objectives": config.protected_objectives.clone(),
+        },
+    });
+    let mut metadata = Map::new();
+    metadata.insert("decision_source".to_string(), json!("acceptance_criterion"));
+    metadata.insert("acceptance_criterion".to_string(), json!(criterion));
+    metadata.insert("acceptance_reason".to_string(), json!(reason));
+    metadata.insert(
+        "comparison_result".to_string(),
+        json!(score
+            .get("comparison_result")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")),
+    );
+    Ok(ScoreVectorPreference {
+        preferred: accepted,
+        result: score
+            .get("comparison_result")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+        reason,
+        score,
+        metadata,
+    })
+}
+
+fn normalize_gepa_acceptance_criterion(criterion: &str) -> String {
+    match criterion
+        .trim()
+        .to_ascii_lowercase()
+        .replace('-', "_")
+        .as_str()
+    {
+        "improvement_or_equal" => "improvement_or_equal".to_string(),
+        "primary_or_objective" => "primary_or_objective".to_string(),
+        "any_objective_improved" => "any_objective_improved".to_string(),
+        "protected_objective_guard" => "protected_objective_guard".to_string(),
+        _ => "primary_improvement".to_string(),
+    }
+}
+
+fn objective_deltas_for_vectors(
+    objective_set: &ObjectiveSetRecord,
+    challenger: &ScoreVectorRecord,
+    incumbent: &ScoreVectorRecord,
+) -> BTreeMap<String, f64> {
+    objective_set
+        .objectives
+        .iter()
+        .filter_map(|objective| {
+            let left = challenger.objective_value(&objective.name)?;
+            let right = incumbent.objective_value(&objective.name)?;
+            Some((
+                objective.name.clone(),
+                (left - right) * objective_direction_multiplier(&objective.direction),
+            ))
+        })
+        .collect()
+}
+
+fn objective_values_as_f64(values: &Map<String, Value>) -> BTreeMap<String, f64> {
+    values
+        .iter()
+        .filter_map(|(objective, value)| value.as_f64().map(|score| (objective.clone(), score)))
+        .collect()
+}
+
+fn best_objective_delta(deltas: &BTreeMap<String, f64>) -> (String, f64) {
+    deltas
+        .iter()
+        .max_by(|left, right| {
+            left.1
+                .partial_cmp(right.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.0.cmp(left.0))
+        })
+        .map(|(objective, delta)| (objective.clone(), *delta))
+        .unwrap_or_else(|| ("".to_string(), 0.0))
+}
+
+fn protected_objectives(
+    config: &GepaObjectiveAcceptanceConfig,
+    deltas: &BTreeMap<String, f64>,
+) -> Vec<String> {
+    let configured = config
+        .protected_objectives
+        .iter()
+        .map(|objective| objective.trim())
+        .filter(|objective| !objective.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if configured.is_empty() {
+        deltas.keys().cloned().collect()
+    } else {
+        configured
+    }
 }
 
 fn selection_objective_direction(objective_set: &ObjectiveSetRecord) -> f64 {
@@ -9931,6 +10184,9 @@ fn select_best_train_candidate(
             challenger: &challenger_vector,
             incumbent: &incumbent_vector,
             accept_equal: false,
+            acceptance_criterion: None,
+            objective_acceptance: None,
+            margin: 0.0,
         })?;
         let deterministic_tie_latest = preference.result == "tie" && idx > current_idx;
         if preference.preferred || deterministic_tie_latest {
@@ -10002,6 +10258,9 @@ fn select_best_heldout_candidate(input: HeldoutSelectionInput<'_>) -> Result<Opt
             challenger: &challenger_vector,
             incumbent: &incumbent_vector,
             accept_equal: false,
+            acceptance_criterion: None,
+            objective_acceptance: None,
+            margin: 0.0,
         })?;
         let train_tiebreak_preferred = if preference.result == "tie" {
             let challenger_train_vector = score_vector_for_candidate(CandidateScoreVectorInput {
@@ -10027,6 +10286,9 @@ fn select_best_heldout_candidate(input: HeldoutSelectionInput<'_>) -> Result<Opt
                 challenger: &challenger_train_vector,
                 incumbent: &incumbent_train_vector,
                 accept_equal: false,
+                acceptance_criterion: None,
+                objective_acceptance: None,
+                margin: 0.0,
             })?
             .preferred
         } else {
