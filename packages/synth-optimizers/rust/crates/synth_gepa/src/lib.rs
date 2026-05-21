@@ -510,6 +510,12 @@ enum StoredRuntimeOutcome {
         cache_hit: bool,
         stage: String,
         example_id: String,
+        #[serde(default)]
+        dispatch_wall_seconds: Option<f64>,
+        #[serde(default)]
+        dispatch_chunk_index: Option<usize>,
+        #[serde(default)]
+        dispatch_chunk_size: Option<usize>,
     },
     RolloutBatch {
         outcomes: Vec<StoredRolloutOutcome>,
@@ -527,6 +533,12 @@ struct StoredRolloutOutcome {
     cache_hit: bool,
     stage: String,
     example_id: String,
+    #[serde(default)]
+    dispatch_wall_seconds: Option<f64>,
+    #[serde(default)]
+    dispatch_chunk_index: Option<usize>,
+    #[serde(default)]
+    dispatch_chunk_size: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -2289,6 +2301,9 @@ fn stored_runtime_outcome(outcome: &runtime::RuntimeEffectOutcome) -> Result<Sto
             cache_hit: outcome.cache_hit,
             stage: outcome.stage.clone(),
             example_id: outcome.example_id.clone(),
+            dispatch_wall_seconds: outcome.dispatch_wall_seconds,
+            dispatch_chunk_index: outcome.dispatch_chunk_index,
+            dispatch_chunk_size: outcome.dispatch_chunk_size,
         },
         runtime::RuntimeEffectOutcome::RolloutBatch(outcomes) => {
             StoredRuntimeOutcome::RolloutBatch {
@@ -2304,6 +2319,9 @@ fn stored_runtime_outcome(outcome: &runtime::RuntimeEffectOutcome) -> Result<Sto
                         cache_hit: outcome.cache_hit,
                         stage: outcome.stage.clone(),
                         example_id: outcome.example_id.clone(),
+                        dispatch_wall_seconds: outcome.dispatch_wall_seconds,
+                        dispatch_chunk_index: outcome.dispatch_chunk_index,
+                        dispatch_chunk_size: outcome.dispatch_chunk_size,
                     })
                     .collect(),
             }
@@ -2382,6 +2400,17 @@ fn emit_runtime_job_completed_event(
                 "total_tokens".to_string(),
                 json!(outcome.usage.total_tokens),
             );
+            if let Some(dispatch_wall_seconds) = outcome.dispatch_wall_seconds {
+                fields.insert(
+                    "uncached_dispatch_wall_seconds".to_string(),
+                    json!(dispatch_wall_seconds),
+                );
+                fields.insert(
+                    "uncached_latency_max_seconds".to_string(),
+                    json!(dispatch_wall_seconds),
+                );
+                fields.insert("estimated_effective_concurrency".to_string(), json!(1.0));
+            }
         }
         runtime::RuntimeEffectOutcome::RolloutBatch(outcomes) => {
             let mut usage = UsageTotals::default();
@@ -2389,16 +2418,31 @@ fn emit_runtime_job_completed_event(
             let mut cache_hits = 0usize;
             let mut candidate_ids = BTreeSet::new();
             let mut stages = BTreeMap::<String, usize>::new();
+            let mut dispatch_latencies = Vec::new();
+            let mut max_chunk_index = None::<usize>;
+            let mut max_chunk_size = 0usize;
             for outcome in outcomes {
                 usage.merge(&outcome.usage);
                 cost_usd += outcome.cost_usd;
                 if outcome.cache_hit {
                     cache_hits += 1;
+                } else if let Some(dispatch_wall_seconds) = outcome.dispatch_wall_seconds {
+                    dispatch_latencies.push(dispatch_wall_seconds);
                 }
                 candidate_ids.insert(outcome.candidate_id.clone());
                 *stages.entry(outcome.stage.clone()).or_insert(0) += 1;
+                if let Some(chunk_index) = outcome.dispatch_chunk_index {
+                    max_chunk_index =
+                        Some(max_chunk_index.map_or(chunk_index, |max| max.max(chunk_index)));
+                }
+                if let Some(chunk_size) = outcome.dispatch_chunk_size {
+                    max_chunk_size = max_chunk_size.max(chunk_size);
+                }
             }
             let rollout_count = outcomes.len();
+            dispatch_latencies.sort_by(|left, right| {
+                left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal)
+            });
             fields.insert("runtime_kind".to_string(), json!("rollout_batch"));
             fields.insert("rollout_count".to_string(), json!(rollout_count));
             fields.insert("candidate_count".to_string(), json!(candidate_ids.len()));
@@ -2423,6 +2467,41 @@ fn emit_runtime_job_completed_event(
             fields.insert("cost_usd".to_string(), json!(cost_usd));
             fields.insert("usage".to_string(), serde_json::to_value(&usage)?);
             fields.insert("total_tokens".to_string(), json!(usage.total_tokens));
+            if !dispatch_latencies.is_empty() {
+                let estimated_serial_wall_seconds = dispatch_latencies.iter().sum::<f64>();
+                let effective_concurrency = if wall_seconds > 0.0 {
+                    estimated_serial_wall_seconds / wall_seconds
+                } else {
+                    0.0
+                };
+                fields.insert(
+                    "uncached_latency_p50_seconds".to_string(),
+                    json!(percentile_sorted(&dispatch_latencies, 0.50)),
+                );
+                fields.insert(
+                    "uncached_latency_p95_seconds".to_string(),
+                    json!(percentile_sorted(&dispatch_latencies, 0.95)),
+                );
+                fields.insert(
+                    "uncached_latency_max_seconds".to_string(),
+                    json!(dispatch_latencies.last().copied().unwrap_or(0.0)),
+                );
+                fields.insert(
+                    "estimated_serial_wall_seconds".to_string(),
+                    json!(estimated_serial_wall_seconds),
+                );
+                fields.insert(
+                    "estimated_effective_concurrency".to_string(),
+                    json!(effective_concurrency),
+                );
+                fields.insert("max_dispatch_chunk_size".to_string(), json!(max_chunk_size));
+                if let Some(max_chunk_index) = max_chunk_index {
+                    fields.insert(
+                        "dispatch_chunk_count".to_string(),
+                        json!(max_chunk_index.saturating_add(1)),
+                    );
+                }
+            }
         }
     }
 
@@ -2465,6 +2544,9 @@ fn runtime_throughput_warning_fields(fields: &Map<String, Value>) -> Option<Map<
     }
     let observed_per_second = cache_misses as f64 / wall_seconds;
     let expected_min_per_second = workers as f64 * 0.05;
+    let effective_concurrency = fields
+        .get("estimated_effective_concurrency")
+        .and_then(Value::as_f64);
     if observed_per_second >= expected_min_per_second {
         return None;
     }
@@ -2480,6 +2562,13 @@ fn runtime_throughput_warning_fields(fields: &Map<String, Value>) -> Option<Map<
         "rollout_submission_mode",
         "job_id",
         "generation",
+        "uncached_latency_p50_seconds",
+        "uncached_latency_p95_seconds",
+        "uncached_latency_max_seconds",
+        "estimated_serial_wall_seconds",
+        "estimated_effective_concurrency",
+        "dispatch_chunk_count",
+        "max_dispatch_chunk_size",
     ] {
         if let Some(value) = fields.get(key) {
             warning.insert(key.to_string(), value.clone());
@@ -2495,9 +2584,38 @@ fn runtime_throughput_warning_fields(fields: &Map<String, Value>) -> Option<Map<
     );
     warning.insert(
         "diagnostic".to_string(),
-        json!("rollout throughput is low for the configured worker count; check container semaphore, provider throttling, or synchronous container bottlenecks"),
+        json!(rollout_throughput_diagnostic(
+            effective_concurrency,
+            workers as f64
+        )),
     );
     Some(warning)
+}
+
+fn percentile_sorted(values: &[f64], percentile: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let index =
+        ((values.len().saturating_sub(1)) as f64 * percentile.clamp(0.0, 1.0)).round() as usize;
+    values[index.min(values.len().saturating_sub(1))]
+}
+
+fn rollout_throughput_diagnostic(effective_concurrency: Option<f64>, workers: f64) -> String {
+    let Some(effective_concurrency) = effective_concurrency else {
+        return "rollout throughput is low for the configured worker count; check container semaphore, provider throttling, or synchronous container bottlenecks".to_string();
+    };
+    if effective_concurrency < workers * 0.25 {
+        format!(
+            "rollout throughput is low and estimated effective concurrency is {:.1} vs configured workers {:.0}; check container semaphore, provider throttling, synchronous container bottlenecks, or rollout chunking",
+            effective_concurrency, workers
+        )
+    } else {
+        format!(
+            "rollout throughput is low despite estimated effective concurrency {:.1} vs configured workers {:.0}; likely high per-rollout provider latency or provider throttling",
+            effective_concurrency, workers
+        )
+    }
 }
 
 fn runtime_outcome_from_job(job: &OptimizerJob) -> Result<StoredRuntimeOutcome> {
@@ -3319,6 +3437,7 @@ fn consume_completed_runtime_job(
             cache_hit,
             stage,
             example_id,
+            ..
         } => {
             consume_rollout_outcome(
                 context, state, resources, None, response, reward, usage, cost_usd, cache_key,

@@ -472,8 +472,9 @@ fn terminal_runtime_job_completed_line(fields: &Value) -> String {
             let avg = field_f64(fields, "avg_wall_seconds_per_rollout")
                 .map(fmt_seconds)
                 .unwrap_or_else(|| "-".to_string());
+            let diagnostics = runtime_rollout_diagnostics_suffix(fields);
             format!(
-                "  rollout runtime stage={} mode={} workers={} candidates={} rollouts={} cache={}/{} wall={} avg={} tokens={}",
+                "  rollout runtime stage={} mode={} workers={} candidates={} rollouts={} cache={}/{} wall={} avg={} tokens={}{}",
                 field_str(fields, "stage").unwrap_or("mixed"),
                 field_str(fields, "rollout_submission_mode").unwrap_or("-"),
                 field_usize(fields, "configured_rollout_workers").unwrap_or(0),
@@ -483,7 +484,8 @@ fn terminal_runtime_job_completed_line(fields: &Value) -> String {
                 cache_hits + cache_misses,
                 fmt_seconds(field_f64(fields, "wall_seconds").unwrap_or(0.0)),
                 avg,
-                fmt_tokens_millions(field_u64(fields, "total_tokens").unwrap_or(0))
+                fmt_tokens_millions(field_u64(fields, "total_tokens").unwrap_or(0)),
+                diagnostics,
             )
         }
         _ => format!(
@@ -496,15 +498,34 @@ fn terminal_runtime_job_completed_line(fields: &Value) -> String {
 
 fn terminal_runtime_throughput_warning_line(fields: &Value) -> String {
     format!(
-        "  warning: rollout throughput low stage={} mode={} workers={} uncached={} wall={} throughput={}/s expected>={}/s",
+        "  warning: rollout throughput low stage={} mode={} workers={} uncached={} wall={} throughput={}/s expected>={}/s eff_conc={}",
         field_str(fields, "stage").unwrap_or("mixed"),
         field_str(fields, "rollout_submission_mode").unwrap_or("-"),
         field_usize(fields, "configured_rollout_workers").unwrap_or(0),
         field_usize(fields, "cache_misses").unwrap_or(0),
         fmt_seconds(field_f64(fields, "wall_seconds").unwrap_or(0.0)),
         fmt_rate(field_f64(fields, "observed_uncached_rollouts_per_second").unwrap_or(0.0)),
-        fmt_rate(field_f64(fields, "expected_min_uncached_rollouts_per_second").unwrap_or(0.0))
+        fmt_rate(field_f64(fields, "expected_min_uncached_rollouts_per_second").unwrap_or(0.0)),
+        field_f64(fields, "estimated_effective_concurrency")
+            .map(|value| format!("{value:.1}"))
+            .unwrap_or_else(|| "-".to_string())
     )
+}
+
+fn runtime_rollout_diagnostics_suffix(fields: &Value) -> String {
+    let Some(effective_concurrency) = field_f64(fields, "estimated_effective_concurrency") else {
+        return String::new();
+    };
+    let p50 = field_f64(fields, "uncached_latency_p50_seconds")
+        .map(fmt_seconds)
+        .unwrap_or_else(|| "-".to_string());
+    let p95 = field_f64(fields, "uncached_latency_p95_seconds")
+        .map(fmt_seconds)
+        .unwrap_or_else(|| "-".to_string());
+    let max = field_f64(fields, "uncached_latency_max_seconds")
+        .map(fmt_seconds)
+        .unwrap_or_else(|| "-".to_string());
+    format!(" eff_conc={effective_concurrency:.1} lat[p50/p95/max]={p50}/{p95}/{max}")
 }
 
 fn terminal_finished_line(fields: &Value) -> String {

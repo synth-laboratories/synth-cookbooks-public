@@ -272,6 +272,9 @@ pub struct RuntimeRolloutOutcome {
     pub cache_hit: bool,
     pub stage: String,
     pub example_id: String,
+    pub dispatch_wall_seconds: Option<f64>,
+    pub dispatch_chunk_index: Option<usize>,
+    pub dispatch_chunk_size: Option<usize>,
 }
 
 pub struct GepaRuntimeExecutor<'a> {
@@ -390,6 +393,16 @@ impl<'a> GepaRuntimeExecutor<'a> {
         let wall_seconds = dispatch_started.elapsed().as_secs_f64();
         let (usage, cost_usd, rollout_count, mut metadata) = terminal_metadata(&outcome);
         metadata.insert("wall_seconds".to_string(), json!(wall_seconds));
+        if let Some(estimated_serial_wall_seconds) = metadata
+            .get("estimated_serial_wall_seconds")
+            .and_then(Value::as_f64)
+            .filter(|_| wall_seconds > 0.0)
+        {
+            metadata.insert(
+                "estimated_effective_concurrency".to_string(),
+                json!(estimated_serial_wall_seconds / wall_seconds),
+            );
+        }
         if rollout_count > 0 {
             metadata.insert(
                 "avg_wall_seconds_per_rollout".to_string(),
@@ -561,6 +574,7 @@ impl<'a> GepaRuntimeExecutor<'a> {
     ) -> Result<RuntimeEffectOutcome> {
         let cache_request = rollout_cache_request(&request);
         let dispatch_config = RolloutDispatchConfig::from_config(self.config);
+        let dispatch_started = Instant::now();
         let call = cached_profiled_call_with_access(
             self.cache,
             &cache_namespace,
@@ -569,16 +583,19 @@ impl<'a> GepaRuntimeExecutor<'a> {
             cache_metadata,
             || dispatch_rollout(self.client, &request, &dispatch_config),
         )?;
-        Ok(RuntimeEffectOutcome::Rollout(Box::new(
-            rollout_outcome_from_value(
-                candidate_id,
-                call.value,
-                call.cache_key,
-                call.cache_hit,
-                stage,
-                example_id,
-            )?,
-        )))
+        let dispatch_wall_seconds = dispatch_started.elapsed().as_secs_f64();
+        let mut outcome = rollout_outcome_from_value(
+            candidate_id,
+            call.value,
+            call.cache_key,
+            call.cache_hit,
+            stage,
+            example_id,
+        )?;
+        if !outcome.cache_hit {
+            outcome.dispatch_wall_seconds = Some(dispatch_wall_seconds);
+        }
+        Ok(RuntimeEffectOutcome::Rollout(Box::new(outcome)))
     }
 
     fn execute_rollout_batch_dispatch(
@@ -620,19 +637,21 @@ impl<'a> GepaRuntimeExecutor<'a> {
 
         let concurrency = rollout_concurrency(self.config).max(1);
         let dispatch_config = RolloutDispatchConfig::from_config(self.config);
-        for chunk in misses.chunks(concurrency) {
+        for (chunk_index, chunk) in misses.chunks(concurrency).enumerate() {
             let mut handles = Vec::with_capacity(chunk.len());
             for miss in chunk.iter().cloned() {
                 let client = self.client.clone();
                 let dispatch_config = dispatch_config.clone();
                 handles.push(thread::spawn(move || {
+                    let started = Instant::now();
                     let response =
                         dispatch_rollout(&client, &miss.rollout.request, &dispatch_config)?;
-                    Ok::<_, OptimizerError>((miss, response))
+                    Ok::<_, OptimizerError>((miss, response, started.elapsed().as_secs_f64()))
                 }));
             }
+            let chunk_size = chunk.len();
             for handle in handles {
-                let (miss, value) = handle.join().map_err(|_| {
+                let (miss, value, dispatch_wall_seconds) = handle.join().map_err(|_| {
                     OptimizerError::Invariant("rollout worker thread panicked".to_string())
                 })??;
                 self.cache.put_with_metadata(
@@ -643,14 +662,18 @@ impl<'a> GepaRuntimeExecutor<'a> {
                     &cache_profile,
                     miss.rollout.cache_metadata.clone(),
                 )?;
-                outcomes[miss.index] = Some(rollout_outcome_from_value(
+                let mut outcome = rollout_outcome_from_value(
                     miss.rollout.candidate_id,
                     value,
                     miss.cache_key,
                     false,
                     miss.rollout.stage,
                     miss.rollout.example_id,
-                )?);
+                )?;
+                outcome.dispatch_wall_seconds = Some(dispatch_wall_seconds);
+                outcome.dispatch_chunk_index = Some(chunk_index);
+                outcome.dispatch_chunk_size = Some(chunk_size);
+                outcomes[miss.index] = Some(outcome);
             }
         }
 
@@ -905,6 +928,9 @@ fn rollout_outcome_from_value(
         cache_hit,
         stage,
         example_id,
+        dispatch_wall_seconds: None,
+        dispatch_chunk_index: None,
+        dispatch_chunk_size: None,
     })
 }
 
@@ -956,6 +982,16 @@ fn terminal_metadata(
             metadata.insert("reward".to_string(), json!(outcome.reward));
             metadata.insert("stage".to_string(), json!(&outcome.stage));
             metadata.insert("example_id".to_string(), json!(&outcome.example_id));
+            if let Some(dispatch_wall_seconds) = outcome.dispatch_wall_seconds {
+                metadata.insert(
+                    "uncached_dispatch_wall_seconds".to_string(),
+                    json!(dispatch_wall_seconds),
+                );
+                metadata.insert(
+                    "estimated_serial_wall_seconds".to_string(),
+                    json!(dispatch_wall_seconds),
+                );
+            }
             (outcome.usage.clone(), outcome.cost_usd, 1, metadata)
         }
         RuntimeEffectOutcome::RolloutBatch(outcomes) => {
@@ -963,14 +999,20 @@ fn terminal_metadata(
             let mut cost_usd = 0.0;
             let mut cache_hits = 0usize;
             let mut stages = BTreeMap::<String, usize>::new();
+            let mut dispatch_latencies = Vec::new();
             for outcome in outcomes {
                 usage.merge(&outcome.usage);
                 cost_usd += outcome.cost_usd;
                 if outcome.cache_hit {
                     cache_hits += 1;
+                } else if let Some(dispatch_wall_seconds) = outcome.dispatch_wall_seconds {
+                    dispatch_latencies.push(dispatch_wall_seconds);
                 }
                 *stages.entry(outcome.stage.clone()).or_insert(0) += 1;
             }
+            dispatch_latencies.sort_by(|left, right| {
+                left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal)
+            });
             let mut metadata = Map::new();
             metadata.insert("rollout_count".to_string(), json!(outcomes.len()));
             metadata.insert("cache_hits".to_string(), json!(cache_hits));
@@ -979,9 +1021,36 @@ fn terminal_metadata(
                 json!(outcomes.len().saturating_sub(cache_hits)),
             );
             metadata.insert("stages".to_string(), json!(stages));
+            if !dispatch_latencies.is_empty() {
+                metadata.insert(
+                    "uncached_latency_p50_seconds".to_string(),
+                    json!(percentile_sorted(&dispatch_latencies, 0.50)),
+                );
+                metadata.insert(
+                    "uncached_latency_p95_seconds".to_string(),
+                    json!(percentile_sorted(&dispatch_latencies, 0.95)),
+                );
+                metadata.insert(
+                    "uncached_latency_max_seconds".to_string(),
+                    json!(dispatch_latencies.last().copied().unwrap_or(0.0)),
+                );
+                metadata.insert(
+                    "estimated_serial_wall_seconds".to_string(),
+                    json!(dispatch_latencies.iter().sum::<f64>()),
+                );
+            }
             (usage, cost_usd, outcomes.len() as u64, metadata)
         }
     }
+}
+
+fn percentile_sorted(values: &[f64], percentile: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let index =
+        ((values.len().saturating_sub(1)) as f64 * percentile.clamp(0.0, 1.0)).round() as usize;
+    values[index.min(values.len().saturating_sub(1))]
 }
 
 fn proposed_candidates(response: &Value) -> Vec<ProposedCandidate> {
