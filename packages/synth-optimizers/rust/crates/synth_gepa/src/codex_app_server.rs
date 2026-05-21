@@ -345,23 +345,108 @@ Rules:
 fn proposal_request(input: &CodexProposerInput<'_>) -> Value {
     let proposal_count = input.config.gepa.proposals_per_generation;
     let pareto_front = compute_pareto_front(input);
-    let merge_count = if pareto_front.members.len() >= 2 {
+    let members = sorted_pareto_member_ids(input, &pareto_front);
+    let merge_count = if members.len() >= 2 {
         proposal_count / 3
     } else {
         0
     };
+    let merge_pairs = merge_candidate_pairs(&members);
+    let merge_common_ancestors = merge_pairs
+        .iter()
+        .map(|pair| {
+            (
+                pair.join("+"),
+                common_ancestor_id(input, &[pair[0].clone(), pair[1].clone()]),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     json!({
         "proposal_count": proposal_count,
         "proposals_per_round": proposal_count,
         "frontier_variations": proposal_count.saturating_sub(merge_count),
         "frontier_merges": merge_count,
+        "variation_parent_candidate_ids": members,
+        "merge_candidate_pairs": merge_pairs,
+        "merge_common_ancestors": merge_common_ancestors,
+        "frontier_cells": pareto_front.cells.iter().take(200).cloned().collect::<Vec<_>>(),
+        "frontier_type": pareto_front.frontier_type,
         "target_modules": input.config.candidate.target_modules,
         "parent_candidate_id": input.parent.candidate_id,
         "candidate_selector": candidate_selector_read_model(input),
         "batch_sampler": batch_sampler_read_model(input),
         "acceptance": acceptance_read_model(input),
         "seed_pool_counts": seed_pool_counts(input),
+        "instructions": "Create exactly proposals_per_round distinct candidates. Use frontier_variation for one Pareto-front parent and frontier_merge to combine two complementary Pareto-front parents from merge_candidate_pairs. If no merge pairs are available, replace requested merges with additional frontier variations.",
     })
+}
+
+fn sorted_pareto_member_ids(
+    input: &CodexProposerInput<'_>,
+    front: &CodexParetoFront,
+) -> Vec<String> {
+    let mut members = front.members.iter().cloned().collect::<Vec<_>>();
+    if members.is_empty() {
+        members = input
+            .candidates
+            .iter()
+            .map(|candidate| candidate.candidate_id.clone())
+            .collect();
+    }
+    members.sort_by(|left, right| {
+        let left_wins = front.win_counts.get(left).copied().unwrap_or(0);
+        let right_wins = front.win_counts.get(right).copied().unwrap_or(0);
+        right_wins.cmp(&left_wins).then_with(|| left.cmp(right))
+    });
+    members
+}
+
+fn merge_candidate_pairs(members: &[String]) -> Vec<Vec<String>> {
+    let mut pairs = Vec::new();
+    for (left_index, left) in members.iter().enumerate() {
+        for right in members.iter().skip(left_index + 1) {
+            pairs.push(vec![left.clone(), right.clone()]);
+        }
+    }
+    pairs
+}
+
+fn common_ancestor_id(input: &CodexProposerInput<'_>, candidate_ids: &[String]) -> String {
+    let Some(first) = candidate_ids.first() else {
+        return String::new();
+    };
+    let chains = candidate_ids
+        .iter()
+        .map(|candidate_id| ancestor_chain(input, candidate_id))
+        .collect::<Vec<_>>();
+    for candidate_id in ancestor_chain(input, first) {
+        if chains
+            .iter()
+            .all(|chain| chain.iter().any(|item| item == &candidate_id))
+        {
+            return candidate_id;
+        }
+    }
+    first.clone()
+}
+
+fn ancestor_chain(input: &CodexProposerInput<'_>, candidate_id: &str) -> Vec<String> {
+    let mut chain = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut current = candidate_id.to_string();
+    while seen.insert(current.clone()) {
+        chain.push(current.clone());
+        let Some(parent_id) = input
+            .candidates
+            .iter()
+            .find(|candidate| candidate.candidate_id == current)
+            .and_then(|candidate| candidate.parent_id.clone())
+        else {
+            break;
+        };
+        current = parent_id;
+    }
+    chain
 }
 
 fn candidate_selector_read_model(input: &CodexProposerInput<'_>) -> Value {
