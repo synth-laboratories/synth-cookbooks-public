@@ -2438,6 +2438,23 @@ impl WorkspaceStore {
         Ok(())
     }
 
+    pub fn record_evidence_frames_and_plan_links(
+        &mut self,
+        run_id: &str,
+        evidence_frames: &[EvidenceFrame],
+        plan_links: &[PlanLinkRecord],
+    ) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        for frame in evidence_frames {
+            upsert_evidence_frame_tx(&tx, run_id, frame)?;
+        }
+        for link in plan_links {
+            upsert_plan_link_tx(&tx, run_id, link)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn record_manifest(
         &self,
         run_id: &str,

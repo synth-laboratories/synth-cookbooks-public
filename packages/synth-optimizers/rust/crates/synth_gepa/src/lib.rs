@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -12,19 +13,20 @@ use synth_optimizer_platform::limits::{
     RuntimeEffectAdmissionInput, RuntimeEffectAdmissionRecord, RuntimeEffectBudgetEstimate,
 };
 use synth_optimizer_platform::{
-    dataset_row_identity, normalize_event_feed, ArtifactPaths, CacheMode, CacheProfileRecord,
-    CandidateOverlay, CheckpointInput, CheckpointRecord, ConfiguredGepaRunLimits, ContainerClient,
-    ContainerContractSnapshotInput, ContainerContractSnapshotRecord, DatasetResponse,
-    DatasetRowsRequest, DatasetRowsResponse, DatasetSnapshotInput, DatasetSnapshotRecord,
-    EvaluationCacheRecord, EvaluationCacheRecordInput, EventWriter, FailurePayload,
-    GepaBatchSamplerConfig, GepaCandidateSelectorConfig, GepaObjectiveAcceptanceConfig,
-    GepaRunResult, LeverBundle, LeverManifest, ManagedContainerProcess, MaterializationRecord,
-    MaterializationRecordInput, ObjectiveScore, ObjectiveSetRecord, ObjectiveSpec, OptimizerError,
-    OptimizerJob, OptimizerJobKind, OptimizerJobStatus, OptimizerRunState, OptimizerStateMachine,
-    OptimizerTransition, OptimizerTransitionTrigger, ParetoComparisonRecord,
-    PromptCandidatePayload, PromptProgram, PromptProgramSnapshotInput, PromptProgramSnapshotRecord,
-    RequestCache, ResolvedRunConfigInput, ResolvedRunConfigRecord, Result,
-    RolloutMaterializationIdentity, RunRegistry, RunRegistryEntry, RuntimeEffectInput,
+    dataset_row_identity, normalize_event_feed, ArtifactPaths, ArtifactRef, CacheMode,
+    CacheProfileRecord, CandidateOverlay, CheckpointInput, CheckpointRecord,
+    ConfiguredGepaRunLimits, ContainerClient, ContainerContractSnapshotInput,
+    ContainerContractSnapshotRecord, DatasetResponse, DatasetRowsRequest, DatasetRowsResponse,
+    DatasetSnapshotInput, DatasetSnapshotRecord, EvaluationCacheRecord, EvaluationCacheRecordInput,
+    EventWriter, EvidenceFrame, FailurePayload, GepaBatchSamplerConfig,
+    GepaCandidateSelectorConfig, GepaObjectiveAcceptanceConfig, GepaRunResult, LeverBundle,
+    LeverManifest, ManagedContainerProcess, MaterializationRecord, MaterializationRecordInput,
+    ObjectiveScore, ObjectiveSetRecord, ObjectiveSpec, OptimizerError, OptimizerJob,
+    OptimizerJobKind, OptimizerJobStatus, OptimizerRunState, OptimizerStateMachine,
+    OptimizerTransition, OptimizerTransitionTrigger, ParetoComparisonRecord, PlanLinkInput,
+    PlanLinkRecord, PromptCandidatePayload, PromptProgram, PromptProgramSnapshotInput,
+    PromptProgramSnapshotRecord, RequestCache, ResolvedRunConfigInput, ResolvedRunConfigRecord,
+    Result, RolloutMaterializationIdentity, RunRegistry, RunRegistryEntry, RuntimeEffectInput,
     RuntimeEffectRecord, ScoreVectorRecord, SensorFrame, SensorScoreRecords, StopperStateInput,
     StopperStateRecord, SynthOptimizerConfig, UsageLedgerInput, UsageLedgerRecord, WorkspaceStore,
 };
@@ -491,6 +493,8 @@ impl GepaActiveCandidateEvaluation {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum StoredRuntimeOutcome {
     Proposer {
+        #[serde(default)]
+        response: Value,
         proposals: Vec<ProposedCandidate>,
         usage: UsageTotals,
         cost_usd: f64,
@@ -2269,6 +2273,7 @@ fn advance_pending_runtime_job(
 fn stored_runtime_outcome(outcome: &runtime::RuntimeEffectOutcome) -> Result<StoredRuntimeOutcome> {
     Ok(match outcome {
         runtime::RuntimeEffectOutcome::Proposer(outcome) => StoredRuntimeOutcome::Proposer {
+            response: outcome.response.clone(),
             proposals: outcome.proposals.clone(),
             usage: outcome.usage.clone(),
             cost_usd: outcome.cost_usd,
@@ -3285,6 +3290,7 @@ fn consume_completed_runtime_job(
     let outcome = runtime_outcome_from_job(&job)?;
     match outcome {
         StoredRuntimeOutcome::Proposer {
+            response,
             proposals,
             usage,
             cost_usd,
@@ -3292,7 +3298,16 @@ fn consume_completed_runtime_job(
             workspace,
         } => {
             consume_proposer_outcome(
-                context, state, resources, proposals, usage, cost_usd, backend, workspace,
+                context,
+                state,
+                resources,
+                &job.job_id,
+                response,
+                proposals,
+                usage,
+                cost_usd,
+                backend,
+                workspace,
             )?;
         }
         StoredRuntimeOutcome::Rollout {
@@ -3363,6 +3378,8 @@ fn consume_proposer_outcome(
     context: &mut GepaRunContext,
     state: &mut GepaRunState,
     _resources: &GepaStepResources,
+    job_id: &str,
+    response: Value,
     proposals: Vec<ProposedCandidate>,
     usage: UsageTotals,
     cost_usd: f64,
@@ -3407,6 +3424,15 @@ fn consume_proposer_outcome(
         active.generation,
         &outcome,
     )?);
+    record_proposer_workspace_evidence(
+        context,
+        job_id,
+        &parent.candidate_id,
+        active.generation,
+        &proposals,
+        &response,
+        workspace.as_deref(),
+    )?;
     let mut metadata = Map::new();
     metadata.insert("stage".to_string(), Value::String("proposer".to_string()));
     metadata.insert("generation".to_string(), json!(active.generation));
@@ -3453,6 +3479,172 @@ fn consume_proposer_outcome(
         )?;
     }
     Ok(())
+}
+
+fn record_proposer_workspace_evidence(
+    context: &mut GepaRunContext,
+    job_id: &str,
+    parent_candidate_id: &str,
+    generation: usize,
+    proposals: &[ProposedCandidate],
+    response: &Value,
+    workspace: Option<&str>,
+) -> Result<()> {
+    let artifact_refs = proposer_workspace_artifact_refs(context, workspace)?;
+    if !artifact_refs.is_empty() {
+        context
+            .workspace
+            .record_artifact_refs(&context.config.run.run_id, &artifact_refs)?;
+    }
+
+    let proposed_candidate_ids = proposals
+        .iter()
+        .map(|proposal| candidate_id(&proposal.payload_map()))
+        .collect::<Vec<_>>();
+    let manifest = response.get("manifest").cloned().unwrap_or(Value::Null);
+    let manifest_evidence = manifest.get("evidence").cloned().unwrap_or(Value::Null);
+    let artifact_values = artifact_refs
+        .iter()
+        .map(|artifact| {
+            json!({
+                "path": artifact.path,
+                "kind": artifact.kind,
+                "sha256": artifact.sha256,
+                "bytes": artifact.bytes,
+                "retention": artifact.retention,
+            })
+        })
+        .collect::<Vec<_>>();
+    let frame_id = format!("evidence:gepa_proposer_output:{job_id}");
+    let mut metadata = Map::new();
+    metadata.insert("generation".to_string(), json!(generation));
+    metadata.insert(
+        "parent_candidate_id".to_string(),
+        json!(parent_candidate_id),
+    );
+    metadata.insert("proposal_count".to_string(), json!(proposals.len()));
+    metadata.insert("artifact_count".to_string(), json!(artifact_refs.len()));
+    if let Some(workspace) = workspace {
+        metadata.insert("workspace".to_string(), json!(workspace));
+    }
+    let frame = EvidenceFrame {
+        schema_version: "evidence_frame.v1".to_string(),
+        evidence_frame_id: frame_id.clone(),
+        subject_type: "proposer_job".to_string(),
+        subject_id: job_id.to_string(),
+        candidate_id: Some(parent_candidate_id.to_string()),
+        sensor_frame_id: None,
+        kind: "gepa_proposer_output".to_string(),
+        source: "codex_app_server".to_string(),
+        summary: format!(
+            "GEPA proposer job {job_id} returned {} proposals for generation {generation}",
+            proposals.len()
+        ),
+        score: None,
+        severity: "info".to_string(),
+        evidence: json!({
+            "schema_version": "gepa_proposer_output_evidence.v1",
+            "generation": generation,
+            "parent_candidate_id": parent_candidate_id,
+            "proposal_count": proposals.len(),
+            "proposed_candidate_ids": proposed_candidate_ids,
+            "workspace": workspace,
+            "manifest": manifest,
+            "manifest_evidence": manifest_evidence,
+            "artifact_refs": artifact_values,
+        }),
+        metadata,
+    };
+
+    let mut plan_links = Vec::new();
+    for artifact in &artifact_refs {
+        plan_links.push(proposer_artifact_plan_link(
+            job_id,
+            artifact,
+            generation,
+            "subagent_artifact",
+        ));
+    }
+    plan_links.push(PlanLinkRecord::from_input(PlanLinkInput {
+        source_type: "evidence_frame",
+        source_id: &frame.evidence_frame_id,
+        target_type: "proposer_job",
+        target_id: job_id,
+        relation: "evidence_source",
+        status: "active",
+        confidence: 1.0,
+        metadata: json_map(vec![
+            ("evidence_kind", json!("gepa_proposer_output")),
+            ("generation", json!(generation)),
+        ]),
+    }));
+    context.workspace.record_evidence_frames_and_plan_links(
+        &context.config.run.run_id,
+        &[frame],
+        &plan_links,
+    )?;
+    Ok(())
+}
+
+fn proposer_workspace_artifact_refs(
+    context: &GepaRunContext,
+    workspace: Option<&str>,
+) -> Result<Vec<ArtifactRef>> {
+    let Some(workspace) = workspace else {
+        return Ok(Vec::new());
+    };
+    let workspace = PathBuf::from(workspace);
+    let specs = [
+        ("proposal/manifest.json", "proposal_manifest"),
+        (
+            "state/workspace_pack_manifest.json",
+            "workspace_pack_manifest",
+        ),
+        (".agent_artifacts/opencode_session.json", "agent_session"),
+        (".agent_artifacts/opencode_messages.json", "agent_messages"),
+        (".agent_artifacts/opencode_response.json", "agent_response"),
+        (".agent_artifacts/opencode_sse_events.jsonl", "agent_events"),
+    ];
+    let mut refs = Vec::new();
+    for (relative, kind) in specs {
+        let path = workspace.join(relative);
+        let Ok(metadata) = fs::metadata(&path) else {
+            continue;
+        };
+        if metadata.is_file() {
+            refs.push(context.paths.artifact_ref(&path, kind, "run_evidence")?);
+        }
+    }
+    Ok(refs)
+}
+
+fn proposer_artifact_plan_link(
+    job_id: &str,
+    artifact: &ArtifactRef,
+    generation: usize,
+    relation: &str,
+) -> PlanLinkRecord {
+    PlanLinkRecord::from_input(PlanLinkInput {
+        source_type: "proposer_job",
+        source_id: job_id,
+        target_type: "artifact",
+        target_id: &artifact.path,
+        relation,
+        status: "active",
+        confidence: 1.0,
+        metadata: json_map(vec![
+            ("artifact_kind", json!(artifact.kind)),
+            ("artifact_sha256", json!(artifact.sha256)),
+            ("generation", json!(generation)),
+        ]),
+    })
+}
+
+fn json_map(items: Vec<(&str, Value)>) -> Map<String, Value> {
+    items
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value))
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]

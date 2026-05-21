@@ -84,13 +84,25 @@ fn run_session(
     let proposals = proposals_from_manifest(&manifest)?;
     let usage = usage_from_message(&final_turn)
         .unwrap_or_else(|| json!({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}));
-    Ok(json!({
+    let response = json!({
         "backend": "codex_app_server",
         "workspace": input.workspace_dir,
         "manifest": manifest,
         "proposals": proposals,
         "usage": usage,
-    }))
+    });
+    write_agent_artifacts(
+        input,
+        model,
+        &thread_id,
+        &turn_id,
+        &thread_response,
+        &final_turn,
+        &response,
+        client,
+    )?;
+    write_workspace_pack_manifest(&input.workspace_dir)?;
+    Ok(response)
 }
 
 fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
@@ -236,6 +248,104 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
         &state_dir.join("reflector_input.json"),
         &reflector_input_read_model(input),
     )?;
+    write_workspace_pack_manifest(&input.workspace_dir)?;
+    Ok(())
+}
+
+fn write_workspace_pack_manifest(workspace_dir: &Path) -> Result<()> {
+    let state_dir = workspace_dir.join("state");
+    fs::create_dir_all(&state_dir).map_err(|source| OptimizerError::io(&state_dir, source))?;
+    let mut files = Vec::new();
+    collect_workspace_files(workspace_dir, workspace_dir, &mut files)?;
+    files.sort_by(|left, right| {
+        left.get("path")
+            .and_then(Value::as_str)
+            .cmp(&right.get("path").and_then(Value::as_str))
+    });
+    write_json(
+        &state_dir.join("workspace_pack_manifest.json"),
+        &json!({
+            "schema_version": "gepa_workspace_pack_manifest.v1",
+            "file_count": files.len(),
+            "files": files,
+        }),
+    )
+}
+
+fn collect_workspace_files(root: &Path, current: &Path, files: &mut Vec<Value>) -> Result<()> {
+    for entry in fs::read_dir(current).map_err(|source| OptimizerError::io(current, source))? {
+        let entry = entry.map_err(|source| OptimizerError::io(current, source))?;
+        let path = entry.path();
+        let relative = path.strip_prefix(root).unwrap_or(&path);
+        if should_skip_workspace_manifest_path(relative) {
+            continue;
+        }
+        let metadata = entry
+            .metadata()
+            .map_err(|source| OptimizerError::io(&path, source))?;
+        if metadata.is_dir() {
+            collect_workspace_files(root, &path, files)?;
+        } else if metadata.is_file() {
+            files.push(json!({
+                "path": relative.to_string_lossy(),
+                "bytes": metadata.len(),
+            }));
+        }
+    }
+    Ok(())
+}
+
+fn should_skip_workspace_manifest_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        let text = component.as_os_str().to_string_lossy();
+        matches!(text.as_ref(), ".codex_home")
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_agent_artifacts(
+    input: &CodexProposerInput<'_>,
+    model: &str,
+    thread_id: &str,
+    turn_id: &str,
+    thread_response: &Value,
+    final_turn: &Value,
+    response: &Value,
+    client: &AppServerClient,
+) -> Result<()> {
+    let artifact_dir = input.workspace_dir.join(".agent_artifacts");
+    fs::create_dir_all(&artifact_dir)
+        .map_err(|source| OptimizerError::io(&artifact_dir, source))?;
+    write_json(
+        &artifact_dir.join("opencode_session.json"),
+        &json!({
+            "schema_version": "gepa_codex_app_server_session.v1",
+            "backend": "codex_app_server",
+            "model": model,
+            "thread_id": thread_id,
+            "turn_id": turn_id,
+            "workspace": input.workspace_dir,
+            "sandbox_mode": input.config.proposer.sandbox_mode,
+            "approval_policy": input.config.proposer.approval_policy,
+            "thread_response": thread_response,
+            "final_turn": final_turn,
+        }),
+    )?;
+    write_json(
+        &artifact_dir.join("opencode_messages.json"),
+        &json!({
+            "schema_version": "gepa_codex_app_server_messages.v1",
+            "sent": client.sent_messages,
+            "received": client.received_messages,
+        }),
+    )?;
+    write_json(&artifact_dir.join("opencode_response.json"), response)?;
+    let mut events = String::new();
+    for message in &client.received_messages {
+        events.push_str(&serde_json::to_string(message)?);
+        events.push('\n');
+    }
+    write_text(&artifact_dir.join("opencode_sse_events.jsonl"), &events)?;
     Ok(())
 }
 
@@ -1413,6 +1523,8 @@ struct AppServerClient {
     buffer: VecDeque<Value>,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
     next_id: u64,
+    sent_messages: Vec<Value>,
+    received_messages: Vec<Value>,
 }
 
 impl AppServerClient {
@@ -1471,6 +1583,8 @@ impl AppServerClient {
             buffer: VecDeque::new(),
             stderr_tail,
             next_id: 1,
+            sent_messages: Vec::new(),
+            received_messages: Vec::new(),
         })
     }
 
@@ -1487,6 +1601,7 @@ impl AppServerClient {
 
     fn send(&mut self, payload: Value) -> Result<()> {
         serde_json::to_writer(&mut self.stdin, &payload)?;
+        self.sent_messages.push(payload);
         self.stdin
             .write_all(b"\n")
             .map_err(|source| OptimizerError::io("codex app-server stdin", source))?;
@@ -1586,7 +1701,13 @@ impl AppServerClient {
             return Ok(message);
         }
         match self.receiver.recv_timeout(deadline - now) {
-            Ok(result) => result,
+            Ok(result) => match result {
+                Ok(message) => {
+                    self.received_messages.push(message.clone());
+                    Ok(message)
+                }
+                Err(error) => Err(error),
+            },
             Err(RecvTimeoutError::Timeout) => Err(OptimizerError::Proposer(format!(
                 "codex app-server timed out waiting for response{}",
                 self.stderr_tail_suffix()
