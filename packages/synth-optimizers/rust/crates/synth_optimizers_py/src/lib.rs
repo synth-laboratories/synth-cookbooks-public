@@ -28,6 +28,7 @@ create_exception!(
 );
 create_exception!(synth_optimizers_py, CancelledError, SynthOptimizerError);
 create_exception!(synth_optimizers_py, EventCompareError, SynthOptimizerError);
+create_exception!(synth_optimizers_py, RunFailedError, SynthOptimizerError);
 create_exception!(synth_optimizers_py, InvariantError, SynthOptimizerError);
 create_exception!(
     synth_optimizers_py,
@@ -527,6 +528,7 @@ fn _synth_optimizers(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<(
         "EventCompareError",
         "synth_optimizer_event_compare_failed",
     )?;
+    add_exception_class::<RunFailedError>(py, module, "RunFailedError", "synth_optimizer_failed")?;
     add_exception_class::<InvariantError>(
         py,
         module,
@@ -631,6 +633,7 @@ fn py_error(error: OptimizerError) -> PyErr {
         OptimizerError::BudgetExceeded { .. } => BudgetExceededError::new_err(message),
         OptimizerError::Cancelled { .. } => CancelledError::new_err(message),
         OptimizerError::EventCompare(_) => EventCompareError::new_err(message),
+        OptimizerError::Failed(_) => RunFailedError::new_err(message),
         OptimizerError::Invariant(_) => InvariantError::new_err(message),
         OptimizerError::StateTransition { .. } => StateTransitionError::new_err(message),
         OptimizerError::Io { .. } => OptimizerIoError::new_err(message),

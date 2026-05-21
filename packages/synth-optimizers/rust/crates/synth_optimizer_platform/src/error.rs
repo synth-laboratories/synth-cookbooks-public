@@ -42,6 +42,8 @@ pub enum OptimizerError {
     Cancelled { request_id: String },
     #[error("event feed compare failed: {0}")]
     EventCompare(String),
+    #[error("optimizer run failed: {0}")]
+    Failed(String),
     #[error("optimizer invariant violated: {0}")]
     Invariant(String),
     #[error("invalid optimizer state transition {from} -> {to} for trigger {trigger}")]
@@ -85,6 +87,7 @@ impl OptimizerError {
             Self::BudgetExceeded { .. } => "synth_optimizer_budget_exceeded",
             Self::Cancelled { .. } => "synth_optimizer_cancelled",
             Self::EventCompare(_) => "synth_optimizer_event_compare_failed",
+            Self::Failed(_) => "synth_optimizer_failed",
             Self::Invariant(_) => "synth_optimizer_invariant_error",
             Self::StateTransition { .. } => "synth_optimizer_state_transition_error",
             Self::Io { .. } => "synth_optimizer_io_error",

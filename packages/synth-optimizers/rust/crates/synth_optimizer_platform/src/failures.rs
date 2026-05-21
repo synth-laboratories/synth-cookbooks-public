@@ -199,6 +199,9 @@ impl FailurePayload {
                 message,
                 false,
             ),
+            OptimizerError::Failed(message) => {
+                Self::new(OptimizerFailureType::Internal, "run_failed", message, false)
+            }
             OptimizerError::Invariant(message) => Self::new(
                 OptimizerFailureType::Invariant,
                 "invariant_violation",

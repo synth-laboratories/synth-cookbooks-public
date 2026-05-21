@@ -1177,7 +1177,7 @@ impl WorkspaceStore {
                 output_dir, run_dir, manifest_path, started_at, updated_at
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'), datetime('now'))
             ON CONFLICT(run_id) DO UPDATE SET
-                state = excluded.state,
+                state = optimization_runs.state,
                 config_json = excluded.config_json,
                 cache_mode = excluded.cache_mode,
                 cache_namespace = excluded.cache_namespace,

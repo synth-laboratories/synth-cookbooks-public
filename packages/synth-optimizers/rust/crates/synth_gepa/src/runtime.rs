@@ -22,6 +22,8 @@ pub const GEPA_RUNTIME_JOB_SCHEMA_VERSION: &str = "gepa_runtime_job.v1";
 const DEFAULT_RUNTIME_WORKER_ID: &str = "gepa_inline_executor";
 const DEFAULT_RUNTIME_LEASE_SECONDS: u64 = 3600;
 const DEFAULT_ROLLOUT_CONCURRENCY: usize = 128;
+const DEFAULT_ROLLOUT_HTTP_RETRIES: usize = 2;
+const DEFAULT_ROLLOUT_RETRY_BACKOFF_MS: u64 = 200;
 
 #[derive(Clone, Debug)]
 pub struct RuntimeEffectExecutorConfig {
@@ -581,7 +583,7 @@ impl<'a> GepaRuntimeExecutor<'a> {
             &cache_request,
             &cache_profile,
             cache_metadata,
-            || dispatch_rollout(self.client, &request, &dispatch_config),
+            || dispatch_rollout_with_retries(self.client, &request, &dispatch_config),
         )?;
         let dispatch_wall_seconds = dispatch_started.elapsed().as_secs_f64();
         let mut outcome = rollout_outcome_from_value(
@@ -644,8 +646,11 @@ impl<'a> GepaRuntimeExecutor<'a> {
                 let dispatch_config = dispatch_config.clone();
                 handles.push(thread::spawn(move || {
                     let started = Instant::now();
-                    let response =
-                        dispatch_rollout(&client, &miss.rollout.request, &dispatch_config)?;
+                    let response = dispatch_rollout_with_retries(
+                        &client,
+                        &miss.rollout.request,
+                        &dispatch_config,
+                    )?;
                     Ok::<_, OptimizerError>((miss, response, started.elapsed().as_secs_f64()))
                 }));
             }
@@ -705,6 +710,8 @@ struct RolloutDispatchConfig {
     submission_mode: String,
     poll_interval: Duration,
     async_timeout: Duration,
+    http_retries: usize,
+    retry_backoff: Duration,
 }
 
 impl RolloutDispatchConfig {
@@ -717,8 +724,27 @@ impl RolloutDispatchConfig {
                 .to_ascii_lowercase(),
             poll_interval: Duration::from_millis(config.gepa.rollout_poll_interval_ms.max(1)),
             async_timeout: Duration::from_secs(config.gepa.rollout_async_timeout_seconds.max(1)),
+            http_retries: env_usize("SYNTH_OPTIMIZERS_GEPA_ROLLOUT_HTTP_RETRIES")
+                .unwrap_or(DEFAULT_ROLLOUT_HTTP_RETRIES)
+                .min(10),
+            retry_backoff: Duration::from_millis(
+                env_u64("SYNTH_OPTIMIZERS_GEPA_ROLLOUT_RETRY_BACKOFF_MS")
+                    .unwrap_or(DEFAULT_ROLLOUT_RETRY_BACKOFF_MS),
+            ),
         }
     }
+}
+
+fn env_usize(name: &str) -> Option<usize> {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+}
+
+fn env_u64(name: &str) -> Option<u64> {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
 }
 
 fn rollout_concurrency(config: &SynthOptimizerConfig) -> usize {
@@ -756,6 +782,31 @@ fn dispatch_rollout(
             "unsupported GEPA rollout submission mode {other:?}"
         ))),
     }
+}
+
+fn dispatch_rollout_with_retries(
+    client: &ContainerClient,
+    request: &Value,
+    config: &RolloutDispatchConfig,
+) -> Result<Value> {
+    let max_attempts = config.http_retries.saturating_add(1);
+    let mut attempt = 0usize;
+    loop {
+        match dispatch_rollout(client, request, config) {
+            Ok(value) => return Ok(value),
+            Err(error)
+                if is_retryable_rollout_dispatch_error(&error) && attempt + 1 < max_attempts =>
+            {
+                attempt += 1;
+                thread::sleep(config.retry_backoff.saturating_mul(attempt as u32));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn is_retryable_rollout_dispatch_error(error: &OptimizerError) -> bool {
+    matches!(error, OptimizerError::Http(_))
 }
 
 fn dispatch_async_rollout(

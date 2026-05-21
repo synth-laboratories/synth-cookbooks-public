@@ -1244,6 +1244,48 @@ fn advance_gepa_once(
     }
 }
 
+fn refresh_terminal_run_projection(
+    context: &mut GepaRunContext,
+    state: &GepaRunState,
+) -> Result<()> {
+    let usage_value = serde_json::to_value(&state.total_usage)?;
+    match state.cursor.phase {
+        GepaCursorPhase::Completed => {
+            if let Some(best_candidate_id) = state
+                .best_idx
+                .and_then(|idx| state.candidates.get(idx))
+                .map(|candidate| candidate.candidate_id.as_str())
+                .or(state.cursor.best_candidate_id.as_deref())
+            {
+                context.workspace.record_run_finished(
+                    &context.config.run.run_id,
+                    best_candidate_id,
+                    state.total_cost,
+                    &usage_value,
+                )?;
+            }
+        }
+        GepaCursorPhase::Failed => {
+            context.workspace.record_run_failed(
+                &context.config.run.run_id,
+                state.cursor.best_candidate_id.as_deref(),
+                state.total_cost,
+                &usage_value,
+            )?;
+        }
+        GepaCursorPhase::Cancelled => {
+            context.workspace.record_run_cancelled_result(
+                &context.config.run.run_id,
+                state.cursor.best_candidate_id.as_deref(),
+                state.total_cost,
+                &usage_value,
+            )?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn advance_gepa_sync_serial_once(
     context: &mut GepaRunContext,
     state: &mut GepaRunState,
@@ -1251,6 +1293,7 @@ fn advance_gepa_sync_serial_once(
     options: &GepaExecutionOptions,
 ) -> Result<GepaAdvanceOutcome> {
     if matches!(state.cursor.phase, GepaCursorPhase::Completed) {
+        refresh_terminal_run_projection(context, state)?;
         let result = state
             .cursor
             .terminal_summary
@@ -1268,6 +1311,7 @@ fn advance_gepa_sync_serial_once(
         });
     }
     if state.cursor.phase.is_terminal() {
+        refresh_terminal_run_projection(context, state)?;
         return Ok(GepaAdvanceOutcome {
             action: planner::GepaTickAction::TerminalizeRun {
                 run_id: context.config.run.run_id.clone(),
@@ -1315,6 +1359,7 @@ fn advance_gepa_async_pipelined_once(
 ) -> Result<GepaAdvanceOutcome> {
     refresh_async_pipeline_cursor_state(context, state, plan);
     if matches!(state.cursor.phase, GepaCursorPhase::Completed) {
+        refresh_terminal_run_projection(context, state)?;
         let result = state
             .cursor
             .terminal_summary
@@ -1332,6 +1377,7 @@ fn advance_gepa_async_pipelined_once(
         });
     }
     if state.cursor.phase.is_terminal() {
+        refresh_terminal_run_projection(context, state)?;
         return Ok(GepaAdvanceOutcome {
             action: planner::GepaTickAction::TerminalizeRun {
                 run_id: context.config.run.run_id.clone(),
@@ -4095,12 +4141,25 @@ fn consume_failed_runtime_job(
         ),
         _ => (GepaCursorPhase::Failed, "failed", "GEPA runtime job failed"),
     };
-    let error_summary = job.payload.get("error").cloned().unwrap_or_else(|| {
-        json!({
-            "error_code": "synth_optimizer_failed",
-            "message": format!("GEPA runtime job {} {}", job.job_id, job.status.as_str()),
+    let error_summary = job
+        .payload
+        .get("error")
+        .cloned()
+        .or_else(|| {
+            job.failure.as_ref().map(|failure| {
+                json!({
+                    "error_code": "synth_optimizer_failed",
+                    "message": format!("GEPA runtime job {} {}: {}", job.job_id, job.status.as_str(), failure.message),
+                    "failure": failure,
+                })
+            })
         })
-    });
+        .unwrap_or_else(|| {
+            json!({
+                "error_code": "synth_optimizer_failed",
+                "message": format!("GEPA runtime job {} {}", job.job_id, job.status.as_str()),
+            })
+        });
     state.cursor.pending_job_id = None;
     state.cursor.pending_effect_id = None;
     state.cursor.pending_reservation_ids.clear();
@@ -6848,12 +6907,113 @@ pub fn execute_gepa_with_options(
             if let Some(result) = outcome.result {
                 return Ok(result);
             }
-            return Err(OptimizerError::Invariant(format!(
-                "GEPA run {} reached terminal state without a result",
-                context.config.run.run_id
-            )));
+            return Err(error_from_terminal_gepa_outcome(
+                &context,
+                &state.cursor,
+                &outcome,
+            ));
         }
     }
+}
+
+fn error_from_terminal_gepa_outcome(
+    context: &GepaRunContext,
+    cursor: &GepaCursor,
+    outcome: &GepaAdvanceOutcome,
+) -> OptimizerError {
+    let run_id = &context.config.run.run_id;
+    if matches!(cursor.phase, GepaCursorPhase::Cancelled) {
+        return OptimizerError::Cancelled {
+            request_id: run_id.to_string(),
+        };
+    }
+    if matches!(cursor.phase, GepaCursorPhase::Failed) {
+        let runtime_failure = latest_failed_runtime_effect_message(&context.workspace, run_id);
+        return OptimizerError::Failed(terminal_failure_message(
+            run_id,
+            cursor,
+            outcome,
+            runtime_failure.as_deref(),
+        ));
+    }
+    OptimizerError::Invariant(format!(
+        "GEPA run {run_id} reached terminal state {} without a result",
+        cursor.phase.as_str()
+    ))
+}
+
+fn terminal_failure_message(
+    run_id: &str,
+    cursor: &GepaCursor,
+    outcome: &GepaAdvanceOutcome,
+    runtime_failure: Option<&str>,
+) -> String {
+    let summary = cursor.error_summary.as_ref();
+    let failure = summary.and_then(|value| value.get("failure"));
+    let failure_message = failure
+        .and_then(|value| value.get("message"))
+        .or_else(|| summary.and_then(|value| value.get("message")))
+        .and_then(Value::as_str)
+        .filter(|message| !message.trim().is_empty());
+    let error_code = failure
+        .and_then(|value| value.get("error_code"))
+        .or_else(|| summary.and_then(|value| value.get("error_code")))
+        .and_then(Value::as_str)
+        .filter(|code| !code.trim().is_empty());
+    let manifest_path = summary
+        .and_then(|value| value.get("failure_manifest_path"))
+        .or_else(|| cursor.metadata.get("failure_manifest_path"))
+        .and_then(Value::as_str)
+        .filter(|path| !path.trim().is_empty());
+
+    let mut message = format!("GEPA run {run_id} failed");
+    if let Some(error_code) = error_code {
+        let _ = write!(message, " ({error_code})");
+    }
+    if let Some(failure_message) = failure_message {
+        let _ = write!(message, ": {failure_message}");
+    } else if !outcome.message.trim().is_empty() {
+        let _ = write!(message, ": {}", outcome.message);
+    }
+    if let Some(runtime_failure) = runtime_failure {
+        if !message.contains(runtime_failure) {
+            let _ = write!(message, "; runtime failure: {runtime_failure}");
+        }
+    }
+    if let Some(manifest_path) = manifest_path {
+        let _ = write!(message, " [manifest: {manifest_path}]");
+    }
+    message
+}
+
+fn latest_failed_runtime_effect_message(
+    workspace: &WorkspaceStore,
+    run_id: &str,
+) -> Option<String> {
+    workspace
+        .view()
+        .runtime_effect_records(run_id)
+        .ok()?
+        .into_iter()
+        .filter(|effect| effect.status == "failed")
+        .max_by(|left, right| left.updated_at.cmp(&right.updated_at))
+        .and_then(|effect| {
+            effect
+                .metadata
+                .get("failure")
+                .and_then(|failure| failure.get("message"))
+                .and_then(Value::as_str)
+                .filter(|message| !message.trim().is_empty())
+                .map(str::to_string)
+                .or_else(|| {
+                    effect
+                        .metadata
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .filter(|message| !message.trim().is_empty())
+                        .map(str::to_string)
+                })
+        })
 }
 
 #[allow(dead_code)]
