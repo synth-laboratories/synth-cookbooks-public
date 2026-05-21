@@ -26,6 +26,7 @@ pub(crate) struct CodexProposerInput<'a> {
     pub parent: &'a CandidateRecord,
     pub candidates: &'a [CandidateRecord],
     pub generation: usize,
+    pub seed_pool_rows: Value,
     pub workspace_dir: PathBuf,
 }
 
@@ -136,6 +137,7 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
     let gepa_summary = gepa_summary_read_model(input, &rollouts);
     let candidate_selector = candidate_selector_read_model(input);
     let batch_sampler = batch_sampler_read_model(input);
+    let seed_pools = seed_pools_read_model(input);
     let algorithm_read_model = json!({
         "schema_version": "gepa_algorithm_read_model_v1",
         "generation": input.generation,
@@ -144,6 +146,8 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
         "proposals_per_round": input.config.gepa.proposals_per_generation,
         "candidate_selector": candidate_selector,
         "batch_sampler": batch_sampler,
+        "seed_pools": seed_pools,
+        "reflection_examples": reflection_examples_read_model(input),
         "parent_payload": parent_payload,
         "candidates": candidates,
         "candidate_deltas": candidate_deltas,
@@ -167,6 +171,7 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
             "proposals_per_generation": input.config.gepa.proposals_per_generation,
             "proposals_per_round": input.config.gepa.proposals_per_generation,
             "parent_candidate_id": input.parent.candidate_id,
+            "seed_pool_counts": seed_pool_counts(input),
         }),
     )?;
     write_json(
@@ -210,6 +215,10 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
     )?;
     write_json(&state_dir.join("links.json"), &links_read_model(input))?;
     write_json(
+        &state_dir.join("seed_pools.json"),
+        &seed_pools_read_model(input),
+    )?;
+    write_json(
         &state_dir.join("algorithm_read_model.json"),
         &algorithm_read_model,
     )?;
@@ -242,9 +251,10 @@ Read:
 5. `state/candidate_deltas.json` for payload differences from the selected parent.
 6. `state/rollouts.json` and `state/scores.json` for per-example rewards and score summaries.
 7. `state/evidence_frames.json`, `state/reflective_frames.json`, and `state/links.json` for durable rollout evidence.
-8. `state/algorithm_read_model.json` for the complete GEPA read model.
-9. `state/pareto_front.json`, `state/gepa_sidecar.json`, and `state/gepa_summary.json` for GEPA-specific mirrors.
-10. `state/parent_payload.json` and `state/reflector_input.json` for the parent prompt and sampled wins/losses.
+8. `state/seed_pools.json` for pareto-eval, minibatch, reflection, and validation row pools.
+9. `state/algorithm_read_model.json` for the complete GEPA read model.
+10. `state/pareto_front.json`, `state/gepa_sidecar.json`, and `state/gepa_summary.json` for GEPA-specific mirrors.
+11. `state/parent_payload.json` and `state/reflector_input.json` for the parent prompt and sampled wins/losses.
 
 Before writing the manifest, inspect those files with shell, Python, or JQ and form a short evidence summary.
 Use a real review workflow: summarize candidate scores and payloads, inspect Pareto membership, inspect rollout wins/losses, inspect the parent payload, then write `proposal/manifest.json`.
@@ -281,6 +291,7 @@ Write `proposal/manifest.json` as strict JSON using this schema:
       "state/scores.json",
       "state/evidence_frames.json",
       "state/reflective_frames.json",
+      "state/seed_pools.json",
       "state/links.json"
     ],
     "candidate_comparison": "Short comparison of parent, Pareto members, and recent candidates.",
@@ -345,6 +356,7 @@ fn proposal_request(input: &CodexProposerInput<'_>) -> Value {
         "parent_candidate_id": input.parent.candidate_id,
         "candidate_selector": candidate_selector_read_model(input),
         "batch_sampler": batch_sampler_read_model(input),
+        "seed_pool_counts": seed_pool_counts(input),
     })
 }
 
@@ -368,6 +380,45 @@ fn batch_sampler_read_model(input: &CodexProposerInput<'_>) -> Value {
         "minibatch_size": input.config.gepa.minibatch_size,
         "proposals_per_round": input.config.gepa.proposals_per_generation,
     })
+}
+
+fn seed_pools_read_model(input: &CodexProposerInput<'_>) -> Value {
+    if input.seed_pool_rows.is_null() {
+        return json!({});
+    }
+    input.seed_pool_rows.clone()
+}
+
+fn seed_pool_counts(input: &CodexProposerInput<'_>) -> Value {
+    let mut counts = Map::new();
+    if let Some(pools) = input.seed_pool_rows.as_object() {
+        for (name, pool) in pools {
+            if name == "schema_version" {
+                continue;
+            }
+            let row_count = pool
+                .get("row_count")
+                .and_then(Value::as_u64)
+                .or_else(|| {
+                    pool.get("rows")
+                        .and_then(Value::as_array)
+                        .map(|rows| rows.len() as u64)
+                })
+                .unwrap_or(0);
+            counts.insert(name.clone(), json!(row_count));
+        }
+    }
+    Value::Object(counts)
+}
+
+fn reflection_examples_read_model(input: &CodexProposerInput<'_>) -> Value {
+    input
+        .seed_pool_rows
+        .get("reflection")
+        .and_then(|pool| pool.get("rows"))
+        .and_then(Value::as_array)
+        .map(|rows| Value::Array(rows.iter().take(40).cloned().collect()))
+        .unwrap_or_else(|| Value::Array(Vec::new()))
 }
 
 fn candidates_read_model(input: &CodexProposerInput<'_>) -> Value {

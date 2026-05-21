@@ -93,6 +93,10 @@ pub struct GepaCursor {
     #[serde(default)]
     pub train_rows: Value,
     #[serde(default)]
+    pub minibatch_rows: Value,
+    #[serde(default)]
+    pub reflection_rows: Value,
+    #[serde(default)]
     pub heldout_rows: Value,
     #[serde(default)]
     pub program: Value,
@@ -135,6 +139,8 @@ impl GepaCursor {
             stopper_sequence: 0,
             checkpoint_sequence: 0,
             train_rows: Value::Array(Vec::new()),
+            minibatch_rows: Value::Array(Vec::new()),
+            reflection_rows: Value::Array(Vec::new()),
             heldout_rows: Value::Array(Vec::new()),
             program: Value::Null,
             objective_set: Value::Null,

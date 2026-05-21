@@ -45,8 +45,8 @@ pub use checkpoints::{CheckpointInput, CheckpointRecord};
 pub use config::{
     CacheConfig, CandidateConfig, ContainerConfig, DatasetConfig, GepaBatchSamplerConfig,
     GepaCandidateSelectorConfig, GepaConfig, GepaPipelineConfig, GepaPipelineMode,
-    GepaPipelineWorkers, GepaStalenessPolicy, PolicyConfig, ProposerConfig, RunConfig,
-    SynthOptimizerConfig,
+    GepaPipelineWorkers, GepaSeedPoolsConfig, GepaStalenessPolicy, PolicyConfig, ProposerConfig,
+    RunConfig, SynthOptimizerConfig,
 };
 pub use configured_limits::{
     ConfiguredGepaRunLimits, GepaRuntimeEffectBudgetEstimates, GEPA_LIMIT_STOP_POLICY,

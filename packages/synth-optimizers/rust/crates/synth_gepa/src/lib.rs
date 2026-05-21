@@ -188,6 +188,7 @@ struct ProposerCall<'a> {
     parent: &'a CandidateRecord,
     candidates: &'a [CandidateRecord],
     generation: usize,
+    seed_pool_rows: Value,
     paths: &'a ArtifactPaths,
 }
 
@@ -307,6 +308,8 @@ struct GepaRunContext {
     program: Option<PromptProgram>,
     objective_set: Option<ObjectiveSetRecord>,
     train_rows: Vec<Value>,
+    minibatch_rows: Vec<Value>,
+    reflection_rows: Vec<Value>,
     heldout_rows: Vec<Value>,
     rollout_task_id: Option<String>,
 }
@@ -317,6 +320,8 @@ struct GepaContainerInputs {
     program: PromptProgram,
     objective_set: ObjectiveSetRecord,
     train_rows: Vec<Value>,
+    minibatch_rows: Vec<Value>,
+    reflection_rows: Vec<Value>,
     heldout_rows: Vec<Value>,
     rollout_task_id: String,
 }
@@ -332,6 +337,8 @@ struct GepaCursorState<'a> {
     candidates: &'a [CandidateRecord],
     best_idx: Option<usize>,
     train_rows: &'a [Value],
+    minibatch_rows: &'a [Value],
+    reflection_rows: &'a [Value],
     heldout_rows: &'a [Value],
     program: &'a PromptProgram,
     objective_set: &'a ObjectiveSetRecord,
@@ -533,6 +540,8 @@ struct GepaStepResources {
     program: PromptProgram,
     objective_set: ObjectiveSetRecord,
     train_rows: Vec<Value>,
+    minibatch_rows: Vec<Value>,
+    reflection_rows: Vec<Value>,
     heldout_rows: Vec<Value>,
     rollout_task_id: String,
 }
@@ -674,6 +683,8 @@ fn open_gepa_run_context(
         program: None,
         objective_set: None,
         train_rows: Vec::new(),
+        minibatch_rows: Vec::new(),
+        reflection_rows: Vec::new(),
         heldout_rows: Vec::new(),
         rollout_task_id: None,
     })
@@ -761,12 +772,29 @@ fn ensure_container_inputs(context: &mut GepaRunContext) -> Result<GepaContainer
         .dataset_id
         .clone()
         .unwrap_or_else(|| "container_dataset".to_string());
+    let seed_pool_seeds = effective_gepa_seed_pool_seeds(&context.config);
+    let pareto_eval_seeds = seed_pool_seeds
+        .get("pareto_eval")
+        .cloned()
+        .unwrap_or_else(|| context.config.dataset.train_seeds.clone());
+    let minibatch_seeds = seed_pool_seeds
+        .get("minibatch")
+        .cloned()
+        .unwrap_or_else(|| pareto_eval_seeds.clone());
+    let reflection_seeds = seed_pool_seeds
+        .get("reflection")
+        .cloned()
+        .unwrap_or_else(|| pareto_eval_seeds.clone());
+    let validation_seeds = seed_pool_seeds
+        .get("validation")
+        .cloned()
+        .unwrap_or_else(|| context.config.dataset.heldout_seeds.clone());
     let train_response = load_rows(
         &client,
         &mut context.cache,
         &context.cache_namespace,
         &context.config.dataset.train_split,
-        &context.config.dataset.train_seeds,
+        &pareto_eval_seeds,
         Value::Object(context.config.dataset.filters.clone()),
     )?;
     let heldout_response = load_rows(
@@ -774,18 +802,46 @@ fn ensure_container_inputs(context: &mut GepaRunContext) -> Result<GepaContainer
         &mut context.cache,
         &context.cache_namespace,
         &context.config.dataset.heldout_split,
-        &context.config.dataset.heldout_seeds,
+        &validation_seeds,
         Value::Object(context.config.dataset.filters.clone()),
     )?;
     let train_rows = train_response.rows.clone();
     let heldout_rows = heldout_response.rows.clone();
+    let minibatch_rows = if minibatch_seeds == pareto_eval_seeds {
+        train_rows.clone()
+    } else {
+        load_rows(
+            &client,
+            &mut context.cache,
+            &context.cache_namespace,
+            &context.config.dataset.train_split,
+            &minibatch_seeds,
+            Value::Object(context.config.dataset.filters.clone()),
+        )?
+        .rows
+    };
+    let reflection_rows = if reflection_seeds == pareto_eval_seeds {
+        train_rows.clone()
+    } else if reflection_seeds == minibatch_seeds {
+        minibatch_rows.clone()
+    } else {
+        load_rows(
+            &client,
+            &mut context.cache,
+            &context.cache_namespace,
+            &context.config.dataset.train_split,
+            &reflection_seeds,
+            Value::Object(context.config.dataset.filters.clone()),
+        )?
+        .rows
+    };
     record_dataset_snapshot(
         &context.workspace,
         DatasetSnapshotCall {
             run_id: &context.config.run.run_id,
             dataset_id: &dataset_id,
             split: &context.config.dataset.train_split,
-            seeds: &context.config.dataset.train_seeds,
+            seeds: &pareto_eval_seeds,
             filters: &Value::Object(context.config.dataset.filters.clone()),
             response: &train_response,
             dataset_metadata: &dataset_value,
@@ -797,7 +853,7 @@ fn ensure_container_inputs(context: &mut GepaRunContext) -> Result<GepaContainer
             run_id: &context.config.run.run_id,
             dataset_id: &dataset_id,
             split: &context.config.dataset.heldout_split,
-            seeds: &context.config.dataset.heldout_seeds,
+            seeds: &validation_seeds,
             filters: &Value::Object(context.config.dataset.filters.clone()),
             response: &heldout_response,
             dataset_metadata: &dataset_value,
@@ -806,7 +862,18 @@ fn ensure_container_inputs(context: &mut GepaRunContext) -> Result<GepaContainer
     context.events.emit(
         "dataset.rows.loaded",
         "Dataset rows loaded",
-        json!({"train_rows": train_rows.len(), "heldout_rows": heldout_rows.len()}),
+        json!({
+            "train_rows": train_rows.len(),
+            "minibatch_rows": minibatch_rows.len(),
+            "reflection_rows": reflection_rows.len(),
+            "heldout_rows": heldout_rows.len(),
+            "seed_pools": {
+                "pareto_eval": pareto_eval_seeds,
+                "minibatch": minibatch_seeds,
+                "reflection": reflection_seeds,
+                "validation": validation_seeds,
+            },
+        }),
     )?;
     let objective_set =
         declared_objective_set(&context.config, &program, &train_rows, &heldout_rows);
@@ -835,7 +902,12 @@ fn ensure_container_inputs(context: &mut GepaRunContext) -> Result<GepaContainer
             OptimizerRunState::Ready,
             OptimizerTransitionTrigger::ContainerReady,
             "Container, program, and dataset ready",
-            json!({"train_rows": train_rows.len(), "heldout_rows": heldout_rows.len()}),
+            json!({
+                "train_rows": train_rows.len(),
+                "minibatch_rows": minibatch_rows.len(),
+                "reflection_rows": reflection_rows.len(),
+                "heldout_rows": heldout_rows.len(),
+            }),
         )?;
     }
     Ok(GepaContainerInputs {
@@ -844,6 +916,8 @@ fn ensure_container_inputs(context: &mut GepaRunContext) -> Result<GepaContainer
         program,
         objective_set,
         train_rows,
+        minibatch_rows,
+        reflection_rows,
         heldout_rows,
         rollout_task_id,
     })
@@ -963,6 +1037,8 @@ fn ensure_step_resources(
         context.program = Some(inputs.program);
         context.objective_set = Some(inputs.objective_set);
         context.train_rows = inputs.train_rows;
+        context.minibatch_rows = inputs.minibatch_rows;
+        context.reflection_rows = inputs.reflection_rows;
         context.heldout_rows = inputs.heldout_rows;
         context.rollout_task_id = Some(inputs.rollout_task_id);
     }
@@ -979,6 +1055,22 @@ fn ensure_step_resources(
         .is_some_and(|rows| !rows.is_empty())
     {
         context.train_rows = serde_json::from_value(state.cursor.train_rows.clone())?;
+    }
+    if state
+        .cursor
+        .minibatch_rows
+        .as_array()
+        .is_some_and(|rows| !rows.is_empty())
+    {
+        context.minibatch_rows = serde_json::from_value(state.cursor.minibatch_rows.clone())?;
+    }
+    if state
+        .cursor
+        .reflection_rows
+        .as_array()
+        .is_some_and(|rows| !rows.is_empty())
+    {
+        context.reflection_rows = serde_json::from_value(state.cursor.reflection_rows.clone())?;
     }
     if state
         .cursor
@@ -1002,6 +1094,16 @@ fn ensure_step_resources(
             OptimizerError::Invariant("GEPA context missing objective set".to_string())
         })?,
         train_rows: context.train_rows.clone(),
+        minibatch_rows: if context.minibatch_rows.is_empty() {
+            context.train_rows.clone()
+        } else {
+            context.minibatch_rows.clone()
+        },
+        reflection_rows: if context.reflection_rows.is_empty() {
+            context.train_rows.clone()
+        } else {
+            context.reflection_rows.clone()
+        },
         heldout_rows: context.heldout_rows.clone(),
         rollout_task_id: context.rollout_task_id.clone().ok_or_else(|| {
             OptimizerError::Invariant("GEPA context missing rollout task id".to_string())
@@ -1043,6 +1145,8 @@ fn persist_gepa_run_state(
     state.cursor.stopper_sequence = state.stopper_sequence;
     state.cursor.checkpoint_sequence = state.checkpoint_sequence;
     state.cursor.train_rows = serde_json::to_value(&resources.train_rows)?;
+    state.cursor.minibatch_rows = serde_json::to_value(&resources.minibatch_rows)?;
+    state.cursor.reflection_rows = serde_json::to_value(&resources.reflection_rows)?;
     state.cursor.heldout_rows = serde_json::to_value(&resources.heldout_rows)?;
     state.cursor.program = serde_json::to_value(&resources.program)?;
     state.cursor.objective_set = serde_json::to_value(&resources.objective_set)?;
@@ -2953,7 +3057,7 @@ fn rows_for_rollout_stage(
 ) -> Vec<Value> {
     match stage {
         "candidate_minibatch" => minibatch_rows(
-            &resources.train_rows,
+            &resources.minibatch_rows,
             &config.gepa.batch_sampler,
             config.gepa.minibatch_size,
             generation,
@@ -4340,7 +4444,7 @@ fn finalize_candidate_minibatch(
             OptimizerError::Invariant(format!("parent candidate {parent_id} is missing"))
         })?;
     let minibatch_rows = minibatch_rows(
-        &resources.train_rows,
+        &resources.minibatch_rows,
         &context.config.gepa.batch_sampler,
         context.config.gepa.minibatch_size,
         active.generation,
@@ -4577,7 +4681,7 @@ fn finalize_candidate_minibatch_group(
                 OptimizerError::Invariant(format!("parent candidate {parent_id} is missing"))
             })?;
         let minibatch_rows = minibatch_rows(
-            &resources.train_rows,
+            &resources.minibatch_rows,
             &context.config.gepa.batch_sampler,
             context.config.gepa.minibatch_size,
             candidate_active.generation,
@@ -5265,6 +5369,12 @@ fn plan_proposer_runtime_job(
         "parent": parent,
         "candidates": state.candidates,
         "program": resources.program,
+        "seed_pool_rows": seed_pool_rows_value(
+            &resources.train_rows,
+            &resources.minibatch_rows,
+            &resources.reflection_rows,
+            &resources.heldout_rows,
+        ),
         "target_modules": context.config.candidate.target_modules,
         "proposal_count": context.config.gepa.proposals_per_generation,
     });
@@ -5425,7 +5535,7 @@ fn advance_proposer_waiting(
         state.candidates.push(candidate);
         let candidate_idx = state.candidates.len() - 1;
         let minibatch_rows = minibatch_rows(
-            &resources.train_rows,
+            &resources.minibatch_rows,
             &context.config.gepa.batch_sampler,
             context.config.gepa.minibatch_size,
             state.cursor.generation,
@@ -6334,6 +6444,8 @@ fn execute_gepa_monolithic_with_options(
         mut program,
         mut objective_set,
         mut train_rows,
+        minibatch_rows: mut minibatch_pool_rows,
+        mut reflection_rows,
         mut heldout_rows,
         mut rollout_task_id,
     } = container_inputs;
@@ -6352,6 +6464,20 @@ fn execute_gepa_monolithic_with_options(
         .is_some_and(|rows| !rows.is_empty())
     {
         train_rows = serde_json::from_value(restored_cursor.train_rows.clone())?;
+    }
+    if restored_cursor
+        .minibatch_rows
+        .as_array()
+        .is_some_and(|rows| !rows.is_empty())
+    {
+        minibatch_pool_rows = serde_json::from_value(restored_cursor.minibatch_rows.clone())?;
+    }
+    if restored_cursor
+        .reflection_rows
+        .as_array()
+        .is_some_and(|rows| !rows.is_empty())
+    {
+        reflection_rows = serde_json::from_value(restored_cursor.reflection_rows.clone())?;
     }
     if restored_cursor
         .heldout_rows
@@ -6488,6 +6614,8 @@ fn execute_gepa_monolithic_with_options(
             candidates: &candidates,
             best_idx: None,
             train_rows: &train_rows,
+            minibatch_rows: &minibatch_pool_rows,
+            reflection_rows: &reflection_rows,
             heldout_rows: &heldout_rows,
             program: &program,
             objective_set: &objective_set,
@@ -6766,6 +6894,8 @@ fn execute_gepa_monolithic_with_options(
             candidates: &candidates,
             best_idx: Some(best_idx),
             train_rows: &train_rows,
+            minibatch_rows: &minibatch_pool_rows,
+            reflection_rows: &reflection_rows,
             heldout_rows: &heldout_rows,
             program: &program,
             objective_set: &objective_set,
@@ -6900,6 +7030,12 @@ fn execute_gepa_monolithic_with_options(
             parent: &parent,
             candidates: &candidates,
             generation,
+            seed_pool_rows: seed_pool_rows_value(
+                &train_rows,
+                &minibatch_pool_rows,
+                &reflection_rows,
+                &heldout_rows,
+            ),
             paths: &paths,
         }) {
             Ok(outcome) => outcome,
@@ -7051,7 +7187,7 @@ fn execute_gepa_monolithic_with_options(
                 break;
             }
             let minibatch_rows = minibatch_rows(
-                &train_rows,
+                &minibatch_pool_rows,
                 &config.gepa.batch_sampler,
                 config.gepa.minibatch_size,
                 generation,
@@ -7772,6 +7908,8 @@ fn execute_gepa_monolithic_with_options(
                 candidates: &candidates,
                 best_idx: Some(best_idx),
                 train_rows: &train_rows,
+                minibatch_rows: &minibatch_pool_rows,
+                reflection_rows: &reflection_rows,
                 heldout_rows: &heldout_rows,
                 program: &program,
                 objective_set: &objective_set,
@@ -7845,6 +7983,8 @@ fn execute_gepa_monolithic_with_options(
             candidates: &candidates,
             best_idx: Some(best_idx),
             train_rows: &train_rows,
+            minibatch_rows: &minibatch_pool_rows,
+            reflection_rows: &reflection_rows,
             heldout_rows: &heldout_rows,
             program: &program,
             objective_set: &objective_set,
@@ -8278,6 +8418,8 @@ fn execute_gepa_monolithic_with_options(
             candidates: &candidates,
             best_idx: Some(best_idx),
             train_rows: &train_rows,
+            minibatch_rows: &minibatch_pool_rows,
+            reflection_rows: &reflection_rows,
             heldout_rows: &heldout_rows,
             program: &program,
             objective_set: &objective_set,
@@ -8877,6 +9019,66 @@ fn row_example_id(row: &Value) -> Result<String> {
 
 fn row_seed(row: &Value) -> i64 {
     row.get("seed").and_then(Value::as_i64).unwrap_or(0)
+}
+
+fn effective_gepa_seed_pool_seeds(config: &SynthOptimizerConfig) -> BTreeMap<String, Vec<i64>> {
+    let pareto_eval = if config.gepa.seed_pools.pareto_eval.is_empty() {
+        config.dataset.train_seeds.clone()
+    } else {
+        config.gepa.seed_pools.pareto_eval.clone()
+    };
+    let minibatch = if config.gepa.seed_pools.minibatch.is_empty() {
+        pareto_eval.clone()
+    } else {
+        config.gepa.seed_pools.minibatch.clone()
+    };
+    let reflection = if config.gepa.seed_pools.reflection.is_empty() {
+        pareto_eval.clone()
+    } else {
+        config.gepa.seed_pools.reflection.clone()
+    };
+    let validation = if config.gepa.seed_pools.validation.is_empty() {
+        config.dataset.heldout_seeds.clone()
+    } else {
+        config.gepa.seed_pools.validation.clone()
+    };
+    BTreeMap::from([
+        ("pareto_eval".to_string(), pareto_eval),
+        ("minibatch".to_string(), minibatch),
+        ("reflection".to_string(), reflection),
+        ("validation".to_string(), validation),
+    ])
+}
+
+fn seed_pool_rows_value(
+    pareto_eval_rows: &[Value],
+    minibatch_rows: &[Value],
+    reflection_rows: &[Value],
+    validation_rows: &[Value],
+) -> Value {
+    json!({
+        "schema_version": "gepa_seed_pools.v1",
+        "pareto_eval": {
+            "row_count": pareto_eval_rows.len(),
+            "seeds": pareto_eval_rows.iter().map(row_seed).collect::<Vec<_>>(),
+            "rows": pareto_eval_rows,
+        },
+        "minibatch": {
+            "row_count": minibatch_rows.len(),
+            "seeds": minibatch_rows.iter().map(row_seed).collect::<Vec<_>>(),
+            "rows": minibatch_rows,
+        },
+        "reflection": {
+            "row_count": reflection_rows.len(),
+            "seeds": reflection_rows.iter().map(row_seed).collect::<Vec<_>>(),
+            "rows": reflection_rows,
+        },
+        "validation": {
+            "row_count": validation_rows.len(),
+            "seeds": validation_rows.iter().map(row_seed).collect::<Vec<_>>(),
+            "rows": validation_rows,
+        },
+    })
 }
 
 fn rollout_task_id(program: &PromptProgram) -> String {
@@ -10238,6 +10440,8 @@ fn persist_gepa_cursor(
         stopper_sequence: state.stopper_sequence,
         checkpoint_sequence: *sequence_number,
         train_rows: serde_json::to_value(state.train_rows)?,
+        minibatch_rows: serde_json::to_value(state.minibatch_rows)?,
+        reflection_rows: serde_json::to_value(state.reflection_rows)?,
         heldout_rows: serde_json::to_value(state.heldout_rows)?,
         program: serde_json::to_value(state.program)?,
         objective_set: serde_json::to_value(state.objective_set)?,
@@ -11123,6 +11327,7 @@ fn propose_candidates(call: ProposerCall<'_>) -> Result<ProposerOutcome> {
         "parent": call.parent,
         "candidates": call.candidates,
         "program": call.program,
+        "seed_pool_rows": call.seed_pool_rows,
         "target_modules": call.config.candidate.target_modules,
         "proposal_count": call.config.gepa.proposals_per_generation,
     });
@@ -11213,6 +11418,7 @@ fn run_proposer(
     parent: &CandidateRecord,
     candidates: &[CandidateRecord],
     generation: usize,
+    seed_pool_rows: Value,
     workspace_dir: std::path::PathBuf,
 ) -> Result<Value> {
     match config.proposer.backend.as_str() {
@@ -11223,6 +11429,7 @@ fn run_proposer(
                 parent,
                 candidates,
                 generation,
+                seed_pool_rows,
                 workspace_dir,
             })
         }

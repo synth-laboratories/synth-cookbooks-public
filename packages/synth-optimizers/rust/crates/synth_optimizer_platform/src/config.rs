@@ -93,6 +93,10 @@ fn default_batch_sampler_config() -> GepaBatchSamplerConfig {
     GepaBatchSamplerConfig::default()
 }
 
+fn default_seed_pools_config() -> GepaSeedPoolsConfig {
+    GepaSeedPoolsConfig::default()
+}
+
 fn default_gepa_pipeline_config() -> GepaPipelineConfig {
     GepaPipelineConfig::default()
 }
@@ -595,6 +599,19 @@ impl Default for GepaBatchSamplerConfig {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GepaSeedPoolsConfig {
+    #[serde(default)]
+    pub pareto_eval: Vec<i64>,
+    #[serde(default)]
+    pub minibatch: Vec<i64>,
+    #[serde(default)]
+    pub reflection: Vec<i64>,
+    #[serde(default)]
+    pub validation: Vec<i64>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GepaConfig {
@@ -620,6 +637,8 @@ pub struct GepaConfig {
     pub candidate_selector: GepaCandidateSelectorConfig,
     #[serde(default = "default_batch_sampler_config")]
     pub batch_sampler: GepaBatchSamplerConfig,
+    #[serde(default = "default_seed_pools_config")]
+    pub seed_pools: GepaSeedPoolsConfig,
     #[serde(default = "default_gepa_pipeline_config")]
     pub pipeline: GepaPipelineConfig,
     #[serde(default)]
@@ -666,6 +685,7 @@ impl Default for GepaConfig {
             selection_objective: None,
             candidate_selector: default_candidate_selector_config(),
             batch_sampler: default_batch_sampler_config(),
+            seed_pools: default_seed_pools_config(),
             pipeline: default_gepa_pipeline_config(),
             max_cost_usd: 0.0,
             max_time_seconds: None,
