@@ -1588,29 +1588,7 @@ fn consume_async_lane_work(
                 .candidate_partials
                 .remove(partial_id);
         }
-        if let Some(active) = state
-            .active_evaluation
-            .clone()
-            .filter(GepaActiveEvaluation::is_rollout_stage)
-        {
-            let partial_id = async_partial_id(&active.stage, active.generation);
-            upsert_async_partial_from_active(
-                state,
-                &partial_id,
-                "rollout",
-                item.parent_pool_version,
-            )?;
-            let rollout_item = async_work_item_from_active(
-                &active,
-                "rollout",
-                item.parent_pool_version,
-                Some(partial_id),
-            )?;
-            state.cursor.pipeline_state.rollout_queue.push(rollout_item);
-            state.active_evaluation = None;
-        } else {
-            state.active_evaluation = None;
-        }
+        queue_async_active_rollout_continuation(state, item.parent_pool_version)?;
         refresh_async_pipeline_cursor_state(context, state, plan);
         persist_gepa_run_state(
             context,
@@ -1742,6 +1720,21 @@ fn schedule_async_rollout_job(
     })?;
     state.cursor.phase = phase_for_rollout_stage(&active.stage)?;
     let mut outcome = plan_next_rollout_batch(context, state, resources)?;
+    let Some(job_id) = state.cursor.pending_job_id.clone() else {
+        queue_async_active_rollout_continuation(state, item.parent_pool_version)?;
+        refresh_async_pipeline_cursor_state(context, state, plan);
+        persist_gepa_run_state(
+            context,
+            state,
+            resources,
+            state.cursor.phase.clone(),
+            "completed",
+            "folded async rollout work without new runtime job",
+            Map::new(),
+        )?;
+        outcome.message = format!("async-pipelined rollout: {}", outcome.message);
+        return Ok(Some(outcome));
+    };
     let active = state.active_evaluation.clone().ok_or_else(|| {
         OptimizerError::Invariant("async rollout planning lost active partial".to_string())
     })?;
@@ -1750,9 +1743,6 @@ fn schedule_async_rollout_job(
         .clone()
         .unwrap_or_else(|| async_partial_id(&active.stage, active.generation));
     upsert_async_partial_from_active(state, &partial_id, "rollout", item.parent_pool_version)?;
-    let job_id = state.cursor.pending_job_id.clone().ok_or_else(|| {
-        OptimizerError::Invariant("async rollout planning did not create a job".to_string())
-    })?;
     let lease = GepaAsyncLaneLease {
         lease_id: async_lease_id("rollout", &job_id),
         lane: "rollout".to_string(),
@@ -2094,6 +2084,28 @@ fn async_work_item_from_active(
             "candidate_count": active.candidate_evaluations.len(),
         }),
     })
+}
+
+fn queue_async_active_rollout_continuation(
+    state: &mut GepaRunState,
+    parent_pool_version: u64,
+) -> Result<bool> {
+    let Some(active) = state
+        .active_evaluation
+        .clone()
+        .filter(GepaActiveEvaluation::is_rollout_stage)
+        .filter(|active| !active_rollout_evaluation_complete(active))
+    else {
+        state.active_evaluation = None;
+        return Ok(false);
+    };
+    let partial_id = async_partial_id(&active.stage, active.generation);
+    upsert_async_partial_from_active(state, &partial_id, "rollout", parent_pool_version)?;
+    let rollout_item =
+        async_work_item_from_active(&active, "rollout", parent_pool_version, Some(partial_id))?;
+    state.cursor.pipeline_state.rollout_queue.push(rollout_item);
+    state.active_evaluation = None;
+    Ok(true)
 }
 
 fn candidate_ids_for_active(active: &GepaActiveEvaluation) -> Vec<String> {
