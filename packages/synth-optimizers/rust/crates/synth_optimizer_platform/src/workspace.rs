@@ -3719,7 +3719,10 @@ impl WorkspaceStore {
                 sensor_frame_id TEXT NOT NULL,
                 sequence_number INTEGER NOT NULL,
                 event_type TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT '',
                 summary TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                trace_ref TEXT,
                 event_json TEXT NOT NULL,
                 event_record_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -4138,6 +4141,9 @@ impl WorkspaceStore {
             CREATE INDEX IF NOT EXISTS idx_rollout_events_run_type
             ON rollout_events(run_id, event_type);
 
+            CREATE INDEX IF NOT EXISTS idx_rollout_events_run_kind
+            ON rollout_events(run_id, kind);
+
             CREATE INDEX IF NOT EXISTS idx_objective_sets_run_hash
             ON objective_sets(run_id, objective_set_hash);
 
@@ -4203,6 +4209,13 @@ impl WorkspaceStore {
             "wall_seconds",
             "INTEGER NOT NULL DEFAULT 0",
         )?;
+        self.ensure_column("rollout_events", "kind", "TEXT NOT NULL DEFAULT ''")?;
+        self.ensure_column(
+            "rollout_events",
+            "payload_json",
+            "TEXT NOT NULL DEFAULT '{}'",
+        )?;
+        self.ensure_column("rollout_events", "trace_ref", "TEXT")?;
         self.ensure_column("optimizer_jobs", "worker_id", "TEXT")?;
         self.ensure_column("optimizer_jobs", "leased_at", "TEXT")?;
         self.ensure_column("optimizer_jobs", "lease_expires_at", "TEXT")?;
@@ -5591,6 +5604,36 @@ impl<'a> WorkspaceView<'a> {
         )
     }
 
+    pub fn rollout_event_records_for_rollout(
+        &self,
+        run_id: &str,
+        rollout_id: &str,
+    ) -> Result<Vec<RolloutEventRecord>> {
+        let mut stmt = self.store.conn.prepare(
+            r#"
+            SELECT event.event_record_json
+            FROM rollout_events event
+            JOIN rollouts rollout
+              ON rollout.run_id = event.run_id
+             AND rollout.rollout_record_id = event.rollout_record_id
+            WHERE event.run_id = ?1
+              AND (
+                    rollout.rollout_id = ?2
+                 OR rollout.rollout_record_id = ?2
+                 OR event.rollout_record_id = ?2
+              )
+            ORDER BY event.sequence_number, event.rollout_event_id
+            "#,
+        )?;
+        let mut rows = stmt.query(params![run_id, rollout_id])?;
+        let mut records = Vec::new();
+        while let Some(row) = rows.next()? {
+            let raw: String = row.get(0)?;
+            records.push(serde_json::from_str(&raw)?);
+        }
+        Ok(records)
+    }
+
     pub fn objective_set_records(&self, run_id: &str) -> Result<Vec<ObjectiveSetRecord>> {
         self.json_records(
             run_id,
@@ -6865,16 +6908,19 @@ fn upsert_rollout_event_tx(
         r#"
         INSERT INTO rollout_events(
             run_id, rollout_event_id, rollout_record_id, candidate_id,
-            sensor_frame_id, sequence_number, event_type, summary, event_json,
-            event_record_json, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))
+            sensor_frame_id, sequence_number, event_type, kind, summary,
+            payload_json, trace_ref, event_json, event_record_json, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, datetime('now'))
         ON CONFLICT(run_id, rollout_event_id) DO UPDATE SET
             rollout_record_id = excluded.rollout_record_id,
             candidate_id = excluded.candidate_id,
             sensor_frame_id = excluded.sensor_frame_id,
             sequence_number = excluded.sequence_number,
             event_type = excluded.event_type,
+            kind = excluded.kind,
             summary = excluded.summary,
+            payload_json = excluded.payload_json,
+            trace_ref = excluded.trace_ref,
             event_json = excluded.event_json,
             event_record_json = excluded.event_record_json,
             updated_at = datetime('now')
@@ -6887,7 +6933,10 @@ fn upsert_rollout_event_tx(
             event.sensor_frame_id,
             event.sequence_number as i64,
             event.event_type,
+            event.kind,
             event.summary,
+            stable_json(&event.payload),
+            event.trace_ref,
             stable_json(&event.event),
             stable_json(&serde_json::to_value(event)?),
         ],

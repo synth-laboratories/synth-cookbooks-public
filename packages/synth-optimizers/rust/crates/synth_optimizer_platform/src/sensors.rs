@@ -99,6 +99,8 @@ impl SensorFrame {
                 Value::Object(rollout_response.summary.clone()),
             );
         }
+        let trace_payload = rollout_trace_payload(row, response, &rollout_response, reward);
+        metadata.insert("rollout_trace".to_string(), trace_payload);
         let objective = row
             .get("objective")
             .and_then(Value::as_str)
@@ -205,5 +207,160 @@ fn trace_digest(trace: &Value) -> TraceDigest {
         llm_request_count,
         tool_call_count,
         call_site_ids,
+    }
+}
+
+fn rollout_trace_payload(
+    row: &Value,
+    response: &Value,
+    rollout_response: &RolloutResponse,
+    reward: f64,
+) -> Value {
+    let trace = rollout_response.trace.clone().unwrap_or_else(|| json!({}));
+    let event_history = trace
+        .get("event_history")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    json!({
+        "schema_version": "rollout_trace_payload.v1",
+        "rollout_id": rollout_response.rollout_id,
+        "trace_correlation_id": rollout_response.trace_correlation_id,
+        "task_id": rollout_response.task_id,
+        "summary": rollout_response.summary,
+        "outcome": {
+            "status": rollout_response.status,
+            "success_status": rollout_response.success_status,
+            "status_detail": rollout_response.status_detail,
+            "reward": reward,
+            "reward_info": rollout_response.reward_info,
+        },
+        "task_payload": {
+            "example": row,
+        },
+        "request": {
+            "candidate": rollout_response.metadata.get("candidate").cloned().unwrap_or(Value::Null),
+            "source": rollout_response.source,
+            "metadata": rollout_response.metadata,
+        },
+        "event_history": event_history,
+        "trace": trace,
+        "turns": rollout_response.turns,
+        "events": rollout_response.events,
+        "tool_calls": tool_calls_from_trace(response, rollout_response),
+        "substitution_stats": substitution_stats_from_trace(response, rollout_response),
+        "usage": rollout_response.usage,
+        "raw_response": response,
+    })
+}
+
+fn tool_calls_from_trace(response: &Value, rollout_response: &RolloutResponse) -> Vec<Value> {
+    let mut tool_calls = Vec::new();
+    collect_tool_calls(response, &mut tool_calls);
+    if let Some(trace) = rollout_response.trace.as_ref() {
+        collect_tool_calls(trace, &mut tool_calls);
+    }
+    for event in &rollout_response.events {
+        collect_tool_calls(event, &mut tool_calls);
+    }
+    for turn in &rollout_response.turns {
+        collect_tool_calls(turn, &mut tool_calls);
+    }
+    tool_calls.truncate(100);
+    tool_calls
+}
+
+fn collect_tool_calls(value: &Value, out: &mut Vec<Value>) {
+    match value {
+        Value::Object(map) => {
+            for key in ["tool_calls", "tools"] {
+                if let Some(items) = map.get(key).and_then(Value::as_array) {
+                    for item in items {
+                        if item.is_object() {
+                            out.push(item.clone());
+                        }
+                    }
+                }
+            }
+            if map.get("tool_call").is_some()
+                || map.get("type").and_then(Value::as_str) == Some("tool_call")
+            {
+                out.push(value.clone());
+            }
+            for child in map.values() {
+                collect_tool_calls(child, out);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_tool_calls(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn substitution_stats_from_trace(response: &Value, rollout_response: &RolloutResponse) -> Value {
+    let mut attempts = 0i64;
+    let mut applied = 0i64;
+    let mut warnings = Vec::new();
+    collect_substitution_stats(response, &mut attempts, &mut applied, &mut warnings);
+    if let Some(trace) = rollout_response.trace.as_ref() {
+        collect_substitution_stats(trace, &mut attempts, &mut applied, &mut warnings);
+    }
+    for event in &rollout_response.events {
+        collect_substitution_stats(event, &mut attempts, &mut applied, &mut warnings);
+    }
+    warnings.truncate(20);
+    json!({
+        "attempted": attempts,
+        "applied": applied,
+        "warnings": warnings,
+    })
+}
+
+fn collect_substitution_stats(
+    value: &Value,
+    attempts: &mut i64,
+    applied: &mut i64,
+    warnings: &mut Vec<String>,
+) {
+    match value {
+        Value::Object(map) => {
+            let mentions_substitution = map
+                .get("kind")
+                .or_else(|| map.get("type"))
+                .and_then(Value::as_str)
+                .map(|text| text.to_ascii_lowercase().contains("substitution"))
+                .unwrap_or(false)
+                || map.contains_key("substitution")
+                || map.contains_key("substitutions");
+            if mentions_substitution {
+                *attempts += map
+                    .get("attempted")
+                    .or_else(|| map.get("attempts"))
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                *applied += map.get("applied").and_then(Value::as_i64).unwrap_or(0);
+                if let Some(items) = map.get("warnings").and_then(Value::as_array) {
+                    for item in items {
+                        if let Some(text) = item.as_str() {
+                            if !text.trim().is_empty() {
+                                warnings.push(text.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            for child in map.values() {
+                collect_substitution_stats(child, attempts, applied, warnings);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_substitution_stats(item, attempts, applied, warnings);
+            }
+        }
+        _ => {}
     }
 }

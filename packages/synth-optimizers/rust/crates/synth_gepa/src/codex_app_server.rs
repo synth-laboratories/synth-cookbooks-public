@@ -870,6 +870,53 @@ fn reflective_frame_value(
         .find(|value| !value.trim().is_empty())
         .unwrap_or_default()
         .to_string();
+    let rollout_trace = frame
+        .metadata
+        .get("rollout_trace")
+        .and_then(Value::as_object);
+    let trace_summary = rollout_trace
+        .and_then(|trace| trace.get("summary"))
+        .cloned()
+        .or_else(|| frame.metadata.get("summary").cloned())
+        .unwrap_or(Value::Null);
+    let trace_outcome = rollout_trace
+        .and_then(|trace| trace.get("outcome"))
+        .cloned()
+        .unwrap_or_else(|| {
+            json!({
+                "status": frame.status,
+                "success_status": frame.success_status,
+                "reward": frame.reward,
+            })
+        });
+    let task_example = rollout_trace
+        .and_then(|trace| trace.get("task_payload"))
+        .and_then(|task_payload| task_payload.get("example"))
+        .cloned()
+        .unwrap_or_else(|| {
+            json!({
+                "example_id": frame.example_id,
+                "seed": frame.seed,
+                "split": frame.split,
+            })
+        });
+    let request = rollout_trace
+        .and_then(|trace| trace.get("request"))
+        .cloned()
+        .unwrap_or_else(|| {
+            json!({
+                "evaluation_stage": frame.evaluation_stage,
+                "target_modules": input.config.candidate.target_modules,
+            })
+        });
+    let tool_calls = rollout_trace
+        .and_then(|trace| trace.get("tool_calls"))
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let substitution_stats = rollout_trace
+        .and_then(|trace| trace.get("substitution_stats"))
+        .cloned()
+        .unwrap_or_else(|| json!({"attempted": 0, "applied": 0, "warnings": []}));
     let evidence = json!({
         "schema_version": GEPA_REFLECTIVE_FRAME_SCHEMA_VERSION,
         "source": "sensor_frame_adapter",
@@ -887,23 +934,12 @@ fn reflective_frame_value(
         "example_id": frame.example_id,
         "split": frame.split,
         "inputs": {
-            "example": {
-                "example_id": frame.example_id,
-                "seed": frame.seed,
-                "split": frame.split,
-            },
-            "request": {
-                "evaluation_stage": frame.evaluation_stage,
-                "target_modules": input.config.candidate.target_modules,
-            },
+            "example": task_example,
+            "request": request,
         },
         "generated_outputs": {
-            "summary": frame.metadata.get("summary").cloned().unwrap_or(Value::Null),
-            "outcome": {
-                "status": frame.status,
-                "success_status": frame.success_status,
-                "reward": frame.reward,
-            },
+            "summary": trace_summary,
+            "outcome": trace_outcome,
         },
         "feedback": {
             "reward": frame.reward,
@@ -922,8 +958,8 @@ fn reflective_frame_value(
             "artifact_refs": artifact_refs,
         },
         "trace_refs": trace_refs,
-        "tool_calls": frame.trace_digest.as_ref().map(|digest| digest.tool_call_count).unwrap_or(0),
-        "substitution_stats": Value::Null,
+        "tool_calls": tool_calls,
+        "substitution_stats": substitution_stats,
         "failure_class": failure_class,
         "usage": frame.usage,
         "confidence": confidence,

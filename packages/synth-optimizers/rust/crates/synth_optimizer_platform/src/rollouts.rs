@@ -39,7 +39,13 @@ pub struct RolloutEventRecord {
     pub sensor_frame_id: String,
     pub sequence_number: u64,
     pub event_type: String,
+    #[serde(default)]
+    pub kind: String,
     pub summary: String,
+    #[serde(default)]
+    pub payload: Value,
+    #[serde(default)]
+    pub trace_ref: Option<String>,
     pub event: Value,
 }
 
@@ -92,6 +98,23 @@ impl RolloutRecord {
 
 impl RolloutEventRecord {
     pub fn from_sensor_frame(frame: &SensorFrame, rollout: &RolloutRecord) -> Vec<Self> {
+        let observed_payload = json!({
+            "candidate_id": &frame.candidate_id,
+            "sensor_frame_id": &frame.sensor_frame_id,
+            "rollout_id": &frame.rollout_id,
+            "example_id": &frame.example_id,
+            "seed": frame.seed,
+            "split": &frame.split,
+            "evaluation_stage": &frame.evaluation_stage,
+            "status": &frame.status,
+            "success_status": &frame.success_status,
+            "reward": frame.reward,
+            "failure": &frame.failure,
+        });
+        let trace_ref = frame
+            .trace_digest
+            .as_ref()
+            .map(|digest| format!("trace_sha256:{}", digest.sha256));
         let mut records = vec![Self {
             schema_version: "rollout_event_record.v1".to_string(),
             rollout_event_id: stable_id(
@@ -103,42 +126,68 @@ impl RolloutEventRecord {
             sensor_frame_id: frame.sensor_frame_id.clone(),
             sequence_number: 1,
             event_type: "rollout_observed".to_string(),
+            kind: "rollout_observed".to_string(),
             summary: format!(
                 "rollout {} for {} completed with status {} and reward {:.6}",
                 frame.evaluation_stage, frame.example_id, frame.status, frame.reward
             ),
-            event: json!({
-                "candidate_id": &frame.candidate_id,
-                "sensor_frame_id": &frame.sensor_frame_id,
-                "rollout_id": &frame.rollout_id,
-                "example_id": &frame.example_id,
-                "seed": frame.seed,
-                "split": &frame.split,
-                "evaluation_stage": &frame.evaluation_stage,
-                "status": &frame.status,
-                "success_status": &frame.success_status,
-                "reward": frame.reward,
-                "failure": &frame.failure,
-            }),
+            payload: observed_payload.clone(),
+            trace_ref: trace_ref.clone(),
+            event: observed_payload,
         }];
-        if let Some(trace_digest) = &frame.trace_digest {
+        if let Some(trace_payload) = frame.metadata.get("rollout_trace") {
             records.push(Self {
                 schema_version: "rollout_event_record.v1".to_string(),
                 rollout_event_id: stable_id(
                     "rolloutev",
-                    &[&rollout.rollout_record_id, "2", "trace_digest_observed"],
+                    &[&rollout.rollout_record_id, "2", "trace"],
                 ),
                 rollout_record_id: rollout.rollout_record_id.clone(),
                 candidate_id: frame.candidate_id.clone(),
                 sensor_frame_id: frame.sensor_frame_id.clone(),
                 sequence_number: 2,
+                event_type: "trace".to_string(),
+                kind: "trace".to_string(),
+                summary: format!(
+                    "rollout trace payload captured for {} on {}",
+                    frame.candidate_id, frame.example_id
+                ),
+                payload: trace_payload.clone(),
+                trace_ref: trace_ref.clone(),
+                event: json!({
+                    "kind": "trace",
+                    "payload": trace_payload,
+                    "trace_ref": trace_ref,
+                }),
+            });
+        }
+        if let Some(trace_digest) = &frame.trace_digest {
+            records.push(Self {
+                schema_version: "rollout_event_record.v1".to_string(),
+                rollout_event_id: stable_id(
+                    "rolloutev",
+                    &[&rollout.rollout_record_id, "3", "trace_digest_observed"],
+                ),
+                rollout_record_id: rollout.rollout_record_id.clone(),
+                candidate_id: frame.candidate_id.clone(),
+                sensor_frame_id: frame.sensor_frame_id.clone(),
+                sequence_number: 3,
                 event_type: "trace_digest_observed".to_string(),
+                kind: "trace_digest".to_string(),
                 summary: format!(
                     "trace digest has {} events, {} llm requests, and {} tool calls",
                     trace_digest.event_count,
                     trace_digest.llm_request_count,
                     trace_digest.tool_call_count
                 ),
+                payload: json!({
+                    "trace_sha256": &trace_digest.sha256,
+                    "event_count": trace_digest.event_count,
+                    "llm_request_count": trace_digest.llm_request_count,
+                    "tool_call_count": trace_digest.tool_call_count,
+                    "call_site_ids": &trace_digest.call_site_ids,
+                }),
+                trace_ref,
                 event: json!({
                     "trace_sha256": &trace_digest.sha256,
                     "event_count": trace_digest.event_count,
