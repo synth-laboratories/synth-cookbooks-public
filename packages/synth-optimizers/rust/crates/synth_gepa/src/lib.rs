@@ -5895,6 +5895,7 @@ fn advance_heldout(
                 "stage": "heldout",
                 "row_count": resources.heldout_rows.len(),
                 "candidate_count": heldout_indices.len(),
+                "rollout_count": required_rollouts,
             }),
         )?;
     }

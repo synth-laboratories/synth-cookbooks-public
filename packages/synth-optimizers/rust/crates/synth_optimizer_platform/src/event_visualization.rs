@@ -384,6 +384,7 @@ fn append_frontier_detail(out: &mut String, fields: &Value, summary: &FrontierSu
 
 fn terminal_state_transition_line(message: &str, fields: &Value) -> Option<String> {
     let details = fields.get("details").unwrap_or(&Value::Null);
+    let rollouts_started = field_str(fields, "trigger") == Some("rollouts_started");
     match message {
         "Container, program, and dataset ready" => Some("  container ready".to_string()),
         "Proposer started" | "Async proposer started" => {
@@ -396,19 +397,25 @@ fn terminal_state_transition_line(message: &str, fields: &Value) -> Option<Strin
             }
             Some(line)
         }
-        "Candidate minibatch rollouts started" => Some(terminal_candidate_rollouts_started_line(
-            details,
-            "minibatch",
-        )),
-        "Candidate full-train rollouts queued" | "Candidate full-train rollouts started" => Some(
-            terminal_candidate_rollouts_started_line(details, "full-train"),
+        "Candidate minibatch rollouts started" if rollouts_started => Some(
+            terminal_candidate_rollouts_started_line(details, "minibatch"),
         ),
-        "Heldout rollouts queued" => Some(format!(
-            "\n  heldout rollouts candidates={} rows={} n={}",
-            field_usize(details, "candidate_count").unwrap_or(0),
-            field_usize(details, "row_count").unwrap_or(0),
-            field_usize(details, "rollout_count").unwrap_or(0)
-        )),
+        "Candidate full-train rollouts queued" | "Candidate full-train rollouts started"
+            if rollouts_started =>
+        {
+            Some(terminal_candidate_rollouts_started_line(
+                details,
+                "full-train",
+            ))
+        }
+        "Heldout rollouts queued" | "Heldout rollouts started" if rollouts_started => {
+            Some(format!(
+                "\n  heldout rollouts candidates={} rows={} n={}",
+                field_usize(details, "candidate_count").unwrap_or(0),
+                field_usize(details, "row_count").unwrap_or(0),
+                field_usize(details, "rollout_count").unwrap_or(0)
+            ))
+        }
         _ => None,
     }
 }
