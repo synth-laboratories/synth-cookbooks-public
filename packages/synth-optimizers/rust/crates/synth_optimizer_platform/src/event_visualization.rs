@@ -394,6 +394,9 @@ fn terminal_state_transition_line(message: &str, fields: &Value) -> Option<Strin
         "Candidate minibatch rollouts started" if rollouts_started => Some(
             terminal_candidate_rollouts_started_line(details, "minibatch"),
         ),
+        "Parent minibatch reference rollouts started" if rollouts_started => Some(
+            terminal_candidate_rollouts_started_line(details, "parent-minibatch-reference"),
+        ),
         "Candidate full-train rollouts queued" | "Candidate full-train rollouts started"
             if rollouts_started =>
         {

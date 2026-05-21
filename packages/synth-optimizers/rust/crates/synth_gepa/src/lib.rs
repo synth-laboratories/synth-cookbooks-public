@@ -420,7 +420,11 @@ impl GepaActiveEvaluation {
     fn is_rollout_stage(&self) -> bool {
         matches!(
             self.stage.as_str(),
-            "seed_full_train" | "candidate_minibatch" | "candidate_full_train" | "heldout"
+            "seed_full_train"
+                | "parent_minibatch_reference"
+                | "candidate_minibatch"
+                | "candidate_full_train"
+                | "heldout"
         )
     }
 
@@ -2107,6 +2111,7 @@ fn candidate_ids_for_active(active: &GepaActiveEvaluation) -> Vec<String> {
 fn phase_for_rollout_stage(stage: &str) -> Result<GepaCursorPhase> {
     match stage {
         "seed_full_train" => Ok(GepaCursorPhase::SeedFullTrain),
+        "parent_minibatch_reference" => Ok(GepaCursorPhase::CandidateMinibatch),
         "candidate_minibatch" => Ok(GepaCursorPhase::CandidateMinibatch),
         "candidate_full_train" => Ok(GepaCursorPhase::CandidateFullTrain),
         "heldout" => Ok(GepaCursorPhase::Heldout),
@@ -2887,6 +2892,7 @@ fn plan_next_rollout_batch(
             context,
             match active.stage.as_str() {
                 "seed_full_train" => "Seed candidate rollouts started",
+                "parent_minibatch_reference" => "Parent minibatch reference rollouts started",
                 "candidate_minibatch" => "Candidate minibatch rollouts started",
                 "candidate_full_train" => "Candidate full-train rollouts started",
                 "heldout" => "Heldout rollouts started",
@@ -3009,6 +3015,7 @@ fn plan_next_rollout_group_batch(
         transition_to_rollout_running(
             context,
             match active.stage.as_str() {
+                "parent_minibatch_reference" => "Parent minibatch reference rollouts started",
                 "candidate_minibatch" => "Candidate minibatch rollouts started",
                 "candidate_full_train" => "Candidate full-train rollouts started",
                 "heldout" => "Heldout rollouts started",
@@ -3066,7 +3073,7 @@ fn rows_for_rollout_stage(
     proposal_index: usize,
 ) -> Vec<Value> {
     match stage {
-        "candidate_minibatch" => minibatch_rows(
+        "parent_minibatch_reference" | "candidate_minibatch" => minibatch_rows(
             &resources.minibatch_rows,
             &config.gepa.batch_sampler,
             config.gepa.minibatch_size,
@@ -4204,6 +4211,9 @@ fn finalize_active_rollout_evaluation(
     append_rollout_usage(&mut state.usage_ledger, &eval);
     match active.stage.as_str() {
         "seed_full_train" => finalize_seed_full_train(context, state, resources, active, eval),
+        "parent_minibatch_reference" => {
+            finalize_parent_minibatch_reference(context, state, resources, active, eval)
+        }
         "candidate_minibatch" => {
             finalize_candidate_minibatch(context, state, resources, active, eval)
         }
@@ -4429,6 +4439,44 @@ fn move_to_generation_start(
     })
 }
 
+fn finalize_parent_minibatch_reference(
+    context: &mut GepaRunContext,
+    state: &mut GepaRunState,
+    resources: &GepaStepResources,
+    active: GepaActiveEvaluation,
+    eval: CandidateEvaluation,
+) -> Result<GepaAdvanceOutcome> {
+    let parent_idx = active.candidate_index.ok_or_else(|| {
+        OptimizerError::Invariant(
+            "parent minibatch reference missing parent candidate index".to_string(),
+        )
+    })?;
+    let parent = state.candidates.get_mut(parent_idx).ok_or_else(|| {
+        OptimizerError::Invariant(format!(
+            "parent minibatch reference index {parent_idx} is outside candidate registry"
+        ))
+    })?;
+    parent.sensor_frames.extend(eval.sensor_frames.clone());
+    persist_candidate_snapshot(&mut context.workspace, &context.config.run.run_id, parent)?;
+    context.events.emit(
+        "parent_minibatch_reference.completed",
+        "Parent minibatch reference completed",
+        json!({
+            "candidate_id": parent.candidate_id,
+            "generation": active.generation,
+            "proposal_index": active.proposal_index,
+            "row_count": active.row_ids.len(),
+            "reward": eval.average_reward,
+        }),
+    )?;
+    move_to_proposer_waiting(
+        context,
+        state,
+        resources,
+        "parent minibatch reference evaluated",
+    )
+}
+
 fn finalize_candidate_minibatch(
     context: &mut GepaRunContext,
     state: &mut GepaRunState,
@@ -4461,14 +4509,17 @@ fn finalize_candidate_minibatch(
         active.proposal_index,
         context.config.gepa.proposals_per_generation,
     );
-    let parent_minibatch_reward =
-        average_reward_for_rows(&state.candidates[parent_idx].train_scores, &minibatch_rows)?
-            .ok_or_else(|| {
-                OptimizerError::Invariant(format!(
-                    "parent candidate {} is missing minibatch reference scores for generation {}",
-                    parent_id, active.generation
-                ))
-            })?;
+    let parent_minibatch_reward = parent_minibatch_reward_for_rows(
+        &state.candidates[parent_idx],
+        &minibatch_rows,
+        &context.config.dataset.train_split,
+    )?
+    .ok_or_else(|| {
+        OptimizerError::Invariant(format!(
+            "parent candidate {} is missing minibatch reference scores for generation {}",
+            parent_id, active.generation
+        ))
+    })?;
     {
         let candidate = state.candidates.get_mut(candidate_idx).ok_or_else(|| {
             OptimizerError::Invariant(format!(
@@ -4493,7 +4544,7 @@ fn finalize_candidate_minibatch(
         candidate: &state.candidates[parent_idx],
         rows: &minibatch_rows,
         split: &context.config.dataset.train_split,
-        source_stages: &["seed_full_train", "candidate_full_train"],
+        source_stages: parent_minibatch_reference_source_stages(),
         evaluation_stage: "parent_minibatch_reference",
     })?;
     let minibatch_preference = compare_score_vectors(ScoreVectorPreferenceInput {
@@ -4701,14 +4752,17 @@ fn finalize_candidate_minibatch_group(
             candidate_active.proposal_index,
             context.config.gepa.proposals_per_generation,
         );
-        let parent_minibatch_reward =
-            average_reward_for_rows(&state.candidates[parent_idx].train_scores, &minibatch_rows)?
-                .ok_or_else(|| {
-                OptimizerError::Invariant(format!(
-                    "parent candidate {} is missing minibatch reference scores for generation {}",
-                    parent_id, candidate_active.generation
-                ))
-            })?;
+        let parent_minibatch_reward = parent_minibatch_reward_for_rows(
+            &state.candidates[parent_idx],
+            &minibatch_rows,
+            &context.config.dataset.train_split,
+        )?
+        .ok_or_else(|| {
+            OptimizerError::Invariant(format!(
+                "parent candidate {} is missing minibatch reference scores for generation {}",
+                parent_id, candidate_active.generation
+            ))
+        })?;
         {
             let candidate = state.candidates.get_mut(candidate_idx).ok_or_else(|| {
                 OptimizerError::Invariant(format!(
@@ -4733,7 +4787,7 @@ fn finalize_candidate_minibatch_group(
             candidate: &state.candidates[parent_idx],
             rows: &minibatch_rows,
             split: &context.config.dataset.train_split,
-            source_stages: &["seed_full_train", "candidate_full_train"],
+            source_stages: parent_minibatch_reference_source_stages(),
             evaluation_stage: "parent_minibatch_reference",
         })?;
         let minibatch_preference = compare_score_vectors(ScoreVectorPreferenceInput {
@@ -5564,6 +5618,50 @@ fn advance_proposer_waiting(
             proposal_index,
             context.config.gepa.proposals_per_generation,
         );
+        if parent_minibatch_reward_for_rows(
+            &proposal_parent,
+            &minibatch_rows,
+            &context.config.dataset.train_split,
+        )?
+        .is_none()
+        {
+            let remaining_capacity = minibatch_capacity.saturating_sub(planned_rollouts);
+            if remaining_capacity < minibatch_rows.len() {
+                state.cursor.proposal_index = state.proposal_queue.len();
+                return complete_generation_boundary(context, state, resources);
+            }
+            if let Some(_breach) = next_rollout_budget_breach(&context.workspace, &context.config)?
+            {
+                state.cursor.proposal_index = state.proposal_queue.len();
+                return complete_generation_boundary(context, state, resources);
+            }
+            state.active_evaluation = Some(new_rollout_evaluation(
+                "parent_minibatch_reference",
+                proposal_parent_idx,
+                &minibatch_rows,
+                state.cursor.generation,
+                proposal_index,
+                None,
+            )?);
+            persist_gepa_run_state(
+                context,
+                state,
+                resources,
+                GepaCursorPhase::CandidateMinibatch,
+                "planned",
+                "parent minibatch reference evaluation started",
+                Map::new(),
+            )?;
+            return Ok(GepaAdvanceOutcome {
+                action: planner::GepaTickAction::CheckpointRun {
+                    run_id: context.config.run.run_id.clone(),
+                    phase: "parent_minibatch_reference".to_string(),
+                },
+                terminal: false,
+                result: None,
+                message: "parent minibatch reference evaluation started".to_string(),
+            });
+        }
         let remaining_capacity = minibatch_capacity.saturating_sub(planned_rollouts);
         if remaining_capacity < minibatch_rows.len() {
             state.candidates[candidate_idx].status = "deferred_budget".to_string();
@@ -7235,14 +7333,109 @@ fn execute_gepa_monolithic_with_options(
                         "proposal parent index {proposal_parent_idx} is outside candidate registry"
                     ))
                     })?;
-            let parent_minibatch_reward =
-                average_reward_for_rows(&proposal_parent.train_scores, &minibatch_rows)?
-                    .ok_or_else(|| {
-                        OptimizerError::Invariant(format!(
+            let mut proposal_parent = proposal_parent;
+            if parent_minibatch_reward_for_rows(
+                &proposal_parent,
+                &minibatch_rows,
+                &config.dataset.train_split,
+            )?
+            .is_none()
+            {
+                let parent_reference_capacity =
+                    remaining_rollout_capacity(&workspace, &config.run.run_id)?;
+                if parent_reference_capacity < minibatch_rows.len() {
+                    let mut metadata = Map::new();
+                    metadata.insert(
+                        "stage".to_string(),
+                        Value::String("parent_minibatch_reference".to_string()),
+                    );
+                    metadata.insert("generation".to_string(), json!(generation));
+                    metadata.insert(
+                        "remaining_rollouts".to_string(),
+                        json!(parent_reference_capacity),
+                    );
+                    metadata.insert("required_rollouts".to_string(), json!(minibatch_rows.len()));
+                    push_stopper_snapshot(
+                        &mut stopper_states,
+                        &mut stopper_sequence,
+                        &config,
+                        StopperSnapshot {
+                            status: "deferred_budget",
+                            reason: Some(
+                                "insufficient rollout budget for parent minibatch reference",
+                            ),
+                            generation: Some(generation),
+                            candidate_id: Some(&proposal_parent.candidate_id),
+                            evaluation_stage: Some("parent_minibatch_reference"),
+                            rollout_count,
+                            cost_usd: total_cost,
+                            metadata,
+                        },
+                    );
+                    break;
+                }
+                transition_run(
+                    &workspace,
+                    &mut events,
+                    &mut state_machine,
+                    OptimizerRunState::RolloutRunning,
+                    OptimizerTransitionTrigger::RolloutsStarted,
+                    "Parent minibatch reference rollouts started",
+                    json!({
+                        "candidate_id": proposal_parent.candidate_id,
+                        "generation": generation,
+                        "stage": "parent_minibatch_reference",
+                        "row_count": minibatch_rows.len(),
+                    }),
+                )?;
+                let parent_reference_eval = evaluate_candidate(EvaluationCall {
+                    client: &client,
+                    workspace: &workspace,
+                    cache: &mut cache,
+                    cache_namespace: &cache_namespace,
+                    config: &config,
+                    program: &program,
+                    task_id: &rollout_task_id,
+                    objective_set: &objective_set,
+                    candidate: &proposal_parent,
+                    rows: &minibatch_rows,
+                    stage: "parent_minibatch_reference",
+                    cancellation: options.cancellation.as_ref(),
+                })?;
+                transition_run(
+                    &workspace,
+                    &mut events,
+                    &mut state_machine,
+                    OptimizerRunState::Evaluating,
+                    OptimizerTransitionTrigger::RolloutsFinished,
+                    "Parent minibatch reference rollouts finished",
+                    json!({
+                        "candidate_id": proposal_parent.candidate_id,
+                        "generation": generation,
+                        "stage": "parent_minibatch_reference",
+                    }),
+                )?;
+                rollout_count += parent_reference_eval.rollout_count;
+                total_usage.merge(&parent_reference_eval.usage);
+                total_cost += parent_reference_eval.cost_usd;
+                append_rollout_usage(&mut usage_ledger, &parent_reference_eval);
+                proposal_parent
+                    .sensor_frames
+                    .extend(parent_reference_eval.sensor_frames.clone());
+                persist_candidate_snapshot(&mut workspace, &config.run.run_id, &proposal_parent)?;
+                candidates[proposal_parent_idx] = proposal_parent.clone();
+            }
+            let parent_minibatch_reward = parent_minibatch_reward_for_rows(
+                &proposal_parent,
+                &minibatch_rows,
+                &config.dataset.train_split,
+            )?
+            .ok_or_else(|| {
+                OptimizerError::Invariant(format!(
                     "parent candidate {} is missing minibatch reference scores for generation {}",
                     proposal_parent.candidate_id, generation
                 ))
-                    })?;
+            })?;
             let payload = normalize_candidate_payload(
                 &program,
                 &config,
@@ -7488,7 +7681,7 @@ fn execute_gepa_monolithic_with_options(
                 candidate: &proposal_parent,
                 rows: &minibatch_rows,
                 split: &config.dataset.train_split,
-                source_stages: &["seed_full_train", "candidate_full_train"],
+                source_stages: parent_minibatch_reference_source_stages(),
                 evaluation_stage: "parent_minibatch_reference",
             })?;
             let minibatch_preference = compare_score_vectors(ScoreVectorPreferenceInput {
@@ -8854,19 +9047,51 @@ fn value_to_bucket_key(value: &Value) -> Option<String> {
     }
 }
 
-fn average_reward_for_rows(scores: &[RolloutScore], rows: &[Value]) -> Result<Option<f64>> {
+fn parent_minibatch_reference_source_stages() -> &'static [&'static str] {
+    &[
+        "seed_full_train",
+        "candidate_full_train",
+        "parent_minibatch_reference",
+    ]
+}
+
+fn average_reward_for_candidate_rows_from_stages(
+    candidate: &CandidateRecord,
+    rows: &[Value],
+    split: &str,
+    source_stages: &[&str],
+) -> Result<Option<f64>> {
     if rows.is_empty() {
         return Ok(Some(0.0));
     }
     let mut total = 0.0;
     for row in rows {
         let example_id = row_example_id(row)?;
-        let Some(score) = scores.iter().find(|score| score.example_id == example_id) else {
+        let Some(frame) = candidate.sensor_frames.iter().find(|frame| {
+            frame.split == split
+                && frame.example_id == example_id
+                && source_stages
+                    .iter()
+                    .any(|stage| *stage == frame.evaluation_stage)
+        }) else {
             return Ok(None);
         };
-        total += score.reward;
+        total += frame.reward;
     }
     Ok(Some(total / rows.len() as f64))
+}
+
+fn parent_minibatch_reward_for_rows(
+    candidate: &CandidateRecord,
+    rows: &[Value],
+    split: &str,
+) -> Result<Option<f64>> {
+    average_reward_for_candidate_rows_from_stages(
+        candidate,
+        rows,
+        split,
+        parent_minibatch_reference_source_stages(),
+    )
 }
 
 fn score_vector_for_candidate(input: CandidateScoreVectorInput<'_>) -> Result<ScoreVectorRecord> {
