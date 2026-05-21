@@ -407,7 +407,7 @@ impl ParetoComparisonRecord {
 
 fn objective_direction(direction: &str) -> f64 {
     match direction.trim().to_ascii_lowercase().as_str() {
-        "min" | "minimize" | "lower" | "down" => -1.0,
+        "min" | "minimize" | "lower" | "lower_is_better" | "down" => -1.0,
         _ => 1.0,
     }
 }

@@ -343,6 +343,21 @@ impl SynthOptimizerConfig {
                 "gepa.selection_objective must be non-empty when set".to_string(),
             ));
         }
+        for objective in &self.gepa.objective_keys {
+            if objective.trim().is_empty() {
+                return Err(OptimizerError::Config(
+                    "gepa.objective_keys entries must be non-empty".to_string(),
+                ));
+            }
+        }
+        for (objective, direction) in &self.gepa.objective_directions {
+            if objective.trim().is_empty() {
+                return Err(OptimizerError::Config(
+                    "gepa.objective_directions keys must be non-empty".to_string(),
+                ));
+            }
+            validate_gepa_objective_direction("gepa.objective_directions", direction)?;
+        }
         validate_gepa_candidate_selector_config(&self.gepa.candidate_selector)?;
         validate_gepa_batch_sampler_config(&self.gepa.batch_sampler)?;
         validate_gepa_pipeline_config(&self.gepa.pipeline)?;
@@ -633,6 +648,10 @@ pub struct GepaConfig {
     pub frontier_type: String,
     #[serde(default)]
     pub selection_objective: Option<String>,
+    #[serde(default)]
+    pub objective_keys: Vec<String>,
+    #[serde(default)]
+    pub objective_directions: BTreeMap<String, String>,
     #[serde(default = "default_candidate_selector_config")]
     pub candidate_selector: GepaCandidateSelectorConfig,
     #[serde(default = "default_batch_sampler_config")]
@@ -683,6 +702,8 @@ impl Default for GepaConfig {
             rollout_async_timeout_seconds: default_rollout_async_timeout_seconds(),
             frontier_type: default_frontier_type(),
             selection_objective: None,
+            objective_keys: Vec::new(),
+            objective_directions: BTreeMap::new(),
             candidate_selector: default_candidate_selector_config(),
             batch_sampler: default_batch_sampler_config(),
             seed_pools: default_seed_pools_config(),
@@ -939,6 +960,16 @@ fn validate_gepa_batch_sampler_config(config: &GepaBatchSamplerConfig) -> Result
         ));
     }
     Ok(())
+}
+
+fn validate_gepa_objective_direction(name: &str, direction: &str) -> Result<()> {
+    match direction.trim().to_ascii_lowercase().as_str() {
+        "max" | "maximize" | "higher" | "higher_is_better" | "up" | "min" | "minimize"
+        | "lower" | "lower_is_better" | "down" => Ok(()),
+        _ => Err(OptimizerError::Config(format!(
+            "{name} values must be maximize/higher_is_better or minimize/lower_is_better; got {direction:?}"
+        ))),
+    }
 }
 
 fn read_env_override(names: &[&str]) -> Option<String> {

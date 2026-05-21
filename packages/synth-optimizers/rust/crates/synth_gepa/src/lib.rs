@@ -8487,13 +8487,22 @@ fn declared_objective_set(
 ) -> ObjectiveSetRecord {
     let mut seen = BTreeSet::new();
     let mut objectives = Vec::new();
-    for target in &program.target_modules {
-        let name = target.objective.trim();
-        if name.is_empty() {
-            continue;
+    for objective in &config.gepa.objective_keys {
+        let name = objective.trim();
+        if !name.is_empty() && seen.insert(name.to_string()) {
+            objectives.push((name.to_string(), "gepa.objective_keys".to_string()));
         }
-        if seen.insert((name.to_string(), "program.target_modules".to_string())) {
-            objectives.push((name.to_string(), "program.target_modules".to_string()));
+    }
+
+    if objectives.is_empty() {
+        for target in &program.target_modules {
+            let name = target.objective.trim();
+            if name.is_empty() {
+                continue;
+            }
+            if seen.insert(name.to_string()) {
+                objectives.push((name.to_string(), "program.target_modules".to_string()));
+            }
         }
     }
 
@@ -8507,7 +8516,7 @@ fn declared_objective_set(
             else {
                 continue;
             };
-            if seen.insert((name.to_string(), "dataset_rows.objective".to_string())) {
+            if seen.insert(name.to_string()) {
                 objectives.push((name.to_string(), "dataset_rows.objective".to_string()));
             }
         }
@@ -8527,10 +8536,7 @@ fn declared_objective_set(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     if let Some(selection_objective) = configured_selection {
-        if seen.insert((
-            selection_objective.to_string(),
-            "gepa.selection_objective".to_string(),
-        )) {
+        if seen.insert(selection_objective.to_string()) {
             objectives.insert(
                 0,
                 (
@@ -8547,13 +8553,22 @@ fn declared_objective_set(
     let specs = objectives
         .iter()
         .map(|(objective, source)| {
-            ObjectiveSpec::from_objective_score(&ObjectiveScore {
+            let mut spec = ObjectiveSpec::from_objective_score(&ObjectiveScore {
                 objective: objective.clone(),
                 value: 0.0,
                 source: source.clone(),
                 rationale: None,
                 metadata: Map::new(),
-            })
+            });
+            spec.direction = normalize_gepa_objective_direction(
+                config
+                    .gepa
+                    .objective_directions
+                    .get(objective)
+                    .map(String::as_str)
+                    .unwrap_or("maximize"),
+            );
+            spec
         })
         .collect::<Vec<_>>();
     let mut metadata = Map::new();
@@ -8564,6 +8579,14 @@ fn declared_objective_set(
     metadata.insert(
         "frontier_type_source".to_string(),
         json!("gepa.frontier_type"),
+    );
+    metadata.insert(
+        "objective_keys".to_string(),
+        json!(config.gepa.objective_keys),
+    );
+    metadata.insert(
+        "objective_directions".to_string(),
+        json!(config.gepa.objective_directions),
     );
     ObjectiveSetRecord::from_specs(
         &selection_objective,
@@ -9007,10 +9030,24 @@ fn selection_objective_direction(objective_set: &ObjectiveSetRecord) -> f64 {
         .find(|objective| objective.name == objective_set.selection_objective)
         .map(|objective| objective.direction.trim().to_ascii_lowercase())
         .map(|direction| match direction.as_str() {
-            "min" | "minimize" | "lower" | "down" => -1.0,
+            "min" | "minimize" | "lower" | "lower_is_better" | "down" => -1.0,
             _ => 1.0,
         })
         .unwrap_or(1.0)
+}
+
+fn normalize_gepa_objective_direction(direction: &str) -> String {
+    match direction.trim().to_ascii_lowercase().as_str() {
+        "min" | "minimize" | "lower" | "lower_is_better" | "down" => "minimize".to_string(),
+        _ => "maximize".to_string(),
+    }
+}
+
+fn objective_direction_multiplier(direction: &str) -> f64 {
+    match normalize_gepa_objective_direction(direction).as_str() {
+        "minimize" => -1.0,
+        _ => 1.0,
+    }
 }
 
 fn row_example_id(row: &Value) -> Result<String> {
@@ -9517,7 +9554,13 @@ fn pareto_objective_cells(
             CandidateParetoCell {
                 frontier_key: format!("objective:{objective}"),
                 candidate_index: idx,
-                score: sum / count as f64,
+                score: (sum / count as f64)
+                    * objective_set
+                        .objectives
+                        .iter()
+                        .find(|spec| spec.name == objective)
+                        .map(|spec| objective_direction_multiplier(&spec.direction))
+                        .unwrap_or(1.0),
                 example_id: None,
                 objective_id: Some(objective),
             },
@@ -9552,7 +9595,7 @@ fn pareto_example_objective_cells(
                             frame.example_id, objective.name
                         ),
                         candidate_index: idx,
-                        score,
+                        score: score * objective_direction_multiplier(&objective.direction),
                         example_id: Some(frame.example_id.clone()),
                         objective_id: Some(objective.name.clone()),
                     },
@@ -9603,7 +9646,9 @@ fn upsert_pareto_cell(
 }
 
 fn frame_selection_score(frame: &SensorFrame, objective_set: &ObjectiveSetRecord) -> Option<f64> {
-    frame_objective_score(frame, &objective_set.selection_objective).or(Some(frame.reward))
+    let raw =
+        frame_objective_score(frame, &objective_set.selection_objective).or(Some(frame.reward))?;
+    Some(raw * selection_objective_direction(objective_set))
 }
 
 fn frame_objective_score(frame: &SensorFrame, objective: &str) -> Option<f64> {

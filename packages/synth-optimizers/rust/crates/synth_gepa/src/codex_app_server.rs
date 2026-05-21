@@ -379,6 +379,8 @@ fn batch_sampler_read_model(input: &CodexProposerInput<'_>) -> Value {
         "field": input.config.gepa.batch_sampler.field,
         "minibatch_size": input.config.gepa.minibatch_size,
         "proposals_per_round": input.config.gepa.proposals_per_generation,
+        "objective_keys": input.config.gepa.objective_keys,
+        "objective_directions": input.config.gepa.objective_directions,
     })
 }
 
@@ -817,6 +819,8 @@ fn pareto_front_read_model(input: &CodexProposerInput<'_>) -> Value {
         "schema_version": "gepa_pareto_front.v1",
         "frontier_type": pareto_front.frontier_type,
         "score_source": pareto_front.score_source,
+        "objective_keys": input.config.gepa.objective_keys,
+        "objective_directions": input.config.gepa.objective_directions,
         "parent_candidate_id": input.parent.candidate_id,
         "candidate_selector": candidate_selector_read_model(input),
         "members": members,
@@ -894,6 +898,10 @@ struct CodexParetoCell {
 
 fn codex_pareto_example_cells(input: &CodexProposerInput<'_>) -> Vec<CodexParetoCell> {
     let selection_objective = configured_selection_objective(input);
+    let selection_direction = selection_objective
+        .as_deref()
+        .map(|objective| codex_objective_direction(input, objective))
+        .unwrap_or(1.0);
     let mut winners: BTreeMap<String, CodexParetoCell> = BTreeMap::new();
     for candidate in input.candidates {
         if candidate.train_reward.is_none() {
@@ -909,7 +917,7 @@ fn codex_pareto_example_cells(input: &CodexProposerInput<'_>) -> Vec<CodexPareto
                 CodexParetoCell {
                     frontier_key: format!("example:{}", frame.example_id),
                     candidate_id,
-                    score,
+                    score: score * selection_direction,
                     example_id: Some(frame.example_id.clone()),
                     objective_id: None,
                 },
@@ -920,6 +928,7 @@ fn codex_pareto_example_cells(input: &CodexProposerInput<'_>) -> Vec<CodexPareto
 }
 
 fn codex_pareto_objective_cells(input: &CodexProposerInput<'_>) -> Vec<CodexParetoCell> {
+    let objective_keys = configured_objective_keys(input);
     let mut sums: BTreeMap<(String, String), (f64, usize)> = BTreeMap::new();
     for candidate in input.candidates {
         if candidate.train_reward.is_none() {
@@ -927,6 +936,9 @@ fn codex_pareto_objective_cells(input: &CodexProposerInput<'_>) -> Vec<CodexPare
         }
         for frame in train_sensor_frames(candidate) {
             for score in &frame.objective_scores {
+                if !objective_keys.is_empty() && !objective_keys.contains(&score.objective) {
+                    continue;
+                }
                 let entry = sums
                     .entry((candidate.candidate_id.clone(), score.objective.clone()))
                     .or_insert((0.0, 0));
@@ -946,7 +958,7 @@ fn codex_pareto_objective_cells(input: &CodexProposerInput<'_>) -> Vec<CodexPare
             CodexParetoCell {
                 frontier_key: format!("objective:{objective}"),
                 candidate_id,
-                score: sum / count as f64,
+                score: (sum / count as f64) * codex_objective_direction(input, &objective),
                 example_id: None,
                 objective_id: Some(objective),
             },
@@ -956,6 +968,7 @@ fn codex_pareto_objective_cells(input: &CodexProposerInput<'_>) -> Vec<CodexPare
 }
 
 fn codex_pareto_example_objective_cells(input: &CodexProposerInput<'_>) -> Vec<CodexParetoCell> {
+    let objective_keys = configured_objective_keys(input);
     let mut winners = BTreeMap::new();
     for candidate in input.candidates {
         if candidate.train_reward.is_none() {
@@ -963,6 +976,9 @@ fn codex_pareto_example_objective_cells(input: &CodexProposerInput<'_>) -> Vec<C
         }
         for frame in train_sensor_frames(candidate) {
             for score in &frame.objective_scores {
+                if !objective_keys.is_empty() && !objective_keys.contains(&score.objective) {
+                    continue;
+                }
                 let key = format!("{}|{}", frame.example_id, score.objective);
                 upsert_codex_pareto_cell(
                     &mut winners,
@@ -973,7 +989,7 @@ fn codex_pareto_example_objective_cells(input: &CodexProposerInput<'_>) -> Vec<C
                             frame.example_id, score.objective
                         ),
                         candidate_id: candidate.candidate_id.clone(),
-                        score: score.value,
+                        score: score.value * codex_objective_direction(input, &score.objective),
                         example_id: Some(frame.example_id.clone()),
                         objective_id: Some(score.objective.clone()),
                     },
@@ -1022,6 +1038,36 @@ fn configured_selection_objective(input: &CodexProposerInput<'_>) -> Option<Stri
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn configured_objective_keys(input: &CodexProposerInput<'_>) -> BTreeSet<String> {
+    input
+        .config
+        .gepa
+        .objective_keys
+        .iter()
+        .map(|objective| objective.trim())
+        .filter(|objective| !objective.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn codex_objective_direction(input: &CodexProposerInput<'_>, objective: &str) -> f64 {
+    input
+        .config
+        .gepa
+        .objective_directions
+        .get(objective)
+        .map(String::as_str)
+        .map(normalize_objective_direction)
+        .unwrap_or(1.0)
+}
+
+fn normalize_objective_direction(direction: &str) -> f64 {
+    match direction.trim().to_ascii_lowercase().as_str() {
+        "min" | "minimize" | "lower" | "lower_is_better" | "down" => -1.0,
+        _ => 1.0,
+    }
 }
 
 fn frame_objective_score(
