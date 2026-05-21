@@ -807,7 +807,8 @@ fn ensure_container_inputs(context: &mut GepaRunContext) -> Result<GepaContainer
         "Dataset rows loaded",
         json!({"train_rows": train_rows.len(), "heldout_rows": heldout_rows.len()}),
     )?;
-    let objective_set = declared_objective_set(&program, &train_rows, &heldout_rows);
+    let objective_set =
+        declared_objective_set(&context.config, &program, &train_rows, &heldout_rows);
     context
         .workspace
         .record_objective_set(&context.config.run.run_id, &objective_set)?;
@@ -1754,6 +1755,7 @@ fn schedule_async_proposer_job(
     let parent_selection = select_proposer_parent_candidate(
         &state.candidates,
         &resources.train_rows,
+        &resources.objective_set,
         state.cursor.generation,
         &context.config.run.run_id,
         state.best_idx,
@@ -5131,6 +5133,7 @@ fn advance_generation_start(
     let parent_selection = select_proposer_parent_candidate(
         &state.candidates,
         &resources.train_rows,
+        &resources.objective_set,
         state.cursor.generation,
         &context.config.run.run_id,
         state.best_idx,
@@ -6836,6 +6839,7 @@ fn execute_gepa_monolithic_with_options(
         let parent_selection = select_proposer_parent_candidate(
             &candidates,
             &train_rows,
+            &objective_set,
             generation,
             &config.run.run_id,
             Some(best_idx),
@@ -8296,6 +8300,7 @@ fn seed_candidate_payload(
 }
 
 fn declared_objective_set(
+    config: &SynthOptimizerConfig,
     program: &PromptProgram,
     train_rows: &[Value],
     heldout_rows: &[Value],
@@ -8335,9 +8340,29 @@ fn declared_objective_set(
         ));
     }
 
-    let selection_objective = objectives
-        .first()
-        .map(|(name, _)| name.clone())
+    let configured_selection = config
+        .gepa
+        .selection_objective
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(selection_objective) = configured_selection {
+        if seen.insert((
+            selection_objective.to_string(),
+            "gepa.selection_objective".to_string(),
+        )) {
+            objectives.insert(
+                0,
+                (
+                    selection_objective.to_string(),
+                    "gepa.selection_objective".to_string(),
+                ),
+            );
+        }
+    }
+    let selection_objective = configured_selection
+        .map(str::to_string)
+        .or_else(|| objectives.first().map(|(name, _)| name.clone()))
         .unwrap_or_else(|| "outcome_reward".to_string());
     let specs = objectives
         .iter()
@@ -8356,9 +8381,13 @@ fn declared_objective_set(
     metadata.insert("source".to_string(), json!("gepa.run_start"));
     metadata.insert("train_rows".to_string(), json!(train_rows.len()));
     metadata.insert("heldout_rows".to_string(), json!(heldout_rows.len()));
+    metadata.insert(
+        "frontier_type_source".to_string(),
+        json!("gepa.frontier_type"),
+    );
     ObjectiveSetRecord::from_specs(
         &selection_objective,
-        "scalar_mean_reward.v1",
+        &normalize_gepa_frontier_type(&config.gepa.frontier_type),
         specs,
         metadata,
     )
@@ -8717,6 +8746,7 @@ fn frontier_members(candidates: &[CandidateRecord]) -> Vec<FrontierMember> {
 fn select_proposer_parent_candidate(
     candidates: &[CandidateRecord],
     train_rows: &[Value],
+    objective_set: &ObjectiveSetRecord,
     generation: usize,
     run_id: &str,
     fallback_idx: Option<usize>,
@@ -8737,53 +8767,22 @@ fn select_proposer_parent_candidate(
                 .map(|(idx, _)| idx)
         })
         .unwrap_or(0);
-    let train_example_ids = train_rows
-        .iter()
-        .map(row_example_id)
-        .collect::<Result<BTreeSet<_>>>()?;
-    let mut winners_by_example: BTreeMap<String, (usize, String, f64)> = BTreeMap::new();
-    for (idx, candidate) in candidates.iter().enumerate() {
-        if candidate.train_reward.is_none() {
-            continue;
-        }
-        for score in &candidate.train_scores {
-            if !train_example_ids.is_empty() && !train_example_ids.contains(&score.example_id) {
-                continue;
-            }
-            let candidate_key = candidate.candidate_id.clone();
-            let should_replace = winners_by_example
-                .get(&score.example_id)
-                .map(|(_, incumbent_id, incumbent_reward)| {
-                    score.reward > *incumbent_reward + f64::EPSILON
-                        || ((score.reward - *incumbent_reward).abs() <= f64::EPSILON
-                            && candidate_key < *incumbent_id)
-                })
-                .unwrap_or(true);
-            if should_replace {
-                winners_by_example
-                    .insert(score.example_id.clone(), (idx, candidate_key, score.reward));
-            }
-        }
-    }
-    let mut win_counts: BTreeMap<usize, usize> = BTreeMap::new();
-    for (idx, _, _) in winners_by_example.values() {
-        *win_counts.entry(*idx).or_default() += 1;
-    }
-    if win_counts.is_empty() {
+    let pareto_front = compute_candidate_pareto_front(candidates, train_rows, objective_set)?;
+    if pareto_front.win_counts.is_empty() {
         let candidate = &candidates[fallback_idx];
         return Ok(ParentSelectionDecision {
             candidate_index: fallback_idx,
             metadata: json!({
                 "strategy": "pareto_weighted",
                 "reason": "fallback_no_train_frontier_cells",
-                "frontier_type": "per_example",
+                "frontier_type": normalize_gepa_frontier_type(&objective_set.frontier_type),
                 "candidate_id": candidate.candidate_id,
                 "win_count": 0,
                 "weight": 1.0,
             }),
         });
     }
-    let mut members = win_counts.keys().copied().collect::<Vec<_>>();
+    let mut members = pareto_front.win_counts.keys().copied().collect::<Vec<_>>();
     members.sort_by(|left, right| {
         candidates[*left]
             .candidate_id
@@ -8794,7 +8793,7 @@ fn select_proposer_parent_candidate(
         .map(|idx| {
             (
                 *idx,
-                std::cmp::max(1usize, *win_counts.get(idx).unwrap_or(&0)),
+                std::cmp::max(1usize, *pareto_front.win_counts.get(idx).unwrap_or(&0)),
             )
         })
         .collect::<Vec<_>>();
@@ -8812,14 +8811,17 @@ fn select_proposer_parent_candidate(
             break;
         }
     }
-    let selected_weight = std::cmp::max(1usize, *win_counts.get(&selected_idx).unwrap_or(&0));
+    let selected_weight = std::cmp::max(
+        1usize,
+        *pareto_front.win_counts.get(&selected_idx).unwrap_or(&0),
+    );
     let frontier_members = members
         .iter()
         .map(|idx| {
             json!({
                 "candidate_id": candidates[*idx].candidate_id,
-                "win_count": win_counts.get(idx).copied().unwrap_or(0),
-                "weight": std::cmp::max(1usize, *win_counts.get(idx).unwrap_or(&0)),
+                "win_count": pareto_front.win_counts.get(idx).copied().unwrap_or(0),
+                "weight": std::cmp::max(1usize, *pareto_front.win_counts.get(idx).unwrap_or(&0)),
             })
         })
         .collect::<Vec<_>>();
@@ -8828,15 +8830,241 @@ fn select_proposer_parent_candidate(
         metadata: json!({
             "strategy": "pareto_weighted",
             "reason": "pareto_weighted_frontier",
-            "frontier_type": "per_example",
+            "frontier_type": pareto_front.frontier_type,
             "candidate_id": candidates[selected_idx].candidate_id,
-            "win_count": win_counts.get(&selected_idx).copied().unwrap_or(0),
+            "win_count": pareto_front.win_counts.get(&selected_idx).copied().unwrap_or(0),
             "weight": if total_weight == 0 { 1.0 } else { selected_weight as f64 / total_weight as f64 },
             "total_weight": total_weight,
             "frontier_size": members.len(),
             "frontier": frontier_members,
+            "cells": pareto_front.cells,
         }),
     })
+}
+
+#[derive(Debug)]
+struct CandidateParetoFront {
+    frontier_type: String,
+    win_counts: BTreeMap<usize, usize>,
+    cells: Vec<Value>,
+}
+
+fn compute_candidate_pareto_front(
+    candidates: &[CandidateRecord],
+    train_rows: &[Value],
+    objective_set: &ObjectiveSetRecord,
+) -> Result<CandidateParetoFront> {
+    let frontier_type = normalize_gepa_frontier_type(&objective_set.frontier_type);
+    let train_example_ids = train_rows
+        .iter()
+        .map(row_example_id)
+        .collect::<Result<BTreeSet<_>>>()?;
+    let mut cells = match frontier_type.as_str() {
+        "per_objective" => pareto_objective_cells(candidates, &train_example_ids, objective_set),
+        "per_example_objective" => {
+            pareto_example_objective_cells(candidates, &train_example_ids, objective_set)
+        }
+        _ => pareto_example_cells(candidates, &train_example_ids, objective_set),
+    };
+    if cells.is_empty() && frontier_type != "per_example" {
+        cells = pareto_example_cells(candidates, &train_example_ids, objective_set);
+    }
+    let mut win_counts = BTreeMap::new();
+    let mut cell_values = Vec::new();
+    for cell in cells {
+        *win_counts.entry(cell.candidate_index).or_default() += 1;
+        cell_values.push(json!({
+            "frontier_key": cell.frontier_key,
+            "candidate_id": candidates[cell.candidate_index].candidate_id,
+            "score": cell.score,
+            "example_id": cell.example_id,
+            "objective_id": cell.objective_id,
+        }));
+    }
+    Ok(CandidateParetoFront {
+        frontier_type,
+        win_counts,
+        cells: cell_values,
+    })
+}
+
+#[derive(Clone, Debug)]
+struct CandidateParetoCell {
+    frontier_key: String,
+    candidate_index: usize,
+    score: f64,
+    example_id: Option<String>,
+    objective_id: Option<String>,
+}
+
+fn pareto_example_cells(
+    candidates: &[CandidateRecord],
+    train_example_ids: &BTreeSet<String>,
+    objective_set: &ObjectiveSetRecord,
+) -> Vec<CandidateParetoCell> {
+    let mut winners: BTreeMap<String, CandidateParetoCell> = BTreeMap::new();
+    for (idx, candidate) in candidates.iter().enumerate() {
+        if candidate.train_reward.is_none() {
+            continue;
+        }
+        for frame in train_sensor_frames(candidate, train_example_ids) {
+            let Some(score) = frame_selection_score(frame, objective_set) else {
+                continue;
+            };
+            upsert_pareto_cell(
+                &mut winners,
+                frame.example_id.clone(),
+                CandidateParetoCell {
+                    frontier_key: format!("example:{}", frame.example_id),
+                    candidate_index: idx,
+                    score,
+                    example_id: Some(frame.example_id.clone()),
+                    objective_id: None,
+                },
+                candidates,
+            );
+        }
+    }
+    winners.into_values().collect()
+}
+
+fn pareto_objective_cells(
+    candidates: &[CandidateRecord],
+    train_example_ids: &BTreeSet<String>,
+    objective_set: &ObjectiveSetRecord,
+) -> Vec<CandidateParetoCell> {
+    let mut objective_scores: BTreeMap<(usize, String), (f64, usize)> = BTreeMap::new();
+    for (idx, candidate) in candidates.iter().enumerate() {
+        if candidate.train_reward.is_none() {
+            continue;
+        }
+        for frame in train_sensor_frames(candidate, train_example_ids) {
+            for objective in &objective_set.objectives {
+                let Some(score) = frame_objective_score(frame, &objective.name) else {
+                    continue;
+                };
+                let entry = objective_scores
+                    .entry((idx, objective.name.clone()))
+                    .or_insert((0.0, 0));
+                entry.0 += score;
+                entry.1 += 1;
+            }
+        }
+    }
+    let mut winners: BTreeMap<String, CandidateParetoCell> = BTreeMap::new();
+    for ((idx, objective), (sum, count)) in objective_scores {
+        if count == 0 {
+            continue;
+        }
+        upsert_pareto_cell(
+            &mut winners,
+            objective.clone(),
+            CandidateParetoCell {
+                frontier_key: format!("objective:{objective}"),
+                candidate_index: idx,
+                score: sum / count as f64,
+                example_id: None,
+                objective_id: Some(objective),
+            },
+            candidates,
+        );
+    }
+    winners.into_values().collect()
+}
+
+fn pareto_example_objective_cells(
+    candidates: &[CandidateRecord],
+    train_example_ids: &BTreeSet<String>,
+    objective_set: &ObjectiveSetRecord,
+) -> Vec<CandidateParetoCell> {
+    let mut winners: BTreeMap<String, CandidateParetoCell> = BTreeMap::new();
+    for (idx, candidate) in candidates.iter().enumerate() {
+        if candidate.train_reward.is_none() {
+            continue;
+        }
+        for frame in train_sensor_frames(candidate, train_example_ids) {
+            for objective in &objective_set.objectives {
+                let Some(score) = frame_objective_score(frame, &objective.name) else {
+                    continue;
+                };
+                let key = format!("{}|{}", frame.example_id, objective.name);
+                upsert_pareto_cell(
+                    &mut winners,
+                    key,
+                    CandidateParetoCell {
+                        frontier_key: format!(
+                            "example_objective:{}|{}",
+                            frame.example_id, objective.name
+                        ),
+                        candidate_index: idx,
+                        score,
+                        example_id: Some(frame.example_id.clone()),
+                        objective_id: Some(objective.name.clone()),
+                    },
+                    candidates,
+                );
+            }
+        }
+    }
+    winners.into_values().collect()
+}
+
+fn train_sensor_frames<'a>(
+    candidate: &'a CandidateRecord,
+    train_example_ids: &'a BTreeSet<String>,
+) -> impl Iterator<Item = &'a SensorFrame> + 'a {
+    candidate.train_scores.iter().filter_map(|score| {
+        if !train_example_ids.is_empty() && !train_example_ids.contains(&score.example_id) {
+            return None;
+        }
+        candidate.sensor_frames.iter().find(|frame| {
+            frame.example_id == score.example_id
+                && matches!(
+                    frame.evaluation_stage.as_str(),
+                    "seed_full_train" | "candidate_full_train"
+                )
+        })
+    })
+}
+
+fn upsert_pareto_cell(
+    winners: &mut BTreeMap<String, CandidateParetoCell>,
+    key: String,
+    challenger: CandidateParetoCell,
+    candidates: &[CandidateRecord],
+) {
+    let should_replace = winners
+        .get(&key)
+        .map(|incumbent| {
+            challenger.score > incumbent.score + f64::EPSILON
+                || ((challenger.score - incumbent.score).abs() <= f64::EPSILON
+                    && candidates[challenger.candidate_index].candidate_id
+                        < candidates[incumbent.candidate_index].candidate_id)
+        })
+        .unwrap_or(true);
+    if should_replace {
+        winners.insert(key, challenger);
+    }
+}
+
+fn frame_selection_score(frame: &SensorFrame, objective_set: &ObjectiveSetRecord) -> Option<f64> {
+    frame_objective_score(frame, &objective_set.selection_objective).or(Some(frame.reward))
+}
+
+fn frame_objective_score(frame: &SensorFrame, objective: &str) -> Option<f64> {
+    frame
+        .objective_scores
+        .iter()
+        .find(|score| score.objective == objective)
+        .map(|score| score.value)
+}
+
+fn normalize_gepa_frontier_type(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "per_objective" => "per_objective".to_string(),
+        "per_example_objective" => "per_example_objective".to_string(),
+        _ => "per_example".to_string(),
+    }
 }
 
 fn deterministic_weight_bucket(

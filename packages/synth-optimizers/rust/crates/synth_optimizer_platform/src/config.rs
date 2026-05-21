@@ -73,6 +73,10 @@ fn default_rollout_async_timeout_seconds() -> u64 {
     600
 }
 
+fn default_frontier_type() -> String {
+    "per_example".to_string()
+}
+
 fn default_gepa_pipeline_config() -> GepaPipelineConfig {
     GepaPipelineConfig::default()
 }
@@ -292,6 +296,31 @@ impl SynthOptimizerConfig {
         if self.gepa.rollout_async_timeout_seconds == 0 {
             return Err(OptimizerError::Config(
                 "gepa.rollout_async_timeout_seconds must be positive".to_string(),
+            ));
+        }
+        let frontier_type = self
+            .gepa
+            .frontier_type
+            .trim()
+            .to_ascii_lowercase()
+            .replace('-', "_");
+        if !matches!(
+            frontier_type.as_str(),
+            "per_example" | "per_objective" | "per_example_objective"
+        ) {
+            return Err(OptimizerError::Config(format!(
+                "gepa.frontier_type must be per_example, per_objective, or per_example_objective, got {:?}",
+                self.gepa.frontier_type
+            )));
+        }
+        if self
+            .gepa
+            .selection_objective
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(OptimizerError::Config(
+                "gepa.selection_objective must be non-empty when set".to_string(),
             ));
         }
         validate_gepa_pipeline_config(&self.gepa.pipeline)?;
@@ -523,6 +552,10 @@ pub struct GepaConfig {
     pub rollout_poll_interval_ms: u64,
     #[serde(default = "default_rollout_async_timeout_seconds")]
     pub rollout_async_timeout_seconds: u64,
+    #[serde(default = "default_frontier_type")]
+    pub frontier_type: String,
+    #[serde(default)]
+    pub selection_objective: Option<String>,
     #[serde(default = "default_gepa_pipeline_config")]
     pub pipeline: GepaPipelineConfig,
     #[serde(default)]
@@ -565,6 +598,8 @@ impl Default for GepaConfig {
             rollout_submission_mode: default_rollout_submission_mode(),
             rollout_poll_interval_ms: default_rollout_poll_interval_ms(),
             rollout_async_timeout_seconds: default_rollout_async_timeout_seconds(),
+            frontier_type: default_frontier_type(),
+            selection_objective: None,
             pipeline: default_gepa_pipeline_config(),
             max_cost_usd: 0.0,
             max_time_seconds: None,

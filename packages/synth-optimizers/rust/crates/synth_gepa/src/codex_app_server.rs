@@ -736,8 +736,8 @@ fn pareto_front_read_model(input: &CodexProposerInput<'_>) -> Value {
     });
     json!({
         "schema_version": "gepa_pareto_front.v1",
-        "frontier_type": "per_example",
-        "score_source": "train_scores.reward",
+        "frontier_type": pareto_front.frontier_type,
+        "score_source": pareto_front.score_source,
         "parent_candidate_id": input.parent.candidate_id,
         "members": members,
         "win_counts": pareto_front.win_counts,
@@ -748,44 +748,35 @@ fn pareto_front_read_model(input: &CodexProposerInput<'_>) -> Value {
 
 #[derive(Debug)]
 struct CodexParetoFront {
+    frontier_type: String,
+    score_source: String,
     members: BTreeSet<String>,
     win_counts: BTreeMap<String, usize>,
     cells: Vec<Value>,
 }
 
 fn compute_pareto_front(input: &CodexProposerInput<'_>) -> CodexParetoFront {
-    let mut winners_by_example: BTreeMap<String, (String, f64)> = BTreeMap::new();
-    for candidate in input.candidates {
-        if candidate.train_reward.is_none() {
-            continue;
-        }
-        for score in &candidate.train_scores {
-            let candidate_id = candidate.candidate_id.clone();
-            let should_replace = winners_by_example
-                .get(&score.example_id)
-                .map(|(incumbent_id, incumbent_reward)| {
-                    score.reward > *incumbent_reward + f64::EPSILON
-                        || ((score.reward - *incumbent_reward).abs() <= f64::EPSILON
-                            && candidate_id < *incumbent_id)
-                })
-                .unwrap_or(true);
-            if should_replace {
-                winners_by_example.insert(score.example_id.clone(), (candidate_id, score.reward));
-            }
-        }
+    let frontier_type = normalize_frontier_type(&input.config.gepa.frontier_type);
+    let mut cells = match frontier_type.as_str() {
+        "per_objective" => codex_pareto_objective_cells(input),
+        "per_example_objective" => codex_pareto_example_objective_cells(input),
+        _ => codex_pareto_example_cells(input),
+    };
+    if cells.is_empty() && frontier_type != "per_example" {
+        cells = codex_pareto_example_cells(input);
     }
     let mut members = BTreeSet::new();
     let mut win_counts: BTreeMap<String, usize> = BTreeMap::new();
-    let mut cells = Vec::new();
-    for (example_id, (candidate_id, score)) in winners_by_example {
-        members.insert(candidate_id.clone());
-        *win_counts.entry(candidate_id.clone()).or_default() += 1;
-        cells.push(json!({
-            "frontier_key": format!("example:{example_id}"),
-            "candidate_id": candidate_id,
-            "score": score,
-            "example_id": example_id,
-            "objective_id": Value::Null,
+    let mut cell_values = Vec::new();
+    for cell in cells {
+        members.insert(cell.candidate_id.clone());
+        *win_counts.entry(cell.candidate_id.clone()).or_default() += 1;
+        cell_values.push(json!({
+            "frontier_key": cell.frontier_key,
+            "candidate_id": cell.candidate_id,
+            "score": cell.score,
+            "example_id": cell.example_id,
+            "objective_id": cell.objective_id,
         }));
     }
     if members.is_empty() {
@@ -793,7 +784,7 @@ fn compute_pareto_front(input: &CodexProposerInput<'_>) -> CodexParetoFront {
             if candidate.train_reward.is_some() {
                 members.insert(candidate.candidate_id.clone());
                 win_counts.insert(candidate.candidate_id.clone(), 1);
-                cells.push(json!({
+                cell_values.push(json!({
                     "frontier_key": format!("candidate:{}", candidate.candidate_id),
                     "candidate_id": candidate.candidate_id,
                     "score": candidate.train_reward,
@@ -804,9 +795,172 @@ fn compute_pareto_front(input: &CodexProposerInput<'_>) -> CodexParetoFront {
         }
     }
     CodexParetoFront {
+        frontier_type,
+        score_source: "sensor_frame.objective_scores".to_string(),
         members,
         win_counts,
-        cells,
+        cells: cell_values,
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CodexParetoCell {
+    frontier_key: String,
+    candidate_id: String,
+    score: f64,
+    example_id: Option<String>,
+    objective_id: Option<String>,
+}
+
+fn codex_pareto_example_cells(input: &CodexProposerInput<'_>) -> Vec<CodexParetoCell> {
+    let selection_objective = configured_selection_objective(input);
+    let mut winners: BTreeMap<String, CodexParetoCell> = BTreeMap::new();
+    for candidate in input.candidates {
+        if candidate.train_reward.is_none() {
+            continue;
+        }
+        for frame in train_sensor_frames(candidate) {
+            let candidate_id = candidate.candidate_id.clone();
+            let score = frame_objective_score(frame, selection_objective.as_deref())
+                .unwrap_or(frame.reward);
+            upsert_codex_pareto_cell(
+                &mut winners,
+                frame.example_id.clone(),
+                CodexParetoCell {
+                    frontier_key: format!("example:{}", frame.example_id),
+                    candidate_id,
+                    score,
+                    example_id: Some(frame.example_id.clone()),
+                    objective_id: None,
+                },
+            );
+        }
+    }
+    winners.into_values().collect()
+}
+
+fn codex_pareto_objective_cells(input: &CodexProposerInput<'_>) -> Vec<CodexParetoCell> {
+    let mut sums: BTreeMap<(String, String), (f64, usize)> = BTreeMap::new();
+    for candidate in input.candidates {
+        if candidate.train_reward.is_none() {
+            continue;
+        }
+        for frame in train_sensor_frames(candidate) {
+            for score in &frame.objective_scores {
+                let entry = sums
+                    .entry((candidate.candidate_id.clone(), score.objective.clone()))
+                    .or_insert((0.0, 0));
+                entry.0 += score.value;
+                entry.1 += 1;
+            }
+        }
+    }
+    let mut winners = BTreeMap::new();
+    for ((candidate_id, objective), (sum, count)) in sums {
+        if count == 0 {
+            continue;
+        }
+        upsert_codex_pareto_cell(
+            &mut winners,
+            objective.clone(),
+            CodexParetoCell {
+                frontier_key: format!("objective:{objective}"),
+                candidate_id,
+                score: sum / count as f64,
+                example_id: None,
+                objective_id: Some(objective),
+            },
+        );
+    }
+    winners.into_values().collect()
+}
+
+fn codex_pareto_example_objective_cells(input: &CodexProposerInput<'_>) -> Vec<CodexParetoCell> {
+    let mut winners = BTreeMap::new();
+    for candidate in input.candidates {
+        if candidate.train_reward.is_none() {
+            continue;
+        }
+        for frame in train_sensor_frames(candidate) {
+            for score in &frame.objective_scores {
+                let key = format!("{}|{}", frame.example_id, score.objective);
+                upsert_codex_pareto_cell(
+                    &mut winners,
+                    key,
+                    CodexParetoCell {
+                        frontier_key: format!(
+                            "example_objective:{}|{}",
+                            frame.example_id, score.objective
+                        ),
+                        candidate_id: candidate.candidate_id.clone(),
+                        score: score.value,
+                        example_id: Some(frame.example_id.clone()),
+                        objective_id: Some(score.objective.clone()),
+                    },
+                );
+            }
+        }
+    }
+    winners.into_values().collect()
+}
+
+fn train_sensor_frames(
+    candidate: &CandidateRecord,
+) -> impl Iterator<Item = &synth_optimizer_platform::SensorFrame> {
+    candidate.sensor_frames.iter().filter(|frame| {
+        matches!(
+            frame.evaluation_stage.as_str(),
+            "seed_full_train" | "candidate_full_train"
+        )
+    })
+}
+
+fn upsert_codex_pareto_cell(
+    winners: &mut BTreeMap<String, CodexParetoCell>,
+    key: String,
+    challenger: CodexParetoCell,
+) {
+    let should_replace = winners
+        .get(&key)
+        .map(|incumbent| {
+            challenger.score > incumbent.score + f64::EPSILON
+                || ((challenger.score - incumbent.score).abs() <= f64::EPSILON
+                    && challenger.candidate_id < incumbent.candidate_id)
+        })
+        .unwrap_or(true);
+    if should_replace {
+        winners.insert(key, challenger);
+    }
+}
+
+fn configured_selection_objective(input: &CodexProposerInput<'_>) -> Option<String> {
+    input
+        .config
+        .gepa
+        .selection_objective
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn frame_objective_score(
+    frame: &synth_optimizer_platform::SensorFrame,
+    objective: Option<&str>,
+) -> Option<f64> {
+    let objective = objective?;
+    frame
+        .objective_scores
+        .iter()
+        .find(|score| score.objective == objective)
+        .map(|score| score.value)
+}
+
+fn normalize_frontier_type(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "per_objective" => "per_objective".to_string(),
+        "per_example_objective" => "per_example_objective".to_string(),
+        _ => "per_example".to_string(),
     }
 }
 
@@ -828,7 +982,7 @@ fn gepa_summary_read_model(input: &CodexProposerInput<'_>, rollouts: &Value) -> 
     json!({
         "candidate_count": input.candidates.len(),
         "frontier_count": pareto_front.members.len(),
-        "frontier_type": "per_example",
+        "frontier_type": pareto_front.frontier_type,
         "parent_candidate_id": input.parent.candidate_id,
         "best_candidate_id": best.map(|candidate| candidate.candidate_id.as_str()),
         "best_train_reward": best.and_then(|candidate| candidate.train_reward),
