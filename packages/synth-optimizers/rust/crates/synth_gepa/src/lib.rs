@@ -16,16 +16,17 @@ use synth_optimizer_platform::{
     CandidateOverlay, CheckpointInput, CheckpointRecord, ConfiguredGepaRunLimits, ContainerClient,
     ContainerContractSnapshotInput, ContainerContractSnapshotRecord, DatasetResponse,
     DatasetRowsRequest, DatasetRowsResponse, DatasetSnapshotInput, DatasetSnapshotRecord,
-    EvaluationCacheRecord, EvaluationCacheRecordInput, EventWriter, FailurePayload, GepaRunResult,
-    LeverBundle, LeverManifest, ManagedContainerProcess, MaterializationRecord,
-    MaterializationRecordInput, ObjectiveScore, ObjectiveSetRecord, ObjectiveSpec, OptimizerError,
-    OptimizerJob, OptimizerJobKind, OptimizerJobStatus, OptimizerRunState, OptimizerStateMachine,
-    OptimizerTransition, OptimizerTransitionTrigger, ParetoComparisonRecord,
-    PromptCandidatePayload, PromptProgram, PromptProgramSnapshotInput, PromptProgramSnapshotRecord,
-    RequestCache, ResolvedRunConfigInput, ResolvedRunConfigRecord, Result,
-    RolloutMaterializationIdentity, RunRegistry, RunRegistryEntry, RuntimeEffectInput,
-    RuntimeEffectRecord, ScoreVectorRecord, SensorFrame, SensorScoreRecords, StopperStateInput,
-    StopperStateRecord, SynthOptimizerConfig, UsageLedgerInput, UsageLedgerRecord, WorkspaceStore,
+    EvaluationCacheRecord, EvaluationCacheRecordInput, EventWriter, FailurePayload,
+    GepaCandidateSelectorConfig, GepaRunResult, LeverBundle, LeverManifest,
+    ManagedContainerProcess, MaterializationRecord, MaterializationRecordInput, ObjectiveScore,
+    ObjectiveSetRecord, ObjectiveSpec, OptimizerError, OptimizerJob, OptimizerJobKind,
+    OptimizerJobStatus, OptimizerRunState, OptimizerStateMachine, OptimizerTransition,
+    OptimizerTransitionTrigger, ParetoComparisonRecord, PromptCandidatePayload, PromptProgram,
+    PromptProgramSnapshotInput, PromptProgramSnapshotRecord, RequestCache, ResolvedRunConfigInput,
+    ResolvedRunConfigRecord, Result, RolloutMaterializationIdentity, RunRegistry, RunRegistryEntry,
+    RuntimeEffectInput, RuntimeEffectRecord, ScoreVectorRecord, SensorFrame, SensorScoreRecords,
+    StopperStateInput, StopperStateRecord, SynthOptimizerConfig, UsageLedgerInput,
+    UsageLedgerRecord, WorkspaceStore,
 };
 
 mod codex_app_server;
@@ -1756,6 +1757,7 @@ fn schedule_async_proposer_job(
         &state.candidates,
         &resources.train_rows,
         &resources.objective_set,
+        &context.config.gepa.candidate_selector,
         state.cursor.generation,
         &context.config.run.run_id,
         state.best_idx,
@@ -5134,6 +5136,7 @@ fn advance_generation_start(
         &state.candidates,
         &resources.train_rows,
         &resources.objective_set,
+        &context.config.gepa.candidate_selector,
         state.cursor.generation,
         &context.config.run.run_id,
         state.best_idx,
@@ -6840,6 +6843,7 @@ fn execute_gepa_monolithic_with_options(
             &candidates,
             &train_rows,
             &objective_set,
+            &config.gepa.candidate_selector,
             generation,
             &config.run.run_id,
             Some(best_idx),
@@ -8747,6 +8751,7 @@ fn select_proposer_parent_candidate(
     candidates: &[CandidateRecord],
     train_rows: &[Value],
     objective_set: &ObjectiveSetRecord,
+    selector: &GepaCandidateSelectorConfig,
     generation: usize,
     run_id: &str,
     fallback_idx: Option<usize>,
@@ -8768,12 +8773,14 @@ fn select_proposer_parent_candidate(
         })
         .unwrap_or(0);
     let pareto_front = compute_candidate_pareto_front(candidates, train_rows, objective_set)?;
-    if pareto_front.win_counts.is_empty() {
+    let strategy = normalize_gepa_candidate_selector_name(&selector.name);
+    if pareto_front.win_counts.is_empty() && strategy != "random" {
         let candidate = &candidates[fallback_idx];
         return Ok(ParentSelectionDecision {
             candidate_index: fallback_idx,
             metadata: json!({
-                "strategy": "pareto_weighted",
+                "strategy": strategy,
+                "selector": candidate_selector_metadata(selector),
                 "reason": "fallback_no_train_frontier_cells",
                 "frontier_type": normalize_gepa_frontier_type(&objective_set.frontier_type),
                 "candidate_id": candidate.candidate_id,
@@ -8788,57 +8795,232 @@ fn select_proposer_parent_candidate(
             .candidate_id
             .cmp(&candidates[*right].candidate_id)
     });
-    let weights = members
-        .iter()
-        .map(|idx| {
+    let all_members = (0..candidates.len()).collect::<Vec<_>>();
+    let (selected_idx, weights, reason) = match strategy.as_str() {
+        "uniform_pareto" => {
+            let weights = members.iter().map(|idx| (*idx, 1usize)).collect::<Vec<_>>();
             (
-                *idx,
-                std::cmp::max(1usize, *pareto_front.win_counts.get(idx).unwrap_or(&0)),
+                select_weighted_parent(run_id, generation, candidates, &weights, fallback_idx),
+                weights,
+                "uniform_pareto".to_string(),
             )
-        })
-        .collect::<Vec<_>>();
+        }
+        "random" => {
+            let weights = all_members
+                .iter()
+                .map(|idx| (*idx, 1usize))
+                .collect::<Vec<_>>();
+            (
+                select_weighted_parent(run_id, generation, candidates, &weights, fallback_idx),
+                weights,
+                "uniform_all_candidates".to_string(),
+            )
+        }
+        "current_best" => {
+            let selected_idx = select_best_frontier_parent(candidates, &pareto_front.win_counts)
+                .unwrap_or(fallback_idx);
+            (
+                selected_idx,
+                vec![(
+                    selected_idx,
+                    std::cmp::max(
+                        1usize,
+                        pareto_front
+                            .win_counts
+                            .get(&selected_idx)
+                            .copied()
+                            .unwrap_or(0),
+                    ),
+                )],
+                "current_best".to_string(),
+            )
+        }
+        "top_k_pareto" => {
+            let k = selector.k.unwrap_or(3);
+            let mut top_members = members.clone();
+            top_members.sort_by(|left, right| {
+                pareto_front
+                    .win_counts
+                    .get(right)
+                    .copied()
+                    .unwrap_or(0)
+                    .cmp(&pareto_front.win_counts.get(left).copied().unwrap_or(0))
+                    .then_with(|| {
+                        candidates[*left]
+                            .candidate_id
+                            .cmp(&candidates[*right].candidate_id)
+                    })
+            });
+            top_members.truncate(k);
+            top_members.sort_by(|left, right| {
+                candidates[*left]
+                    .candidate_id
+                    .cmp(&candidates[*right].candidate_id)
+            });
+            let weights = top_members
+                .iter()
+                .map(|idx| (*idx, 1usize))
+                .collect::<Vec<_>>();
+            (
+                select_weighted_parent(run_id, generation, candidates, &weights, fallback_idx),
+                weights,
+                format!("top_{k}_pareto"),
+            )
+        }
+        "epsilon_greedy" => {
+            let epsilon = selector.epsilon.unwrap_or(0.1);
+            let explore =
+                deterministic_selector_fraction(run_id, generation, candidates, &strategy)
+                    < epsilon;
+            if explore {
+                let weights = all_members
+                    .iter()
+                    .map(|idx| (*idx, 1usize))
+                    .collect::<Vec<_>>();
+                (
+                    select_weighted_parent(run_id, generation, candidates, &weights, fallback_idx),
+                    weights,
+                    "epsilon_explore".to_string(),
+                )
+            } else {
+                let selected_idx =
+                    select_best_frontier_parent(candidates, &pareto_front.win_counts)
+                        .unwrap_or(fallback_idx);
+                (
+                    selected_idx,
+                    vec![(
+                        selected_idx,
+                        std::cmp::max(
+                            1usize,
+                            pareto_front
+                                .win_counts
+                                .get(&selected_idx)
+                                .copied()
+                                .unwrap_or(0),
+                        ),
+                    )],
+                    "epsilon_exploit".to_string(),
+                )
+            }
+        }
+        _ => {
+            let weights = members
+                .iter()
+                .map(|idx| {
+                    (
+                        *idx,
+                        std::cmp::max(1usize, *pareto_front.win_counts.get(idx).unwrap_or(&0)),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (
+                select_weighted_parent(run_id, generation, candidates, &weights, fallback_idx),
+                weights,
+                "pareto_weighted_frontier".to_string(),
+            )
+        }
+    };
     let total_weight = weights
         .iter()
         .fold(0usize, |acc, (_, weight)| acc.saturating_add(*weight));
-    let bucket =
-        deterministic_weight_bucket(run_id, generation, candidates, &weights, total_weight);
-    let mut running = 0usize;
-    let mut selected_idx = fallback_idx;
-    for (idx, weight) in &weights {
-        running = running.saturating_add(*weight);
-        if bucket < running {
-            selected_idx = *idx;
-            break;
-        }
-    }
-    let selected_weight = std::cmp::max(
-        1usize,
-        *pareto_front.win_counts.get(&selected_idx).unwrap_or(&0),
-    );
+    let selected_raw_weight = weights
+        .iter()
+        .find(|(idx, _)| *idx == selected_idx)
+        .map(|(_, weight)| *weight)
+        .unwrap_or(1);
     let frontier_members = members
         .iter()
         .map(|idx| {
+            let selection_weight = weights
+                .iter()
+                .find(|(candidate_idx, _)| candidate_idx == idx)
+                .map(|(_, weight)| *weight)
+                .unwrap_or(0);
             json!({
                 "candidate_id": candidates[*idx].candidate_id,
                 "win_count": pareto_front.win_counts.get(idx).copied().unwrap_or(0),
-                "weight": std::cmp::max(1usize, *pareto_front.win_counts.get(idx).unwrap_or(&0)),
+                "selection_weight": selection_weight,
             })
         })
         .collect::<Vec<_>>();
     Ok(ParentSelectionDecision {
         candidate_index: selected_idx,
         metadata: json!({
-            "strategy": "pareto_weighted",
-            "reason": "pareto_weighted_frontier",
+            "strategy": strategy,
+            "selector": candidate_selector_metadata(selector),
+            "reason": reason,
             "frontier_type": pareto_front.frontier_type,
             "candidate_id": candidates[selected_idx].candidate_id,
             "win_count": pareto_front.win_counts.get(&selected_idx).copied().unwrap_or(0),
-            "weight": if total_weight == 0 { 1.0 } else { selected_weight as f64 / total_weight as f64 },
+            "weight": if total_weight == 0 { 1.0 } else { selected_raw_weight as f64 / total_weight as f64 },
+            "raw_weight": selected_raw_weight,
             "total_weight": total_weight,
             "frontier_size": members.len(),
             "frontier": frontier_members,
             "cells": pareto_front.cells,
         }),
+    })
+}
+
+fn normalize_gepa_candidate_selector_name(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "pareto" | "pareto_weighted" => "pareto_weighted".to_string(),
+        "uniform_pareto" => "uniform_pareto".to_string(),
+        "random" => "random".to_string(),
+        "current_best" => "current_best".to_string(),
+        "top_k_pareto" => "top_k_pareto".to_string(),
+        "epsilon_greedy" => "epsilon_greedy".to_string(),
+        _ => "pareto_weighted".to_string(),
+    }
+}
+
+fn candidate_selector_metadata(selector: &GepaCandidateSelectorConfig) -> Value {
+    json!({
+        "name": normalize_gepa_candidate_selector_name(&selector.name),
+        "configured_name": selector.name,
+        "epsilon": selector.epsilon,
+        "k": selector.k,
+    })
+}
+
+fn select_weighted_parent(
+    run_id: &str,
+    generation: usize,
+    candidates: &[CandidateRecord],
+    weights: &[(usize, usize)],
+    fallback_idx: usize,
+) -> usize {
+    let total_weight = weights
+        .iter()
+        .fold(0usize, |acc, (_, weight)| acc.saturating_add(*weight));
+    let bucket = deterministic_weight_bucket(run_id, generation, candidates, weights, total_weight);
+    let mut running = 0usize;
+    let mut selected_idx = fallback_idx;
+    for (idx, weight) in weights {
+        running = running.saturating_add(*weight);
+        if bucket < running {
+            selected_idx = *idx;
+            break;
+        }
+    }
+    selected_idx
+}
+
+fn select_best_frontier_parent(
+    candidates: &[CandidateRecord],
+    win_counts: &BTreeMap<usize, usize>,
+) -> Option<usize> {
+    win_counts.keys().copied().max_by(|left, right| {
+        win_counts
+            .get(left)
+            .copied()
+            .unwrap_or(0)
+            .cmp(&win_counts.get(right).copied().unwrap_or(0))
+            .then_with(|| {
+                candidates[*right]
+                    .candidate_id
+                    .cmp(&candidates[*left].candidate_id)
+            })
     })
 }
 
@@ -9091,6 +9273,28 @@ fn deterministic_weight_bucket(
     let mut bytes = [0u8; 8];
     bytes.copy_from_slice(&digest[..8]);
     (u64::from_le_bytes(bytes) as usize) % total_weight
+}
+
+fn deterministic_selector_fraction(
+    run_id: &str,
+    generation: usize,
+    candidates: &[CandidateRecord],
+    strategy: &str,
+) -> f64 {
+    let mut hasher = Sha256::new();
+    hasher.update(run_id.as_bytes());
+    hasher.update(b":selector:");
+    hasher.update(strategy.as_bytes());
+    hasher.update(b":");
+    hasher.update(generation.to_le_bytes());
+    for candidate in candidates {
+        hasher.update(candidate.candidate_id.as_bytes());
+        hasher.update(b";");
+    }
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    u64::from_le_bytes(bytes) as f64 / u64::MAX as f64
 }
 
 fn current_proposal_parent_idx(state: &GepaRunState) -> Result<usize> {

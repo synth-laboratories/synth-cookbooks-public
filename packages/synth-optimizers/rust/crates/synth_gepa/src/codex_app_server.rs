@@ -134,12 +134,14 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
     let links = links_read_model(input);
     let pareto_front = pareto_front_read_model(input);
     let gepa_summary = gepa_summary_read_model(input, &rollouts);
+    let candidate_selector = candidate_selector_read_model(input);
     let algorithm_read_model = json!({
         "schema_version": "gepa_algorithm_read_model_v1",
         "generation": input.generation,
         "parent_candidate_id": input.parent.candidate_id,
         "target_modules": input.config.candidate.target_modules,
         "proposals_per_round": input.config.gepa.proposals_per_generation,
+        "candidate_selector": candidate_selector,
         "parent_payload": parent_payload,
         "candidates": candidates,
         "candidate_deltas": candidate_deltas,
@@ -339,6 +341,18 @@ fn proposal_request(input: &CodexProposerInput<'_>) -> Value {
         "frontier_merges": merge_count,
         "target_modules": input.config.candidate.target_modules,
         "parent_candidate_id": input.parent.candidate_id,
+        "candidate_selector": candidate_selector_read_model(input),
+    })
+}
+
+fn candidate_selector_read_model(input: &CodexProposerInput<'_>) -> Value {
+    json!({
+        "name": normalize_candidate_selector_name(&input.config.gepa.candidate_selector.name),
+        "configured_name": input.config.gepa.candidate_selector.name,
+        "epsilon": input.config.gepa.candidate_selector.epsilon,
+        "k": input.config.gepa.candidate_selector.k,
+        "frontier_type": normalize_frontier_type(&input.config.gepa.frontier_type),
+        "selection_objective": configured_selection_objective(input),
     })
 }
 
@@ -739,6 +753,7 @@ fn pareto_front_read_model(input: &CodexProposerInput<'_>) -> Value {
         "frontier_type": pareto_front.frontier_type,
         "score_source": pareto_front.score_source,
         "parent_candidate_id": input.parent.candidate_id,
+        "candidate_selector": candidate_selector_read_model(input),
         "members": members,
         "win_counts": pareto_front.win_counts,
         "cells": pareto_front.cells,
@@ -964,6 +979,18 @@ fn normalize_frontier_type(value: &str) -> String {
     }
 }
 
+fn normalize_candidate_selector_name(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "pareto" | "pareto_weighted" => "pareto_weighted".to_string(),
+        "uniform_pareto" => "uniform_pareto".to_string(),
+        "random" => "random".to_string(),
+        "current_best" => "current_best".to_string(),
+        "top_k_pareto" => "top_k_pareto".to_string(),
+        "epsilon_greedy" => "epsilon_greedy".to_string(),
+        _ => "pareto_weighted".to_string(),
+    }
+}
+
 fn gepa_summary_read_model(input: &CodexProposerInput<'_>, rollouts: &Value) -> Value {
     let pareto_front = compute_pareto_front(input);
     let best = input.candidates.iter().max_by(|left, right| {
@@ -983,6 +1010,7 @@ fn gepa_summary_read_model(input: &CodexProposerInput<'_>, rollouts: &Value) -> 
         "candidate_count": input.candidates.len(),
         "frontier_count": pareto_front.members.len(),
         "frontier_type": pareto_front.frontier_type,
+        "candidate_selector": candidate_selector_read_model(input),
         "parent_candidate_id": input.parent.candidate_id,
         "best_candidate_id": best.map(|candidate| candidate.candidate_id.as_str()),
         "best_train_reward": best.and_then(|candidate| candidate.train_reward),

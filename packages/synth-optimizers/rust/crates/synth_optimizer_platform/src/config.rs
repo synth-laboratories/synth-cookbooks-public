@@ -77,6 +77,14 @@ fn default_frontier_type() -> String {
     "per_example".to_string()
 }
 
+fn default_candidate_selector_name() -> String {
+    "pareto_weighted".to_string()
+}
+
+fn default_candidate_selector_config() -> GepaCandidateSelectorConfig {
+    GepaCandidateSelectorConfig::default()
+}
+
 fn default_gepa_pipeline_config() -> GepaPipelineConfig {
     GepaPipelineConfig::default()
 }
@@ -323,6 +331,7 @@ impl SynthOptimizerConfig {
                 "gepa.selection_objective must be non-empty when set".to_string(),
             ));
         }
+        validate_gepa_candidate_selector_config(&self.gepa.candidate_selector)?;
         validate_gepa_pipeline_config(&self.gepa.pipeline)?;
         if !self.gepa.max_cost_usd.is_finite() || self.gepa.max_cost_usd < 0.0 {
             return Err(OptimizerError::Config(
@@ -537,6 +546,27 @@ impl Default for ProposerConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct GepaCandidateSelectorConfig {
+    #[serde(default = "default_candidate_selector_name")]
+    pub name: String,
+    #[serde(default)]
+    pub epsilon: Option<f64>,
+    #[serde(default)]
+    pub k: Option<usize>,
+}
+
+impl Default for GepaCandidateSelectorConfig {
+    fn default() -> Self {
+        Self {
+            name: default_candidate_selector_name(),
+            epsilon: None,
+            k: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GepaConfig {
     #[serde(default = "default_max_generations")]
     pub max_generations: usize,
@@ -556,6 +586,8 @@ pub struct GepaConfig {
     pub frontier_type: String,
     #[serde(default)]
     pub selection_objective: Option<String>,
+    #[serde(default = "default_candidate_selector_config")]
+    pub candidate_selector: GepaCandidateSelectorConfig,
     #[serde(default = "default_gepa_pipeline_config")]
     pub pipeline: GepaPipelineConfig,
     #[serde(default)]
@@ -600,6 +632,7 @@ impl Default for GepaConfig {
             rollout_async_timeout_seconds: default_rollout_async_timeout_seconds(),
             frontier_type: default_frontier_type(),
             selection_objective: None,
+            candidate_selector: default_candidate_selector_config(),
             pipeline: default_gepa_pipeline_config(),
             max_cost_usd: 0.0,
             max_time_seconds: None,
@@ -785,6 +818,39 @@ fn validate_positive_option(name: &str, value: Option<u64>) -> Result<()> {
 fn validate_positive_f64_option(name: &str, value: Option<f64>) -> Result<()> {
     if value.is_some_and(|item| !item.is_finite() || item <= 0.0) {
         return Err(OptimizerError::Config(format!("{name} must be positive")));
+    }
+    Ok(())
+}
+
+fn validate_gepa_candidate_selector_config(config: &GepaCandidateSelectorConfig) -> Result<()> {
+    let strategy = config.name.trim().to_ascii_lowercase().replace('-', "_");
+    if !matches!(
+        strategy.as_str(),
+        "pareto_weighted"
+            | "pareto"
+            | "uniform_pareto"
+            | "random"
+            | "current_best"
+            | "top_k_pareto"
+            | "epsilon_greedy"
+    ) {
+        return Err(OptimizerError::Config(format!(
+            "gepa.candidate_selector.name must be pareto_weighted, pareto, uniform_pareto, random, current_best, top_k_pareto, or epsilon_greedy; got {:?}",
+            config.name
+        )));
+    }
+    if config
+        .epsilon
+        .is_some_and(|epsilon| !epsilon.is_finite() || !(0.0..=1.0).contains(&epsilon))
+    {
+        return Err(OptimizerError::Config(
+            "gepa.candidate_selector.epsilon must be finite and between 0.0 and 1.0".to_string(),
+        ));
+    }
+    if config.k == Some(0) {
+        return Err(OptimizerError::Config(
+            "gepa.candidate_selector.k must be positive when set".to_string(),
+        ));
     }
     Ok(())
 }
