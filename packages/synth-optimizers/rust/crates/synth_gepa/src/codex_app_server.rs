@@ -313,13 +313,8 @@ Rules:
 
 fn proposal_request(input: &CodexProposerInput<'_>) -> Value {
     let proposal_count = input.config.gepa.proposals_per_generation;
-    let merge_count = if input
-        .candidates
-        .iter()
-        .filter(|candidate| candidate_is_frontier(candidate))
-        .count()
-        >= 2
-    {
+    let pareto_front = compute_pareto_front(input);
+    let merge_count = if pareto_front.members.len() >= 2 {
         proposal_count / 3
     } else {
         0
@@ -335,6 +330,7 @@ fn proposal_request(input: &CodexProposerInput<'_>) -> Value {
 }
 
 fn candidates_read_model(input: &CodexProposerInput<'_>) -> Value {
+    let pareto_front = compute_pareto_front(input);
     Value::Array(
         input
             .candidates
@@ -346,7 +342,7 @@ fn candidates_read_model(input: &CodexProposerInput<'_>) -> Value {
                     "source": candidate.source,
                     "status": candidate.status,
                     "is_parent": candidate.candidate_id == input.parent.candidate_id,
-                    "is_pareto_front": candidate_is_frontier(candidate),
+                    "is_pareto_front": pareto_front.members.contains(&candidate.candidate_id),
                     "payload": candidate.payload,
                     "minibatch_reward": candidate.minibatch_reward,
                     "train_reward": candidate.train_reward,
@@ -506,25 +502,118 @@ fn links_read_model(input: &CodexProposerInput<'_>) -> Value {
 }
 
 fn pareto_front_read_model(input: &CodexProposerInput<'_>) -> Value {
-    Value::Array(
-        input
-            .candidates
-            .iter()
-            .filter(|candidate| candidate_is_frontier(candidate))
-            .map(|candidate| {
-                json!({
-                    "candidate_id": candidate.candidate_id,
-                    "train_reward": candidate.train_reward,
-                    "minibatch_reward": candidate.minibatch_reward,
-                    "heldout_reward": candidate.heldout_reward,
-                    "payload": candidate.payload,
+    let pareto_front = compute_pareto_front(input);
+    let mut members = pareto_front
+        .members
+        .iter()
+        .filter_map(|candidate_id| {
+            input
+                .candidates
+                .iter()
+                .find(|candidate| &candidate.candidate_id == candidate_id)
+                .map(|candidate| {
+                    let win_count = pareto_front
+                        .win_counts
+                        .get(&candidate.candidate_id)
+                        .copied()
+                        .unwrap_or(0);
+                    json!({
+                        "candidate_id": candidate.candidate_id,
+                        "parent_id": candidate.parent_id,
+                        "source": candidate.source,
+                        "status": candidate.status,
+                        "train_reward": candidate.train_reward,
+                        "minibatch_reward": candidate.minibatch_reward,
+                        "heldout_reward": candidate.heldout_reward,
+                        "win_count": win_count,
+                        "payload": candidate.payload,
+                    })
                 })
-            })
-            .collect(),
-    )
+        })
+        .collect::<Vec<_>>();
+    members.sort_by(|left, right| {
+        left.get("candidate_id")
+            .and_then(Value::as_str)
+            .cmp(&right.get("candidate_id").and_then(Value::as_str))
+    });
+    json!({
+        "schema_version": "gepa_pareto_front.v1",
+        "frontier_type": "per_example",
+        "score_source": "train_scores.reward",
+        "parent_candidate_id": input.parent.candidate_id,
+        "members": members,
+        "win_counts": pareto_front.win_counts,
+        "cells": pareto_front.cells,
+        "legacy_status_frontier": legacy_frontier_read_model(input),
+    })
+}
+
+#[derive(Debug)]
+struct CodexParetoFront {
+    members: BTreeSet<String>,
+    win_counts: BTreeMap<String, usize>,
+    cells: Vec<Value>,
+}
+
+fn compute_pareto_front(input: &CodexProposerInput<'_>) -> CodexParetoFront {
+    let mut winners_by_example: BTreeMap<String, (String, f64)> = BTreeMap::new();
+    for candidate in input.candidates {
+        if candidate.train_reward.is_none() {
+            continue;
+        }
+        for score in &candidate.train_scores {
+            let candidate_id = candidate.candidate_id.clone();
+            let should_replace = winners_by_example
+                .get(&score.example_id)
+                .map(|(incumbent_id, incumbent_reward)| {
+                    score.reward > *incumbent_reward + f64::EPSILON
+                        || ((score.reward - *incumbent_reward).abs() <= f64::EPSILON
+                            && candidate_id < *incumbent_id)
+                })
+                .unwrap_or(true);
+            if should_replace {
+                winners_by_example.insert(score.example_id.clone(), (candidate_id, score.reward));
+            }
+        }
+    }
+    let mut members = BTreeSet::new();
+    let mut win_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut cells = Vec::new();
+    for (example_id, (candidate_id, score)) in winners_by_example {
+        members.insert(candidate_id.clone());
+        *win_counts.entry(candidate_id.clone()).or_default() += 1;
+        cells.push(json!({
+            "frontier_key": format!("example:{example_id}"),
+            "candidate_id": candidate_id,
+            "score": score,
+            "example_id": example_id,
+            "objective_id": Value::Null,
+        }));
+    }
+    if members.is_empty() {
+        for candidate in input.candidates {
+            if candidate.train_reward.is_some() {
+                members.insert(candidate.candidate_id.clone());
+                win_counts.insert(candidate.candidate_id.clone(), 1);
+                cells.push(json!({
+                    "frontier_key": format!("candidate:{}", candidate.candidate_id),
+                    "candidate_id": candidate.candidate_id,
+                    "score": candidate.train_reward,
+                    "example_id": Value::Null,
+                    "objective_id": Value::Null,
+                }));
+            }
+        }
+    }
+    CodexParetoFront {
+        members,
+        win_counts,
+        cells,
+    }
 }
 
 fn gepa_summary_read_model(input: &CodexProposerInput<'_>, rollouts: &Value) -> Value {
+    let pareto_front = compute_pareto_front(input);
     let best = input.candidates.iter().max_by(|left, right| {
         score_for_order(left)
             .partial_cmp(&score_for_order(right))
@@ -540,13 +629,37 @@ fn gepa_summary_read_model(input: &CodexProposerInput<'_>, rollouts: &Value) -> 
         .unwrap_or_default();
     json!({
         "candidate_count": input.candidates.len(),
-        "frontier_count": input.candidates.iter().filter(|candidate| candidate_is_frontier(candidate)).count(),
+        "frontier_count": pareto_front.members.len(),
+        "frontier_type": "per_example",
         "parent_candidate_id": input.parent.candidate_id,
         "best_candidate_id": best.map(|candidate| candidate.candidate_id.as_str()),
         "best_train_reward": best.and_then(|candidate| candidate.train_reward),
         "observed_example_count": example_ids.len(),
         "rollout_row_count": rollouts.as_array().map(Vec::len).unwrap_or(0),
     })
+}
+
+fn legacy_frontier_read_model(input: &CodexProposerInput<'_>) -> Value {
+    Value::Array(
+        input
+            .candidates
+            .iter()
+            .filter(|candidate| {
+                candidate.status == "accepted"
+                    || candidate.status == "seed"
+                    || candidate.heldout_reward.is_some()
+            })
+            .map(|candidate| {
+                json!({
+                    "candidate_id": candidate.candidate_id,
+                    "train_reward": candidate.train_reward,
+                    "minibatch_reward": candidate.minibatch_reward,
+                    "heldout_reward": candidate.heldout_reward,
+                    "payload": candidate.payload,
+                })
+            })
+            .collect(),
+    )
 }
 
 fn reflector_input_read_model(input: &CodexProposerInput<'_>) -> Value {
@@ -579,12 +692,6 @@ fn reflector_input_read_model(input: &CodexProposerInput<'_>) -> Value {
         "wins": wins,
         "losses": losses,
     })
-}
-
-fn candidate_is_frontier(candidate: &CandidateRecord) -> bool {
-    candidate.status == "accepted"
-        || candidate.status == "seed"
-        || candidate.heldout_reward.is_some()
 }
 
 fn score_for_order(candidate: &CandidateRecord) -> f64 {
