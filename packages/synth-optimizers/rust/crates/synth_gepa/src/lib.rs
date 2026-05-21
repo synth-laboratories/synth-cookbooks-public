@@ -1879,6 +1879,11 @@ fn schedule_async_proposer_job(
                 "parent index {parent_idx} is outside candidate registry"
             ))
         })?;
+    let proposer_started_details = json!({
+        "generation": state.cursor.generation,
+        "parent_candidate_id": parent_id.clone(),
+        "parent_selection": parent_selection.metadata.clone(),
+    });
     if context.state_machine.state() == OptimizerRunState::Ready {
         transition_run(
             &context.workspace,
@@ -1887,11 +1892,13 @@ fn schedule_async_proposer_job(
             OptimizerRunState::Proposing,
             OptimizerTransitionTrigger::ProposerStarted,
             "Async proposer started",
-            json!({
-                "generation": state.cursor.generation,
-                "parent_candidate_id": parent_id,
-                "parent_selection": parent_selection.metadata.clone(),
-            }),
+            proposer_started_details.clone(),
+        )?;
+    } else {
+        context.events.emit(
+            "proposer.started",
+            "Async proposer started",
+            proposer_started_details,
         )?;
     }
     let queued = plan_proposer_runtime_job(context, resources, parent_idx, state)?;

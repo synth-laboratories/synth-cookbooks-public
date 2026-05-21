@@ -70,6 +70,7 @@ pub(crate) fn terminal_line_for_event(
             fmt_score(field_f64(fields, "train_reward"))
         )),
         "optimizer.state.transitioned" => terminal_state_transition_line(message, fields),
+        "proposer.started" => Some(terminal_proposer_started_line(fields)),
         "proposer.completed" => Some(format!(
             "  generation {} proposer finished backend={} candidates={}",
             field_usize(fields, "generation").unwrap_or(0),
@@ -388,14 +389,7 @@ fn terminal_state_transition_line(message: &str, fields: &Value) -> Option<Strin
     match message {
         "Container, program, and dataset ready" => Some("  container ready".to_string()),
         "Proposer started" | "Async proposer started" => {
-            let mut line = format!(
-                "\n  generation {} proposer started",
-                field_usize(details, "generation").unwrap_or(0)
-            );
-            if let Some(parent_id) = field_str(details, "parent_candidate_id") {
-                let _ = write!(line, " parent={}", short_id(parent_id));
-            }
-            Some(line)
+            Some(terminal_proposer_started_line(details))
         }
         "Candidate minibatch rollouts started" if rollouts_started => Some(
             terminal_candidate_rollouts_started_line(details, "minibatch"),
@@ -418,6 +412,17 @@ fn terminal_state_transition_line(message: &str, fields: &Value) -> Option<Strin
         }
         _ => None,
     }
+}
+
+fn terminal_proposer_started_line(fields: &Value) -> String {
+    let mut line = format!(
+        "\n  generation {} proposer started",
+        field_usize(fields, "generation").unwrap_or(0)
+    );
+    if let Some(parent_id) = field_str(fields, "parent_candidate_id") {
+        let _ = write!(line, " parent={}", short_id(parent_id));
+    }
+    line
 }
 
 fn terminal_candidate_rollouts_started_line(details: &Value, label: &str) -> String {
