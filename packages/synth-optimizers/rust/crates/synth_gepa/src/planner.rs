@@ -1,4 +1,7 @@
-use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 pub const GEPA_CURSOR_SCHEMA_VERSION: &str = "gepa_cursor.v1";
@@ -98,6 +101,8 @@ pub struct GepaCursor {
     #[serde(default)]
     pub state_history: Value,
     #[serde(default)]
+    pub pipeline_state: GepaAsyncPipelineCursorState,
+    #[serde(default)]
     pub terminal_summary: Option<Value>,
     #[serde(default)]
     pub error_summary: Option<Value>,
@@ -134,6 +139,7 @@ impl GepaCursor {
             program: Value::Null,
             objective_set: Value::Null,
             state_history: Value::Array(Vec::new()),
+            pipeline_state: GepaAsyncPipelineCursorState::default(),
             terminal_summary: None,
             error_summary: None,
             metadata: Value::Null,
@@ -150,6 +156,131 @@ impl GepaCursor {
 
 fn default_gepa_cursor_schema_version() -> String {
     GEPA_CURSOR_SCHEMA_VERSION.to_string()
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct GepaAsyncPipelineCursorState {
+    #[serde(default)]
+    pub pool_version: u64,
+    #[serde(default)]
+    pub parent_pool_version: Option<u64>,
+    #[serde(default)]
+    pub parent_candidate_id: Option<String>,
+    #[serde(default)]
+    pub in_flight_candidate_count: usize,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub propose_queue: Vec<GepaAsyncLaneWorkItem>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub rollout_queue: Vec<GepaAsyncLaneWorkItem>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub evaluate_queue: Vec<GepaAsyncLaneWorkItem>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub lane_leases: BTreeMap<String, GepaAsyncLaneLease>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub pending_job_ids: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub pending_effect_ids: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub candidate_partials: BTreeMap<String, GepaAsyncCandidatePartial>,
+    #[serde(default)]
+    pub terminal_readiness: Value,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GepaAsyncLaneWorkItem {
+    #[serde(default)]
+    pub item_id: String,
+    #[serde(default)]
+    pub lane: String,
+    #[serde(default)]
+    pub stage: String,
+    #[serde(default)]
+    pub generation: usize,
+    #[serde(default)]
+    pub proposal_index: usize,
+    #[serde(default)]
+    pub parent_candidate_id: Option<String>,
+    #[serde(default)]
+    pub parent_pool_version: u64,
+    #[serde(default)]
+    pub current_pool_version: Option<u64>,
+    #[serde(default)]
+    pub stale_gap: Option<u64>,
+    #[serde(default)]
+    pub candidate_ids: Vec<String>,
+    #[serde(default)]
+    pub partial_id: Option<String>,
+    #[serde(default)]
+    pub job_id: Option<String>,
+    #[serde(default)]
+    pub effect_id: Option<String>,
+    #[serde(default)]
+    pub reservation_ids: Vec<String>,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GepaAsyncLaneLease {
+    #[serde(default)]
+    pub lease_id: String,
+    #[serde(default)]
+    pub lane: String,
+    #[serde(default)]
+    pub stage: String,
+    #[serde(default)]
+    pub generation: usize,
+    #[serde(default)]
+    pub parent_pool_version: u64,
+    #[serde(default)]
+    pub partial_id: Option<String>,
+    #[serde(default)]
+    pub job_id: Option<String>,
+    #[serde(default)]
+    pub effect_id: Option<String>,
+    #[serde(default)]
+    pub reservation_ids: Vec<String>,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GepaAsyncCandidatePartial {
+    #[serde(default)]
+    pub partial_id: String,
+    #[serde(default)]
+    pub lane: String,
+    #[serde(default)]
+    pub stage: String,
+    #[serde(default)]
+    pub generation: usize,
+    #[serde(default)]
+    pub parent_pool_version: u64,
+    #[serde(default)]
+    pub parent_candidate_id: Option<String>,
+    #[serde(default)]
+    pub candidate_ids: Vec<String>,
+    #[serde(default)]
+    pub active_evaluation: Option<Value>,
+    #[serde(default)]
+    pub proposal_queue: Value,
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + DeserializeOwned,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

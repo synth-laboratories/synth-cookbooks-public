@@ -70,14 +70,15 @@ chooses orchestration:
 
 - `sync_serial` is the default correctness baseline. It runs the durable
   one-transition tick state machine already used by `/worker/tick`.
-- `async_pipelined` is the FlashEvolve-style runtime target. Stages declare
-  work, while the runtime owns queues, workers, scheduling, and pool-version
-  staleness. The initial sketch names three lanes: `propose`, `rollout`, and
-  `evaluate`.
+- `async_pipelined` is the FlashEvolve-style runtime mode. Stages declare
+  work, while the runtime records queue, worker, scheduling, and pool-version
+  state in the GEPA cursor. Phase 1 supports the `full` staleness policy and
+  three lanes: `propose`, `rollout`, and `evaluate`.
 
-The async-pipelined path is intentionally recognized before it is executable,
-so config and event surfaces can distinguish a real async pipeline from async
-rollout transport.
+`async_pipelined` runs through the same durable `/worker/tick` driver as the
+baseline: each tick consumes finished work first or schedules one new runtime
+transition. `run-next` remains a loop over those ticks. Rollout transport stays
+separate and is still selected by `gepa.rollout_submission_mode`.
 
 ## State Machine
 

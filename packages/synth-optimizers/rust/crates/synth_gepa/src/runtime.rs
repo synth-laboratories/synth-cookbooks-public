@@ -7,9 +7,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use synth_optimizer_platform::{
-    BudgetReservationRecord, ContainerClient, OptimizerError, OptimizerJob, OptimizerJobStatus,
-    PromptProgram, RequestCache, Result, RolloutResponse, RuntimeEffectInput, RuntimeEffectRecord,
-    SynthOptimizerConfig, WorkspaceStore,
+    BudgetReservationRecord, ContainerClient, GepaPipelineMode, OptimizerError, OptimizerJob,
+    OptimizerJobStatus, PromptProgram, RequestCache, Result, RolloutResponse, RuntimeEffectInput,
+    RuntimeEffectRecord, SynthOptimizerConfig, WorkspaceStore,
 };
 
 use crate::{
@@ -595,7 +595,7 @@ impl<'a> GepaRuntimeExecutor<'a> {
             });
         }
 
-        let concurrency = rollout_concurrency().max(1);
+        let concurrency = rollout_concurrency(self.config).max(1);
         let dispatch_config = RolloutDispatchConfig::from_config(self.config);
         for chunk in misses.chunks(concurrency) {
             let mut handles = Vec::with_capacity(chunk.len());
@@ -675,7 +675,10 @@ impl RolloutDispatchConfig {
     }
 }
 
-fn rollout_concurrency() -> usize {
+fn rollout_concurrency(config: &SynthOptimizerConfig) -> usize {
+    if matches!(config.gepa.pipeline.mode, GepaPipelineMode::AsyncPipelined) {
+        return config.gepa.pipeline.workers.rollout.max(1);
+    }
     env::var("GEPA_ROLLOUT_CONCURRENCY")
         .or_else(|_| env::var("SYNTH_OPTIMIZERS_MAX_CONCURRENT_ROLLOUTS"))
         .ok()

@@ -194,6 +194,30 @@ impl SynthOptimizerConfig {
             self.gepa.pipeline.staleness_policy =
                 parse_gepa_staleness_policy_override(&staleness_policy)?;
         }
+        if let Some(max_in_flight) =
+            read_env_override(&["SYNTH_OPTIMIZERS_GEPA_MAX_IN_FLIGHT_CANDIDATES"])
+        {
+            self.gepa.pipeline.max_in_flight_candidates = parse_usize_override(
+                "SYNTH_OPTIMIZERS_GEPA_MAX_IN_FLIGHT_CANDIDATES",
+                &max_in_flight,
+            )?;
+        }
+        if let Some(propose_workers) = read_env_override(&["SYNTH_OPTIMIZERS_GEPA_WORKERS_PROPOSE"])
+        {
+            self.gepa.pipeline.workers.propose =
+                parse_usize_override("SYNTH_OPTIMIZERS_GEPA_WORKERS_PROPOSE", &propose_workers)?;
+        }
+        if let Some(rollout_workers) = read_env_override(&["SYNTH_OPTIMIZERS_GEPA_WORKERS_ROLLOUT"])
+        {
+            self.gepa.pipeline.workers.rollout =
+                parse_usize_override("SYNTH_OPTIMIZERS_GEPA_WORKERS_ROLLOUT", &rollout_workers)?;
+        }
+        if let Some(evaluate_workers) =
+            read_env_override(&["SYNTH_OPTIMIZERS_GEPA_WORKERS_EVALUATE"])
+        {
+            self.gepa.pipeline.workers.evaluate =
+                parse_usize_override("SYNTH_OPTIMIZERS_GEPA_WORKERS_EVALUATE", &evaluate_workers)?;
+        }
         Ok(())
     }
 
@@ -568,9 +592,10 @@ impl Default for GepaConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GepaPipelineMode {
+    #[default]
     SyncSerial,
     AsyncPipelined,
 }
@@ -584,9 +609,10 @@ impl GepaPipelineMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GepaStalenessPolicy {
+    #[default]
     Full,
     Guarded,
     Reflective,
@@ -623,18 +649,6 @@ impl Default for GepaPipelineConfig {
             max_in_flight_candidates: default_pipeline_max_in_flight_candidates(),
             workers: GepaPipelineWorkers::default(),
         }
-    }
-}
-
-impl Default for GepaPipelineMode {
-    fn default() -> Self {
-        Self::SyncSerial
-    }
-}
-
-impl Default for GepaStalenessPolicy {
-    fn default() -> Self {
-        Self::Full
     }
 }
 
@@ -774,6 +788,12 @@ fn parse_u64_override(name: &str, raw_value: &str) -> Result<u64> {
     })
 }
 
+fn parse_usize_override(name: &str, raw_value: &str) -> Result<usize> {
+    raw_value.trim().parse::<usize>().map_err(|source| {
+        OptimizerError::Config(format!("invalid {name} override {raw_value:?}: {source}"))
+    })
+}
+
 fn parse_gepa_pipeline_mode_override(raw_mode: &str) -> Result<GepaPipelineMode> {
     match raw_mode.trim().to_ascii_lowercase().as_str() {
         "sync_serial" | "sync" | "serial" => Ok(GepaPipelineMode::SyncSerial),
@@ -796,6 +816,14 @@ fn parse_gepa_staleness_policy_override(raw_policy: &str) -> Result<GepaStalenes
 }
 
 fn validate_gepa_pipeline_config(config: &GepaPipelineConfig) -> Result<()> {
+    if matches!(config.mode, GepaPipelineMode::AsyncPipelined)
+        && !matches!(config.staleness_policy, GepaStalenessPolicy::Full)
+    {
+        return Err(OptimizerError::Config(format!(
+            "gepa.pipeline.staleness_policy = {:?} is reserved for a later async-pipelined phase; use full",
+            config.staleness_policy
+        )));
+    }
     if config.max_in_flight_candidates == 0 {
         return Err(OptimizerError::Config(
             "gepa.pipeline.max_in_flight_candidates must be positive".to_string(),

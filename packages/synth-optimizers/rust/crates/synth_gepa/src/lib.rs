@@ -36,7 +36,10 @@ pub mod runtime;
 pub mod service;
 
 use pipeline::{GepaAsyncPipelinedPlan, GepaPipelineRuntimePlan};
-use planner::{GepaCursor, GepaCursorPhase, GEPA_CURSOR_CHECKPOINT_KIND};
+use planner::{
+    GepaAsyncCandidatePartial, GepaAsyncLaneLease, GepaAsyncLaneWorkItem, GepaCursor,
+    GepaCursorPhase, GEPA_CURSOR_CHECKPOINT_KIND,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CandidateRecord {
@@ -978,6 +981,7 @@ fn persist_gepa_run_state(
     state.cursor.program = serde_json::to_value(&resources.program)?;
     state.cursor.objective_set = serde_json::to_value(&resources.objective_set)?;
     state.cursor.state_history = serde_json::to_value(&context.state_machine.history)?;
+    let metadata = metadata_with_pipeline_state(context, state, metadata)?;
     state.cursor.metadata = Value::Object(metadata.clone());
     let cursor_value = serde_json::to_value(&state.cursor)?;
     let checkpoint = CheckpointRecord::from_input(CheckpointInput {
@@ -1003,6 +1007,24 @@ fn persist_gepa_run_state(
         .record_checkpoint(&context.config.run.run_id, &checkpoint)
 }
 
+fn metadata_with_pipeline_state(
+    context: &GepaRunContext,
+    state: &mut GepaRunState,
+    mut metadata: Map<String, Value>,
+) -> Result<Map<String, Value>> {
+    if let GepaPipelineRuntimePlan::AsyncPipelined(plan) =
+        GepaPipelineRuntimePlan::from_config(&context.config)?
+    {
+        refresh_async_pipeline_cursor_state(context, state, &plan);
+        metadata.insert("pipeline".to_string(), plan_metadata(&plan));
+        metadata.insert(
+            "pipeline_state".to_string(),
+            serde_json::to_value(&state.cursor.pipeline_state)?,
+        );
+    }
+    Ok(metadata)
+}
+
 pub(crate) fn advance_gepa_config_once(
     config: SynthOptimizerConfig,
     options: GepaExecutionOptions,
@@ -1024,7 +1046,7 @@ fn advance_gepa_once(
             advance_gepa_sync_serial_once(context, state, mode, options)
         }
         GepaPipelineRuntimePlan::AsyncPipelined(plan) => {
-            advance_gepa_async_pipelined_once(context, state, &plan)
+            advance_gepa_async_pipelined_once(context, state, mode, options, &plan)
         }
     }
 }
@@ -1094,32 +1116,861 @@ fn advance_gepa_sync_serial_once(
 fn advance_gepa_async_pipelined_once(
     context: &mut GepaRunContext,
     state: &mut GepaRunState,
+    mode: GepaAdvanceMode,
+    options: &GepaExecutionOptions,
     plan: &GepaAsyncPipelinedPlan,
 ) -> Result<GepaAdvanceOutcome> {
-    let mut metadata = state
-        .cursor
-        .metadata
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
-    metadata.insert("pipeline".to_string(), plan_metadata(plan));
-    state.cursor.metadata = Value::Object(metadata);
+    refresh_async_pipeline_cursor_state(context, state, plan);
+    if matches!(state.cursor.phase, GepaCursorPhase::Completed) {
+        let result = state
+            .cursor
+            .terminal_summary
+            .clone()
+            .map(serde_json::from_value)
+            .transpose()?;
+        return Ok(GepaAdvanceOutcome {
+            action: planner::GepaTickAction::TerminalizeRun {
+                run_id: context.config.run.run_id.clone(),
+                status: "completed".to_string(),
+            },
+            terminal: true,
+            result,
+            message: "async-pipelined: GEPA run already completed".to_string(),
+        });
+    }
+    if state.cursor.phase.is_terminal() {
+        return Ok(GepaAdvanceOutcome {
+            action: planner::GepaTickAction::TerminalizeRun {
+                run_id: context.config.run.run_id.clone(),
+                status: state.cursor.phase.as_str().to_string(),
+            },
+            terminal: true,
+            result: None,
+            message: format!(
+                "async-pipelined: GEPA run already {}",
+                state.cursor.phase.as_str()
+            ),
+        });
+    }
+    if let Err(error) = check_cancelled(options.cancellation.as_ref()) {
+        state.cursor.pipeline_state.propose_queue.clear();
+        state.cursor.pipeline_state.rollout_queue.clear();
+        state.cursor.pipeline_state.evaluate_queue.clear();
+        state.cursor.pipeline_state.lane_leases.clear();
+        state.cursor.pipeline_state.candidate_partials.clear();
+        return terminalize_aborted_gepa_run(context, state, error, "GEPA run cancelled");
+    }
+
     let resources = ensure_step_resources(context, state)?;
-    let phase = state.cursor.phase.clone();
+
+    // Old Phase-1 async cursors used the serial pending-job slot. Finish that
+    // in-place before switching the cursor over to lane leases.
+    if let Some(job_id) = state.cursor.pending_job_id.clone() {
+        let mut outcome = advance_pending_runtime_job(context, state, &resources, mode, &job_id)?;
+        outcome.message = format!("async-pipelined legacy lane: {}", outcome.message);
+        return Ok(outcome);
+    }
+
+    // The seed candidate is a hard dependency for parent selection. Keep it on
+    // the known-good serial path, then hand candidate generation to the durable
+    // lane scheduler.
+    if matches!(
+        state.cursor.phase,
+        GepaCursorPhase::Initializing | GepaCursorPhase::SeedFullTrain
+    ) {
+        let mut outcome = advance_gepa_sync_serial_once(context, state, mode, options)?;
+        outcome.message = format!("async-pipelined seed: {}", outcome.message);
+        return Ok(outcome);
+    }
+
+    if let Some(outcome) = consume_async_lane_work(context, state, &resources, plan)? {
+        return Ok(outcome);
+    }
+    if let Some(outcome) = schedule_async_lane_transition(context, state, &resources, mode, plan)? {
+        return Ok(outcome);
+    }
+    if async_pipeline_has_no_lane_work(state)
+        && matches!(
+            state.cursor.phase,
+            GepaCursorPhase::Heldout | GepaCursorPhase::Finalizing
+        )
+    {
+        let mut outcome = advance_gepa_sync_serial_once(context, state, mode, options)?;
+        outcome.message = format!("async-pipelined terminal: {}", outcome.message);
+        return Ok(outcome);
+    }
+    if async_pipeline_idle(state) && async_pipeline_stopper_satisfied(context, state) {
+        let mut outcome = advance_gepa_sync_serial_once(context, state, mode, options)?;
+        outcome.message = format!("async-pipelined terminal: {}", outcome.message);
+        return Ok(outcome);
+    }
+
+    refresh_async_pipeline_cursor_state(context, state, plan);
     persist_gepa_run_state(
         context,
         state,
         &resources,
-        phase,
-        "blocked",
-        "async-pipelined GEPA runtime is recognized but not executable yet",
+        state.cursor.phase.clone(),
+        "waiting",
+        "async pipeline waiting for lane capacity or completions",
         Map::new(),
     )?;
-    Err(plan.not_executable_error())
+    Ok(GepaAdvanceOutcome {
+        action: planner::GepaTickAction::Noop,
+        terminal: false,
+        result: None,
+        message: "async-pipelined: waiting for lane capacity or completions".to_string(),
+    })
 }
 
 fn plan_metadata(plan: &GepaAsyncPipelinedPlan) -> Value {
     GepaPipelineRuntimePlan::AsyncPipelined(plan.clone()).metadata()
+}
+
+fn refresh_async_pipeline_cursor_state(
+    context: &GepaRunContext,
+    state: &mut GepaRunState,
+    plan: &GepaAsyncPipelinedPlan,
+) {
+    let pool_version = state
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.train_reward.is_some()
+                && matches!(
+                    candidate.status.as_str(),
+                    "full_train_evaluated" | "accepted"
+                )
+        })
+        .count() as u64;
+    let in_flight_candidate_count = state
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            matches!(
+                candidate.status.as_str(),
+                "registered" | "minibatch_evaluated" | "full_train_evaluated"
+            ) && candidate.heldout_reward.is_none()
+        })
+        .count();
+    state.cursor.pipeline_state.pool_version = pool_version;
+    state.cursor.pipeline_state.in_flight_candidate_count = in_flight_candidate_count;
+    state.cursor.pipeline_state.pending_job_ids = state
+        .cursor
+        .pipeline_state
+        .lane_leases
+        .values()
+        .filter_map(|lease| lease.job_id.clone())
+        .collect();
+    state.cursor.pipeline_state.pending_effect_ids = state
+        .cursor
+        .pipeline_state
+        .lane_leases
+        .values()
+        .filter_map(|lease| lease.effect_id.clone())
+        .collect();
+    state.cursor.pipeline_state.terminal_readiness = json!({
+        "phase": state.cursor.phase.as_str(),
+        "phase_terminal": state.cursor.phase.is_terminal(),
+        "stopper_satisfied": async_pipeline_stopper_satisfied(context, state),
+        "pending_jobs_empty": state.cursor.pipeline_state.pending_job_ids.is_empty(),
+        "pending_effects_empty": state.cursor.pipeline_state.pending_effect_ids.is_empty(),
+        "leases_empty": state.cursor.pipeline_state.lane_leases.is_empty(),
+        "propose_queue_empty": state.cursor.pipeline_state.propose_queue.is_empty(),
+        "rollout_queue_empty": state.cursor.pipeline_state.rollout_queue.is_empty(),
+        "evaluate_queue_empty": state.cursor.pipeline_state.evaluate_queue.is_empty(),
+        "proposal_queue_empty": state.proposal_queue.is_empty(),
+        "active_evaluation_empty": state.active_evaluation.is_none(),
+        "max_in_flight_candidates": plan.max_in_flight_candidates,
+    });
+}
+
+fn consume_async_lane_work(
+    context: &mut GepaRunContext,
+    state: &mut GepaRunState,
+    resources: &GepaStepResources,
+    plan: &GepaAsyncPipelinedPlan,
+) -> Result<Option<GepaAdvanceOutcome>> {
+    let mut lease_keys = state
+        .cursor
+        .pipeline_state
+        .lane_leases
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    lease_keys.sort();
+    for lease_key in lease_keys {
+        let Some(lease) = state
+            .cursor
+            .pipeline_state
+            .lane_leases
+            .get(&lease_key)
+            .cloned()
+        else {
+            continue;
+        };
+        let Some(job_id) = lease.job_id.clone() else {
+            continue;
+        };
+        let job = context
+            .workspace
+            .optimizer_job(&context.config.run.run_id, &job_id)?;
+        match job.status {
+            OptimizerJobStatus::Completed => {
+                restore_async_partial_as_active(state, lease.partial_id.as_deref())?;
+                if lease.lane == "propose" {
+                    if let Some(parent_id) = lease
+                        .metadata
+                        .get("parent_candidate_id")
+                        .and_then(Value::as_str)
+                    {
+                        state.cursor.pipeline_state.parent_candidate_id =
+                            Some(parent_id.to_string());
+                        if let Some(parent_idx) = state
+                            .candidates
+                            .iter()
+                            .position(|candidate| candidate.candidate_id == parent_id)
+                        {
+                            state.best_idx = Some(parent_idx);
+                        }
+                    }
+                    if let Some(active) = state.active_evaluation.as_ref() {
+                        state.cursor.generation = active.generation;
+                    }
+                }
+                state.cursor.pending_job_id = Some(job_id.clone());
+                state.cursor.pending_effect_id = lease.effect_id.clone();
+                state.cursor.pending_reservation_ids = lease.reservation_ids.clone();
+                let mut outcome = consume_completed_runtime_job(context, state, resources, job)?;
+                state.cursor.pipeline_state.lane_leases.remove(&lease_key);
+                state.cursor.pipeline_state.propose_queue.retain(|item| {
+                    item.job_id.as_deref() != Some(job_id.as_str())
+                        && item.partial_id.as_deref() != lease.partial_id.as_deref()
+                });
+                state.cursor.pending_job_id = None;
+                state.cursor.pending_effect_id = None;
+                state.cursor.pending_reservation_ids.clear();
+
+                if lease.lane == "rollout" {
+                    if let Some(active) = state.active_evaluation.clone() {
+                        let partial_id = lease
+                            .partial_id
+                            .clone()
+                            .unwrap_or_else(|| async_partial_id(&active.stage, active.generation));
+                        upsert_async_partial_from_active(
+                            state,
+                            &partial_id,
+                            "evaluate",
+                            lease.parent_pool_version,
+                        )?;
+                        let item = async_work_item_from_active(
+                            &active,
+                            "evaluate",
+                            lease.parent_pool_version,
+                            Some(partial_id),
+                        )?;
+                        state.cursor.pipeline_state.evaluate_queue.push(item);
+                    }
+                    state.active_evaluation = None;
+                } else if let Some(partial_id) = lease.partial_id.as_ref() {
+                    state
+                        .cursor
+                        .pipeline_state
+                        .candidate_partials
+                        .remove(partial_id);
+                    state.active_evaluation = None;
+                }
+
+                refresh_async_pipeline_cursor_state(context, state, plan);
+                persist_gepa_run_state(
+                    context,
+                    state,
+                    resources,
+                    state.cursor.phase.clone(),
+                    "completed",
+                    "consumed async lane runtime outcome",
+                    Map::new(),
+                )?;
+                outcome.message = format!("async-pipelined {}: {}", lease.lane, outcome.message);
+                return Ok(Some(outcome));
+            }
+            OptimizerJobStatus::Failed
+            | OptimizerJobStatus::Cancelled
+            | OptimizerJobStatus::Expired => {
+                state.cursor.pipeline_state.lane_leases.clear();
+                state.cursor.pipeline_state.propose_queue.clear();
+                state.cursor.pipeline_state.rollout_queue.clear();
+                state.cursor.pipeline_state.evaluate_queue.clear();
+                state.cursor.pipeline_state.candidate_partials.clear();
+                return consume_failed_runtime_job(context, state, resources, job).map(Some);
+            }
+            _ => {}
+        }
+    }
+    if let Some(item) = state.cursor.pipeline_state.evaluate_queue.first().cloned() {
+        state.cursor.pipeline_state.evaluate_queue.remove(0);
+        restore_async_partial_as_active(state, item.partial_id.as_deref())?;
+        let mut outcome = finalize_active_rollout_evaluation(context, state, resources)?;
+        if let Some(partial_id) = item.partial_id.as_ref() {
+            state
+                .cursor
+                .pipeline_state
+                .candidate_partials
+                .remove(partial_id);
+        }
+        if let Some(active) = state
+            .active_evaluation
+            .clone()
+            .filter(GepaActiveEvaluation::is_rollout_stage)
+        {
+            let partial_id = async_partial_id(&active.stage, active.generation);
+            upsert_async_partial_from_active(
+                state,
+                &partial_id,
+                "rollout",
+                item.parent_pool_version,
+            )?;
+            let rollout_item = async_work_item_from_active(
+                &active,
+                "rollout",
+                item.parent_pool_version,
+                Some(partial_id),
+            )?;
+            state.cursor.pipeline_state.rollout_queue.push(rollout_item);
+            state.active_evaluation = None;
+        } else {
+            state.active_evaluation = None;
+        }
+        refresh_async_pipeline_cursor_state(context, state, plan);
+        persist_gepa_run_state(
+            context,
+            state,
+            resources,
+            state.cursor.phase.clone(),
+            "completed",
+            "folded async evaluate work",
+            Map::new(),
+        )?;
+        outcome.message = format!("async-pipelined evaluate: {}", outcome.message);
+        return Ok(Some(outcome));
+    }
+    Ok(None)
+}
+
+fn schedule_async_lane_transition(
+    context: &mut GepaRunContext,
+    state: &mut GepaRunState,
+    resources: &GepaStepResources,
+    mode: GepaAdvanceMode,
+    plan: &GepaAsyncPipelinedPlan,
+) -> Result<Option<GepaAdvanceOutcome>> {
+    if let Some(outcome) = execute_async_leased_runtime_job(context, state, resources, mode, plan)?
+    {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = schedule_async_rollout_job(context, state, resources, plan)? {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = schedule_async_candidate_minibatches(context, state, resources, plan)? {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = schedule_async_proposer_job(context, state, resources, plan)? {
+        return Ok(Some(outcome));
+    }
+    Ok(None)
+}
+
+fn execute_async_leased_runtime_job(
+    context: &mut GepaRunContext,
+    state: &mut GepaRunState,
+    resources: &GepaStepResources,
+    mode: GepaAdvanceMode,
+    plan: &GepaAsyncPipelinedPlan,
+) -> Result<Option<GepaAdvanceOutcome>> {
+    let mut leases = state
+        .cursor
+        .pipeline_state
+        .lane_leases
+        .iter()
+        .map(|(key, lease)| (key.clone(), lease.clone()))
+        .collect::<Vec<_>>();
+    leases.sort_by(|left, right| left.0.cmp(&right.0));
+    for (lease_key, lease) in leases {
+        let Some(job_id) = lease.job_id.clone() else {
+            continue;
+        };
+        let job = context
+            .workspace
+            .optimizer_job(&context.config.run.run_id, &job_id)?;
+        if !matches!(
+            job.status,
+            OptimizerJobStatus::Pending | OptimizerJobStatus::RetryScheduled
+        ) {
+            continue;
+        }
+        restore_async_partial_as_active(state, lease.partial_id.as_deref())?;
+        state.cursor.pending_job_id = Some(job_id.clone());
+        state.cursor.pending_effect_id = lease.effect_id.clone();
+        state.cursor.pending_reservation_ids = lease.reservation_ids.clone();
+        let mut outcome = advance_pending_runtime_job(context, state, resources, mode, &job_id)?;
+        if let Some(active) = state.active_evaluation.as_ref() {
+            let partial_id = lease
+                .partial_id
+                .clone()
+                .unwrap_or_else(|| async_partial_id(&active.stage, active.generation));
+            upsert_async_partial_from_active(
+                state,
+                &partial_id,
+                &lease.lane,
+                lease.parent_pool_version,
+            )?;
+        }
+        state.cursor.pending_job_id = None;
+        state.cursor.pending_effect_id = None;
+        state.cursor.pending_reservation_ids.clear();
+        state.active_evaluation = None;
+        if let Some(updated) = state.cursor.pipeline_state.lane_leases.get_mut(&lease_key) {
+            updated.status = context
+                .workspace
+                .optimizer_job(&context.config.run.run_id, &job_id)?
+                .status
+                .as_str()
+                .to_string();
+        }
+        refresh_async_pipeline_cursor_state(context, state, plan);
+        persist_gepa_run_state(
+            context,
+            state,
+            resources,
+            state.cursor.phase.clone(),
+            "running",
+            "executed async lane runtime job",
+            Map::new(),
+        )?;
+        outcome.message = format!("async-pipelined {}: {}", lease.lane, outcome.message);
+        return Ok(Some(outcome));
+    }
+    Ok(None)
+}
+
+fn schedule_async_rollout_job(
+    context: &mut GepaRunContext,
+    state: &mut GepaRunState,
+    resources: &GepaStepResources,
+    plan: &GepaAsyncPipelinedPlan,
+) -> Result<Option<GepaAdvanceOutcome>> {
+    if async_lane_lease_count(state, "rollout") >= plan.rollout_workers {
+        return Ok(None);
+    }
+    let Some(item) = state.cursor.pipeline_state.rollout_queue.first().cloned() else {
+        return Ok(None);
+    };
+    state.cursor.pipeline_state.rollout_queue.remove(0);
+    restore_async_partial_as_active(state, item.partial_id.as_deref())?;
+    let active = state.active_evaluation.as_ref().ok_or_else(|| {
+        OptimizerError::Invariant("async rollout work item has no active partial".to_string())
+    })?;
+    state.cursor.phase = phase_for_rollout_stage(&active.stage)?;
+    let mut outcome = plan_next_rollout_batch(context, state, resources)?;
+    let active = state.active_evaluation.clone().ok_or_else(|| {
+        OptimizerError::Invariant("async rollout planning lost active partial".to_string())
+    })?;
+    let partial_id = item
+        .partial_id
+        .clone()
+        .unwrap_or_else(|| async_partial_id(&active.stage, active.generation));
+    upsert_async_partial_from_active(state, &partial_id, "rollout", item.parent_pool_version)?;
+    let job_id = state.cursor.pending_job_id.clone().ok_or_else(|| {
+        OptimizerError::Invariant("async rollout planning did not create a job".to_string())
+    })?;
+    let lease = GepaAsyncLaneLease {
+        lease_id: async_lease_id("rollout", &job_id),
+        lane: "rollout".to_string(),
+        stage: active.stage.clone(),
+        generation: active.generation,
+        parent_pool_version: item.parent_pool_version,
+        partial_id: Some(partial_id),
+        job_id: Some(job_id.clone()),
+        effect_id: state.cursor.pending_effect_id.clone(),
+        reservation_ids: state.cursor.pending_reservation_ids.clone(),
+        status: "pending".to_string(),
+        metadata: json!({"candidate_ids": candidate_ids_for_active(&active)}),
+    };
+    state
+        .cursor
+        .pipeline_state
+        .lane_leases
+        .insert(job_id, lease);
+    state.cursor.pending_job_id = None;
+    state.cursor.pending_effect_id = None;
+    state.cursor.pending_reservation_ids.clear();
+    state.active_evaluation = None;
+    refresh_async_pipeline_cursor_state(context, state, plan);
+    persist_gepa_run_state(
+        context,
+        state,
+        resources,
+        state.cursor.phase.clone(),
+        "planned",
+        "leased async rollout job",
+        Map::new(),
+    )?;
+    outcome.message = format!("async-pipelined rollout: {}", outcome.message);
+    Ok(Some(outcome))
+}
+
+fn schedule_async_candidate_minibatches(
+    context: &mut GepaRunContext,
+    state: &mut GepaRunState,
+    resources: &GepaStepResources,
+    plan: &GepaAsyncPipelinedPlan,
+) -> Result<Option<GepaAdvanceOutcome>> {
+    if state.proposal_queue.is_empty()
+        || state.cursor.pipeline_state.in_flight_candidate_count >= plan.max_in_flight_candidates
+    {
+        return Ok(None);
+    }
+    state.cursor.phase = GepaCursorPhase::ProposerWaiting;
+    if let Some(parent_id) = state.cursor.pipeline_state.parent_candidate_id.as_ref() {
+        if let Some(parent_idx) = state
+            .candidates
+            .iter()
+            .position(|candidate| &candidate.candidate_id == parent_id)
+        {
+            state.best_idx = Some(parent_idx);
+        }
+    }
+    let before_generation = state.cursor.generation;
+    let mut outcome = advance_proposer_waiting(context, state, resources)?;
+    if let Some(active) = state.active_evaluation.clone() {
+        let partial_id = async_partial_id(&active.stage, active.generation);
+        upsert_async_partial_from_active(
+            state,
+            &partial_id,
+            "rollout",
+            state.cursor.pipeline_state.pool_version,
+        )?;
+        let item = async_work_item_from_active(
+            &active,
+            "rollout",
+            state.cursor.pipeline_state.pool_version,
+            Some(partial_id),
+        )?;
+        state.cursor.pipeline_state.rollout_queue.push(item);
+        state.active_evaluation = None;
+        if state.cursor.proposal_index >= state.proposal_queue.len() {
+            state.proposal_queue.clear();
+            state.cursor.proposal_index = 0;
+            state.cursor.generation = before_generation.saturating_add(1);
+            state.cursor.pipeline_state.parent_candidate_id = None;
+        }
+        refresh_async_pipeline_cursor_state(context, state, plan);
+        persist_gepa_run_state(
+            context,
+            state,
+            resources,
+            state.cursor.phase.clone(),
+            "planned",
+            "queued async candidate minibatch work",
+            Map::new(),
+        )?;
+    }
+    outcome.message = format!("async-pipelined candidate queue: {}", outcome.message);
+    Ok(Some(outcome))
+}
+
+fn schedule_async_proposer_job(
+    context: &mut GepaRunContext,
+    state: &mut GepaRunState,
+    resources: &GepaStepResources,
+    plan: &GepaAsyncPipelinedPlan,
+) -> Result<Option<GepaAdvanceOutcome>> {
+    if async_lane_lease_count(state, "propose") >= plan.propose_workers
+        || !state.cursor.pipeline_state.propose_queue.is_empty()
+        || !state.proposal_queue.is_empty()
+        || state.cursor.generation >= context.config.gepa.max_generations
+        || state.cursor.pipeline_state.in_flight_candidate_count >= plan.max_in_flight_candidates
+        || state.rollout_count >= context.config.gepa.max_total_rollouts
+        || cost_budget_reached(&context.config, state.total_cost)
+    {
+        return Ok(None);
+    }
+    if let Some(train_best_idx) = select_best_train_candidate(
+        &state.candidates,
+        &resources.objective_set,
+        &context.config.dataset.train_split,
+        &resources.train_rows,
+    )? {
+        state.best_idx = Some(train_best_idx);
+    }
+    let parent_idx = state.best_idx.unwrap_or(0);
+    let parent_id = state
+        .candidates
+        .get(parent_idx)
+        .map(|candidate| candidate.candidate_id.clone())
+        .ok_or_else(|| {
+            OptimizerError::Invariant(format!(
+                "parent index {parent_idx} is outside candidate registry"
+            ))
+        })?;
+    if context.state_machine.state() == OptimizerRunState::Ready {
+        transition_run(
+            &context.workspace,
+            &mut context.events,
+            &mut context.state_machine,
+            OptimizerRunState::Proposing,
+            OptimizerTransitionTrigger::ProposerStarted,
+            "Async proposer started",
+            json!({"generation": state.cursor.generation, "parent_candidate_id": parent_id}),
+        )?;
+    }
+    let queued = plan_proposer_runtime_job(context, resources, parent_idx, state)?;
+    state.cursor.pipeline_state.parent_pool_version =
+        Some(state.cursor.pipeline_state.pool_version);
+    state.cursor.pipeline_state.parent_candidate_id = Some(parent_id.clone());
+    let active = GepaActiveEvaluation {
+        stage: "proposer".to_string(),
+        candidate_id: Some(parent_id.clone()),
+        candidate_index: Some(parent_idx),
+        generation: state.cursor.generation,
+        proposal_index: 0,
+        row_ids: Vec::new(),
+        next_row_index: 0,
+        planned_job_id: Some(queued.job.job_id.clone()),
+        effect_id: Some(queued.effect.runtime_effect_id.clone()),
+        reservation_id: Some(queued.reservation.budget_reservation_id.clone()),
+        heldout_candidate_index: None,
+        parent_id: None,
+        scores: Vec::new(),
+        sensor_frames: Vec::new(),
+        reward_sum: 0.0,
+        usage: UsageTotals::default(),
+        cost_usd: 0.0,
+        rollout_count: 0,
+        parent_minibatch_reward: None,
+        decision: None,
+        candidate_evaluations: Vec::new(),
+    };
+    let partial_id = async_partial_id("proposer", active.generation);
+    state.active_evaluation = Some(active.clone());
+    upsert_async_partial_from_active(
+        state,
+        &partial_id,
+        "propose",
+        state.cursor.pipeline_state.pool_version,
+    )?;
+    let lease = GepaAsyncLaneLease {
+        lease_id: async_lease_id("propose", &queued.job.job_id),
+        lane: "propose".to_string(),
+        stage: "proposer".to_string(),
+        generation: active.generation,
+        parent_pool_version: state.cursor.pipeline_state.pool_version,
+        partial_id: Some(partial_id.clone()),
+        job_id: Some(queued.job.job_id.clone()),
+        effect_id: Some(queued.effect.runtime_effect_id.clone()),
+        reservation_ids: vec![queued.reservation.budget_reservation_id.clone()],
+        status: "pending".to_string(),
+        metadata: json!({"parent_candidate_id": parent_id}),
+    };
+    state
+        .cursor
+        .pipeline_state
+        .lane_leases
+        .insert(queued.job.job_id.clone(), lease);
+    state
+        .cursor
+        .pipeline_state
+        .propose_queue
+        .push(GepaAsyncLaneWorkItem {
+            item_id: partial_id,
+            lane: "propose".to_string(),
+            stage: "proposer".to_string(),
+            generation: active.generation,
+            proposal_index: 0,
+            parent_candidate_id: active.candidate_id.clone(),
+            parent_pool_version: state.cursor.pipeline_state.pool_version,
+            current_pool_version: Some(state.cursor.pipeline_state.pool_version),
+            stale_gap: Some(0),
+            candidate_ids: Vec::new(),
+            partial_id: active
+                .candidate_id
+                .as_ref()
+                .map(|_| async_partial_id("proposer", active.generation)),
+            job_id: Some(queued.job.job_id.clone()),
+            effect_id: Some(queued.effect.runtime_effect_id.clone()),
+            reservation_ids: vec![queued.reservation.budget_reservation_id.clone()],
+            status: "leased".to_string(),
+            metadata: json!({"parent_candidate_id": active.candidate_id}),
+        });
+    state.active_evaluation = None;
+    refresh_async_pipeline_cursor_state(context, state, plan);
+    persist_gepa_run_state(
+        context,
+        state,
+        resources,
+        GepaCursorPhase::ProposerWaiting,
+        "planned",
+        "leased async proposer job",
+        Map::new(),
+    )?;
+    Ok(Some(GepaAdvanceOutcome {
+        action: planner::GepaTickAction::PlanRuntimeJob {
+            run_id: context.config.run.run_id.clone(),
+            job_id: queued.job.job_id,
+        },
+        terminal: false,
+        result: None,
+        message: "async-pipelined propose: planned proposer job".to_string(),
+    }))
+}
+
+fn restore_async_partial_as_active(
+    state: &mut GepaRunState,
+    partial_id: Option<&str>,
+) -> Result<()> {
+    let Some(partial_id) = partial_id else {
+        return Ok(());
+    };
+    let Some(partial) = state
+        .cursor
+        .pipeline_state
+        .candidate_partials
+        .get(partial_id)
+    else {
+        return Ok(());
+    };
+    state.active_evaluation = partial
+        .active_evaluation
+        .clone()
+        .map(serde_json::from_value)
+        .transpose()?;
+    Ok(())
+}
+
+fn upsert_async_partial_from_active(
+    state: &mut GepaRunState,
+    partial_id: &str,
+    lane: &str,
+    parent_pool_version: u64,
+) -> Result<()> {
+    let active = state.active_evaluation.as_ref().ok_or_else(|| {
+        OptimizerError::Invariant(
+            "cannot persist async partial without active evaluation".to_string(),
+        )
+    })?;
+    state.cursor.pipeline_state.candidate_partials.insert(
+        partial_id.to_string(),
+        GepaAsyncCandidatePartial {
+            partial_id: partial_id.to_string(),
+            lane: lane.to_string(),
+            stage: active.stage.clone(),
+            generation: active.generation,
+            parent_pool_version,
+            parent_candidate_id: active.candidate_id.clone().or(active.parent_id.clone()),
+            candidate_ids: candidate_ids_for_active(active),
+            active_evaluation: Some(serde_json::to_value(active)?),
+            proposal_queue: Value::Null,
+            metadata: json!({
+                "proposal_index": active.proposal_index,
+                "is_group": active.is_group(),
+            }),
+        },
+    );
+    Ok(())
+}
+
+fn async_work_item_from_active(
+    active: &GepaActiveEvaluation,
+    lane: &str,
+    parent_pool_version: u64,
+    partial_id: Option<String>,
+) -> Result<GepaAsyncLaneWorkItem> {
+    let current_pool_version = Some(parent_pool_version);
+    Ok(GepaAsyncLaneWorkItem {
+        item_id: partial_id
+            .clone()
+            .unwrap_or_else(|| async_partial_id(&active.stage, active.generation)),
+        lane: lane.to_string(),
+        stage: active.stage.clone(),
+        generation: active.generation,
+        proposal_index: active.proposal_index,
+        parent_candidate_id: active.parent_id.clone().or(active.candidate_id.clone()),
+        parent_pool_version,
+        current_pool_version,
+        stale_gap: Some(0),
+        candidate_ids: candidate_ids_for_active(active),
+        partial_id,
+        job_id: active.planned_job_id.clone(),
+        effect_id: active.effect_id.clone(),
+        reservation_ids: active.reservation_id.iter().cloned().collect(),
+        status: "queued".to_string(),
+        metadata: json!({
+            "next_row_index": active.next_row_index,
+            "row_count": active.row_ids.len(),
+            "candidate_count": active.candidate_evaluations.len(),
+        }),
+    })
+}
+
+fn candidate_ids_for_active(active: &GepaActiveEvaluation) -> Vec<String> {
+    if active.is_group() {
+        active
+            .candidate_evaluations
+            .iter()
+            .map(|candidate| candidate.candidate_id.clone())
+            .collect()
+    } else {
+        active.candidate_id.iter().cloned().collect()
+    }
+}
+
+fn phase_for_rollout_stage(stage: &str) -> Result<GepaCursorPhase> {
+    match stage {
+        "seed_full_train" => Ok(GepaCursorPhase::SeedFullTrain),
+        "candidate_minibatch" => Ok(GepaCursorPhase::CandidateMinibatch),
+        "candidate_full_train" => Ok(GepaCursorPhase::CandidateFullTrain),
+        "heldout" => Ok(GepaCursorPhase::Heldout),
+        _ => Err(OptimizerError::Invariant(format!(
+            "async rollout stage {stage} is not supported"
+        ))),
+    }
+}
+
+fn async_lane_lease_count(state: &GepaRunState, lane: &str) -> usize {
+    state
+        .cursor
+        .pipeline_state
+        .lane_leases
+        .values()
+        .filter(|lease| lease.lane == lane)
+        .count()
+}
+
+fn async_pipeline_idle(state: &GepaRunState) -> bool {
+    async_pipeline_has_no_lane_work(state)
+        && state.proposal_queue.is_empty()
+        && state.active_evaluation.is_none()
+}
+
+fn async_pipeline_has_no_lane_work(state: &GepaRunState) -> bool {
+    state.cursor.pipeline_state.lane_leases.is_empty()
+        && state.cursor.pipeline_state.propose_queue.is_empty()
+        && state.cursor.pipeline_state.rollout_queue.is_empty()
+        && state.cursor.pipeline_state.evaluate_queue.is_empty()
+}
+
+fn async_pipeline_stopper_satisfied(context: &GepaRunContext, state: &GepaRunState) -> bool {
+    state.cursor.generation >= context.config.gepa.max_generations
+        || state.rollout_count >= context.config.gepa.max_total_rollouts
+        || cost_budget_reached(&context.config, state.total_cost)
+}
+
+fn async_partial_id(stage: &str, generation: usize) -> String {
+    format!("async:{stage}:generation_{generation:03}")
+}
+
+fn async_lease_id(lane: &str, job_id: &str) -> String {
+    format!("async:{lane}:{job_id}")
 }
 
 fn advance_pending_runtime_job(
@@ -2543,7 +3394,7 @@ fn terminalize_aborted_gepa_run(
     } else {
         (GepaCursorPhase::Failed, "failed")
     };
-    terminalize_pending_runtime_job_for_abort(context, state, status, &error)?;
+    terminalize_pending_runtime_work_for_abort(context, state, status, &error)?;
     let error_summary = json!({
         "error_code": error.error_code(),
         "message": error.to_string(),
@@ -2607,6 +3458,114 @@ fn terminalize_pending_runtime_job_for_abort(
             failure: Some(&failure),
             metadata,
         },
+    )
+}
+
+fn terminalize_pending_runtime_work_for_abort(
+    context: &mut GepaRunContext,
+    state: &GepaRunState,
+    status: &str,
+    error: &OptimizerError,
+) -> Result<()> {
+    terminalize_pending_runtime_job_for_abort(context, state, status, error)?;
+
+    let run_id = &context.config.run.run_id;
+    let failure = FailurePayload::from_optimizer_error(error);
+    let mut terminalized_effect_ids = BTreeSet::new();
+    for effect in context.workspace.view().runtime_effect_records(run_id)? {
+        if runtime_effect_status_is_terminal(&effect.status)
+            || !terminalized_effect_ids.insert(effect.runtime_effect_id.clone())
+        {
+            continue;
+        }
+        let mut metadata = Map::new();
+        metadata.insert("abort_status".to_string(), json!(status));
+        metadata.insert("abort_scope".to_string(), json!("pending_runtime_work"));
+        metadata.insert("error_code".to_string(), json!(error.error_code()));
+        let Some(reservation_id) = effect.budget_reservation_id.as_deref() else {
+            terminalize_runtime_effect_without_reservation(
+                &context.workspace,
+                &effect,
+                status,
+                &failure,
+                metadata,
+            )?;
+            continue;
+        };
+        let reservation = context
+            .workspace
+            .budget_reservation(run_id, reservation_id)?;
+        record_runtime_effect_completed(
+            &context.workspace,
+            RuntimeEffectCompletionInput {
+                planned: &effect,
+                reservation: &reservation,
+                status,
+                cost_usd: 0.0,
+                usage: &UsageTotals::default(),
+                rollout_count: 0,
+                failure: Some(&failure),
+                metadata,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn terminalize_runtime_effect_without_reservation(
+    workspace: &WorkspaceStore,
+    effect: &RuntimeEffectRecord,
+    status: &str,
+    failure: &FailurePayload,
+    mut metadata: Map<String, Value>,
+) -> Result<()> {
+    metadata.insert("failure".to_string(), serde_json::to_value(failure)?);
+    let mut payload = effect.payload.clone();
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("completion_status".to_string(), json!(status));
+        object.insert("failure".to_string(), serde_json::to_value(failure)?);
+    }
+    let terminal_effect = RuntimeEffectRecord::from_input(RuntimeEffectInput {
+        run_id: &effect.run_id,
+        effect_kind: &effect.effect_kind,
+        lane: &effect.lane,
+        status,
+        subject_type: &effect.subject_type,
+        subject_id: &effect.subject_id,
+        idempotency_key: &effect.idempotency_key,
+        cache_key: effect.cache_key.clone(),
+        job_id: effect.job_id.clone(),
+        budget_reservation_id: None,
+        attempt: effect.attempt,
+        failure_class: Some(failure.failure_class().to_string()),
+        payload,
+        metadata,
+    });
+    workspace.record_runtime_effect(&terminal_effect)?;
+    if let Some(job_id) = effect.job_id.as_deref() {
+        record_runtime_effect_job(
+            workspace,
+            RuntimeEffectJobInput {
+                job_id,
+                run_id: &effect.run_id,
+                kind: runtime_effect_job_kind(effect),
+                status: optimizer_job_status_from_effect_status(status),
+                candidate_id: runtime_effect_candidate_id(effect).as_deref(),
+                effect,
+                reservation: None,
+                dispatch_payload: None,
+                queue_state: status,
+                failure: Some(failure),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn runtime_effect_status_is_terminal(status: &str) -> bool {
+    matches!(
+        status,
+        "completed" | "failed" | "cancelled" | "canceled" | "expired" | "rejected"
     )
 }
 
@@ -4072,7 +5031,8 @@ fn advance_proposer_waiting(
     let mut planned_candidate_ids = BTreeSet::new();
     let mut planned_rollouts = 0usize;
     let mut proposal_index = state.cursor.proposal_index;
-    while proposal_index < state.proposal_queue.len() {
+    let admission_limit = pipeline_candidate_admission_limit(&context.config);
+    while proposal_index < state.proposal_queue.len() && active_candidates.len() < admission_limit {
         let raw_payload = state
             .proposal_queue
             .get(proposal_index)
@@ -4230,6 +5190,13 @@ fn advance_proposer_waiting(
         result: None,
         message: "candidate minibatch evaluation started".to_string(),
     })
+}
+
+fn pipeline_candidate_admission_limit(config: &SynthOptimizerConfig) -> usize {
+    match GepaPipelineRuntimePlan::from_config(config) {
+        Ok(GepaPipelineRuntimePlan::AsyncPipelined(plan)) => plan.max_in_flight_candidates.max(1),
+        _ => usize::MAX,
+    }
 }
 
 fn complete_generation_boundary(
@@ -8143,6 +9110,7 @@ fn persist_gepa_cursor(
         program: serde_json::to_value(state.program)?,
         objective_set: serde_json::to_value(state.objective_set)?,
         state_history: serde_json::to_value(&state.state_machine.history)?,
+        pipeline_state: planner::GepaAsyncPipelineCursorState::default(),
         terminal_summary: state.terminal_summary,
         error_summary: state.error_summary,
         metadata: Value::Object(state.metadata),

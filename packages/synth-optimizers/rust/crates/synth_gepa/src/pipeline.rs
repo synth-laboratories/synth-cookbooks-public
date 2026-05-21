@@ -96,14 +96,6 @@ impl GepaAsyncPipelinedPlan {
             GepaPipelineLane::Evaluate,
         ]
     }
-
-    pub fn not_executable_error(&self) -> OptimizerError {
-        OptimizerError::Config(format!(
-            "gepa.pipeline.mode = {} is recognized but not executable yet; implement async queue workers for lanes {:?} with parent_pool_version stamps before running it",
-            GepaPipelineMode::AsyncPipelined.as_str(),
-            self.lanes()
-        ))
-    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
