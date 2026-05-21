@@ -12,10 +12,10 @@ Each package should be treated as independently releasable:
 Current package slots:
 
 - `synth-containers`
-- `synth-optimizers`
+- `synth-optimizers` (prerelease public GEPA implementation)
 
-Use distinct public distribution names such as `synth-containers` and
-`synth-optimizers`; avoid generic names like `containers` or `optimizers`.
+Use distinct public distribution names such as `synth-containers`; avoid
+generic names like `containers`.
 
 Package builds are checked by `.github/workflows/package-build.yml`. Publish
 automation is intentionally not chosen yet; until that is decided, follow the

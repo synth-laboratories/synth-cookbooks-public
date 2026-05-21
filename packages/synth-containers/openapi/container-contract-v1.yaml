@@ -109,6 +109,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TaskCatalogResponse'
+  /program:
+    get:
+      operationId: getProgram
+      summary: Read the runtime program contract
+      responses:
+        '200':
+          description: Program contract payload
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Runtime does not expose a program contract
+  /dataset:
+    get:
+      operationId: getDataset
+      summary: Read runtime dataset metadata
+      responses:
+        '200':
+          description: Dataset contract payload
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Runtime does not expose dataset metadata
+  /dataset/rows:
+    post:
+      operationId: getDatasetRows
+      summary: Fetch concrete dataset rows by split, seeds, and filters
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Dataset rows payload
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Runtime does not expose dataset rows
   /compatibility:
     get:
       operationId: getCompatibility
@@ -434,6 +483,31 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RolloutResponse'
+  /rollouts/{rollout_id}/fork:
+    post:
+      operationId: forkRollout
+      summary: Fork a new rollout branch from a checkpoint or prior rollout
+      parameters:
+        - $ref: '#/components/parameters/RolloutId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResumeBody'
+      responses:
+        '200':
+          description: Forked rollout completed synchronously
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutResponse'
+        '202':
+          description: Forked rollout accepted asynchronously
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutResponse'
   /rollouts/{rollout_id}/pause:
     post:
       operationId: pauseRollout
@@ -748,6 +822,9 @@ components:
     RolloutRequest:
       type: object
       properties:
+        rollout_id:
+          type: string
+          description: Optional client-supplied rollout identifier. Runtimes may use this as the execution id; otherwise they generate one and return it in the rollout response.
         trace_correlation_id:
           type: string
         trial_id:
@@ -762,6 +839,18 @@ components:
           $ref: '#/components/schemas/RolloutEnvSpec'
         policy:
           $ref: '#/components/schemas/RolloutPolicySpec'
+        candidate:
+          type: object
+          additionalProperties: true
+          description: Optimizer candidate payload, such as prompt fields declared by the GEPA prompt program.
+        candidate_overlay:
+          type: object
+          additionalProperties: true
+          description: Optional optimizer overlay metadata for candidate execution.
+        dataset_row:
+          type: object
+          additionalProperties: true
+          description: Concrete dataset row supplied by an optimizer after fetching /dataset/rows.
         dataset:
           $ref: '#/components/schemas/RolloutDatasetSpec'
         long_horizon:

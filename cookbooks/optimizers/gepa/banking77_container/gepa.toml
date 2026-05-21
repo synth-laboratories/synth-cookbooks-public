@@ -1,0 +1,63 @@
+[run]
+run_id = "banking77_gepa_public"
+output_dir = "../runs"
+seed = 0
+
+[container]
+url = "http://127.0.0.1:8765"
+command = [
+  "uv", "run", "--project", "banking77_container",
+  "python", "banking77_container/synth_service_app.py",
+  "--host", "127.0.0.1", "--port", "8765",
+]
+cwd = ".."
+startup_timeout_seconds = 30
+
+[dataset]
+train_split = "train"
+heldout_split = "test"
+train_seeds = [
+  0, 1, 2, 3, 4, 5, 6, 7,
+  8, 9, 10, 11, 12, 13, 14, 15,
+  16, 17, 18, 19, 20, 21, 22, 23,
+]
+heldout_seeds = [
+  100, 101, 102, 103, 104, 105,
+  106, 107, 108, 109, 110, 111,
+]
+
+[candidate]
+target_modules = ["stage2_system"]
+
+[seed_candidate]
+stage2_system = "Classify the customer banking query into exactly one Banking77 intent. Return the answer only with the best single label."
+
+[policy]
+# Live OpenAI policy. Container reads OPENAI_API_KEY from its env.
+# Override the model via BANKING77_POLICY_MODEL on the container's process env.
+provider = "openai"
+model = "gpt-4.1-nano"
+api_key_env = "OPENAI_API_KEY"
+
+[proposer]
+backend = "local_process_json"
+execution_mode = "local_process"
+command = [
+  "uv", "run", "--quiet", "--with", "openai>=1.0", "python3",
+  "cookbooks/optimizers/gepa/_proposers/openai_api/proposer.py",
+]
+timeout_seconds = 300
+model = "gpt-4.1-mini"
+reasoning_effort = ""
+
+[gepa]
+max_generations = 2
+proposals_per_generation = 2
+minibatch_size = 8
+max_total_rollouts = 256
+max_cost_usd = 0.0
+
+[cache]
+mode = "readwrite"
+path = "../runs/banking77_gepa_n24_v2_cache.sqlite"
+namespace = "banking77_gepa_public_n24_v2"

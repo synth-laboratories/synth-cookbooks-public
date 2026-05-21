@@ -22,6 +22,7 @@ class RolloutActorSpecModel(StrictModel):
 
 
 class RolloutRequestModel(StrictModel):
+    rollout_id: str | None = None
     trace_correlation_id: str | None = None
     trial_id: str | None = None
     submission_mode: str | None = None
@@ -32,6 +33,9 @@ class RolloutRequestModel(StrictModel):
     task_metadata: HttpObject = Field(default_factory=dict)
     env: HttpObject = Field(default_factory=dict)
     policy: HttpObject = Field(default_factory=dict)
+    candidate: HttpObject = Field(default_factory=dict)
+    candidate_overlay: HttpObject = Field(default_factory=dict)
+    dataset_row: HttpObject = Field(default_factory=dict)
     metadata: HttpObject = Field(default_factory=dict)
     checkpoint: HttpObject | str | None = None
     checkpoint_id: str | None = None
