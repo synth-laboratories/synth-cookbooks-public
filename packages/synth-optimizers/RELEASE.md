@@ -1,26 +1,43 @@
 # Release: synth-optimizers
 
-Release this package independently from the repository root and from other
-packages in this monorepo.
+Current status: prerelease implementation for the public GEPA vertical slice.
 
-## Build
+Do not tag or publish `0.1.0` until the Banking77, TBLite, code-review, and
+Crafter acceptance packet is complete:
+
+- fresh readwrite GEPA run writes result manifest, raw events, normalized events,
+  best candidate, candidate registry, frontier, and cache profile
+- immediate cached rerun makes no new proposer or rollout external calls
+- readonly replay succeeds when fully cached
+- readonly replay fails with a typed cache miss when the cache is incomplete
+- `events compare` reports parity for normalized original and cached feeds
+
+## Validation
 
 Run from `packages/synth-optimizers/`:
 
 ```bash
-uv run --group dev ruff check src
-uv run --group dev ty check src
-uv build
+cargo fmt --check
+cargo check --workspace
+cargo clippy --workspace -- -D warnings
+python -m py_compile src/synth_optimizers/__init__.py src/synth_optimizers/cli.py
+uv run --project . --group dev ruff check src
+uv run --project . --group dev ty check src
+git diff --check
 ```
 
-## Publish
-
-After confirming the version, inspecting the generated artifacts, and confirming
-that the required `synth-containers` version is already available on PyPI:
+Run the cookbook acceptance from the repository root when the local environment
+has the package built or installed:
 
 ```bash
-uv publish dist/*
+synth-optimizers gepa run --config cookbooks/optimizers/gepa/banking77_container/gepa.toml
+synth-optimizers gepa run --config cookbooks/optimizers/gepa/tblite_container/gepa.toml
+synth-optimizers gepa run --config cookbooks/optimizers/gepa/code_review_container/gepa.toml
+synth-optimizers gepa run --config cookbooks/optimizers/gepa/crafter_container/gepa.toml
+synth-optimizers events compare --left <fresh>/events.normalized.jsonl --right <cached>/events.normalized.jsonl
 ```
 
-Publish automation is intentionally TBD until the repository-level packaging
-pipeline is chosen.
+## Publish Gate
+
+No PyPI publish, public release tag, or production promotion is allowed without
+the workspace launch checklist and evidence packet.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from inspect import isawaitable
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Mapping, Protocol, runtime_checkable
 
 from fastapi import FastAPI, HTTPException, Request
 
@@ -24,6 +24,7 @@ from .http_models import (
 )
 from .nouns import CheckpointDescriptor, ExecutionRecord
 from .ontology import CONTRACT_VERSION
+from .prompt_programs import gepa_optimizer_contract
 from .serde import JsonObject
 
 
@@ -85,6 +86,53 @@ def _task_catalog(runtime: ManagedRuntime) -> TaskCatalog:
     return runtime.task_catalog()
 
 
+def _gepa_optimizer_route_contract(runtime: ManagedRuntime) -> dict[str, Any] | None:
+    route_methods = {
+        "program_route": "program",
+        "dataset_route": "dataset_info",
+        "dataset_rows_route": "dataset_rows",
+    }
+    if not all(callable(getattr(runtime, method, None)) for method in route_methods.values()):
+        return None
+    return gepa_optimizer_contract()
+
+
+def _with_optimizer_contracts(payload: dict[str, Any], runtime: ManagedRuntime) -> dict[str, Any]:
+    value = dict(payload)
+    metadata = value.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    else:
+        metadata = dict(metadata)
+    gepa_contract = _gepa_optimizer_route_contract(runtime)
+    if gepa_contract is not None:
+        optimizer_contracts = metadata.get("optimizer_contracts")
+        if not isinstance(optimizer_contracts, dict):
+            optimizer_contracts = {}
+        else:
+            optimizer_contracts = dict(optimizer_contracts)
+        optimizer_contracts["gepa"] = {**gepa_contract, **dict(optimizer_contracts.get("gepa") or {})}
+        metadata["optimizer_contracts"] = optimizer_contracts
+    value["metadata"] = metadata
+    return value
+
+
+async def _optional_runtime_contract_call(
+    runtime: ManagedRuntime,
+    method_name: str,
+    request: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    handler = getattr(runtime, method_name, None)
+    if not callable(handler):
+        raise HTTPException(status_code=404, detail=f"container_route_not_supported:{method_name}")
+    value = handler(dict(request or {})) if request is not None else handler()
+    if isawaitable(value):
+        value = await value
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise TypeError(f"runtime.{method_name}() must return a mapping")
+
+
 def _coerce_rollout_payload(value: ExecutionRecord) -> dict[str, Any]:
     return execution_to_rollout_payload(value)
 
@@ -123,8 +171,11 @@ def create_reference_app(runtime: ManagedRuntime, *, title: str = "synth-contain
         return {
             "status": "ok",
             "contract_version": CONTRACT_VERSION,
-            "runtime": metadata_to_http_payload(metadata),
-            "task_info": task_info_to_http_payload(await _task_info_for_request(runtime, {})),
+            "runtime": _with_optimizer_contracts(metadata_to_http_payload(metadata), runtime),
+            "task_info": _with_optimizer_contracts(
+                task_info_to_http_payload(await _task_info_for_request(runtime, {})),
+                runtime,
+            ),
         }
 
     @app.get("/health")
@@ -134,12 +185,30 @@ def create_reference_app(runtime: ManagedRuntime, *, title: str = "synth-contain
     @app.get("/metadata")
     @app.get("/info")
     async def metadata() -> dict[str, Any]:
-        return metadata_to_http_payload(_metadata(runtime))
+        return _with_optimizer_contracts(metadata_to_http_payload(_metadata(runtime)), runtime)
 
     @app.get("/task_info")
     async def task_info(request: Request) -> dict[str, Any]:
         query = {key: value for key, value in request.query_params.multi_items()}
-        return task_info_to_http_payload(await _task_info_for_request(runtime, query))
+        return _with_optimizer_contracts(
+            task_info_to_http_payload(await _task_info_for_request(runtime, query)),
+            runtime,
+        )
+
+    @app.get("/program")
+    async def program() -> dict[str, Any]:
+        return await _optional_runtime_contract_call(runtime, "program")
+
+    @app.get("/dataset")
+    async def dataset() -> dict[str, Any]:
+        return await _optional_runtime_contract_call(runtime, "dataset_info")
+
+    @app.post("/dataset/rows")
+    async def dataset_rows(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        if not isinstance(payload, Mapping):
+            raise HTTPException(status_code=400, detail="dataset_rows_request_must_be_object")
+        return await _optional_runtime_contract_call(runtime, "dataset_rows", payload)
 
     @app.get("/task_catalog")
     async def task_catalog() -> dict[str, Any]:
@@ -288,6 +357,7 @@ def create_reference_app(runtime: ManagedRuntime, *, title: str = "synth-contain
         return _coerce_checkpoint_payload(result)
 
     @app.post("/rollouts/{rollout_id}/resume")
+    @app.post("/rollouts/{rollout_id}/fork")
     async def resume_rollout(rollout_id: str, request: ResumeRequestModel) -> dict[str, Any]:
         payload = request.model_dump(mode="json", exclude_none=True)
         result = await runtime.resume_execution(rollout_id=rollout_id, request=payload)

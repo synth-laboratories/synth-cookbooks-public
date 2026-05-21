@@ -43,8 +43,6 @@ uv build
 uv run --group dev twine check dist/*
 ```
 
-Use the same shape for `packages/synth-optimizers`.
-
 Do not publish from the repository root. Follow the package-local `RELEASE.md`
 for manual release steps and keep package versions independent.
 
@@ -71,24 +69,6 @@ surface should stay framework-neutral:
 Avoid compatibility fallbacks in new public interfaces unless they are required
 for a documented migration path. Prefer explicit dataclasses, enums, protocols,
 and typed payload conversion at the boundary.
-
-## synth-optimizers
-
-`synth-optimizers` is the public optimizer package. It should start from
-Synth Lab-derived optimizer logic, not old `prompt_opt` scaffolding.
-
-Guidelines:
-
-- Keep the import surface under `synth_optimizers`.
-- Keep optimizer-specific implementation under feature subpackages such as
-  `synth_optimizers.miprov2`.
-- Depend on `synth-containers` for shared task, resource, and runtime capability
-  concepts instead of redefining them.
-- Make optimizer requirements explicit. If an optimizer needs rollout,
-  evaluation, checkpoint, trace, or token support, represent that requirement in
-  code near the optimizer entrypoint.
-- Keep cookbook examples as clients of the package rather than copies of package
-  internals.
 
 ## Cookbook Development
 

@@ -1,0 +1,17 @@
+[project]
+name = "crafter-gepa-container"
+version = "0.1.0"
+description = "Public GEPA cookbook container for Craftax (real env, OpenAI policy)."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+  "openai>=1.0",
+  "numpy>=1.26",
+  "craftax>=1.4.6",
+  "jax[cpu]>=0.4.30",
+]
+
+# Keep container deps narrow on purpose: each cookbook container declares its
+# own deps so a user installing one cookbook does not have to install
+# craftax+jax+gymnasium+docker tooling for all of them.

@@ -54,6 +54,8 @@ class RouteHints(JsonDataclassMixin):
     task_info_routes: list[str] = field(default_factory=lambda: ["/task_info"])
     task_catalog_routes: list[str] = field(default_factory=lambda: ["/task_catalog"])
     compatibility_routes: list[str] = field(default_factory=lambda: ["/compatibility"])
+    program_routes: list[str] = field(default_factory=lambda: ["/program"])
+    dataset_routes: list[str] = field(default_factory=lambda: ["/dataset", "/dataset/rows"])
     rollout_routes: list[str] = field(default_factory=lambda: ["/rollout", "/rollouts"])
     state_routes: list[str] = field(default_factory=lambda: ["/rollouts/{rollout_id}/state"])
     pause_routes: list[str] = field(default_factory=lambda: ["/rollouts/{rollout_id}/pause"])
@@ -67,7 +69,12 @@ class RouteHints(JsonDataclassMixin):
             "/checkpoints/{checkpoint_id}/labels",
         ]
     )
-    resume_routes: list[str] = field(default_factory=lambda: ["/rollouts/{rollout_id}/resume"])
+    resume_routes: list[str] = field(
+        default_factory=lambda: [
+            "/rollouts/{rollout_id}/resume",
+            "/rollouts/{rollout_id}/fork",
+        ]
+    )
     summary_routes: list[str] = field(default_factory=lambda: ["/rollouts/{rollout_id}/summary"])
     usage_routes: list[str] = field(default_factory=lambda: ["/rollouts/{rollout_id}/usage"])
     event_routes: list[str] = field(default_factory=lambda: ["/rollouts/{rollout_id}/events"])

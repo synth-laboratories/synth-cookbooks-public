@@ -1,0 +1,61 @@
+[run]
+run_id = "crafter_gepa_public"
+output_dir = "../runs"
+seed = 0
+
+[container]
+url = "http://127.0.0.1:8768"
+# Container's deps are declared per-container in this folder's pyproject.toml
+# (craftax, jax[cpu], openai, fastapi, uvicorn). Boot it via uv against this
+# directory so a user only installs Crafter-side deps when they run Crafter.
+command = [
+  "uv", "run", "--project", "crafter_container",
+  "python", "crafter_container/synth_service_app.py",
+  "--host", "127.0.0.1", "--port", "8768",
+]
+cwd = ".."
+startup_timeout_seconds = 60
+
+[dataset]
+train_split = "train"
+heldout_split = "test"
+# Keep budgets small by default — real Craftax episodes (each ~20 turns of
+# OpenAI calls) cost real money. Scale up after a first cookbook run.
+train_seeds = [11, 13]
+heldout_seeds = [101]
+
+[candidate]
+target_modules = ["react_system_prompt"]
+
+[seed_candidate]
+react_system_prompt = "You are controlling a Crafter survival agent. Each turn you see a compact text observation (player stats, inventory, local map). Respond ONLY with a single <tool_call> block of the form: <tool_call>{\"name\":\"crafter_interact\",\"arguments\":{\"actions_list\":[\"move_right\",\"do\"]}}</tool_call>. Use 1-5 valid actions per call. Prioritize collecting wood, placing a table, crafting tools, then collecting stone/coal/iron. Avoid lava."
+
+[policy]
+# Live OpenAI policy. The container reads OPENAI_API_KEY from its env.
+# Override the model via CRAFTER_POLICY_MODEL.
+provider = "openai"
+model = "gpt-4.1-nano"
+api_key_env = "OPENAI_API_KEY"
+
+[proposer]
+backend = "local_process_json"
+execution_mode = "local_process"
+command = [
+  "uv", "run", "--quiet", "--with", "openai>=1.0", "python3",
+  "cookbooks/optimizers/gepa/_proposers/openai_api/proposer.py",
+]
+timeout_seconds = 300
+model = "gpt-4.1-mini"
+reasoning_effort = ""
+
+[gepa]
+max_generations = 1
+proposals_per_generation = 1
+minibatch_size = 2
+max_total_rollouts = 8
+max_cost_usd = 0.0
+
+[cache]
+mode = "readwrite"
+path = "../runs/crafter_gepa_cache.sqlite"
+namespace = "crafter_gepa_public_live"
