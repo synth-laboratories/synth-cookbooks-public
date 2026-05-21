@@ -14,6 +14,12 @@ use synth_optimizer_platform::{OptimizerError, PromptProgram, Result, SynthOptim
 
 use crate::CandidateRecord;
 
+const GEPA_REFLECTIVE_FRAME_SCHEMA_VERSION: &str = "gepa_reflective_frame.v1";
+const CONTAINER_SENSOR_ADAPTER_ID: &str = "synth.container_sensor_frame_adapter";
+const CONTAINER_SENSOR_ADAPTER_VERSION: &str = "v1";
+const GEPA_ADAPTER_SOURCE: &str = "https://gepa-ai.github.io/gepa/guides/adapters/";
+const GEPA_ALGORITHM_ID: &str = "synth_gepa.v1";
+
 pub(crate) struct CodexProposerInput<'a> {
     pub config: &'a SynthOptimizerConfig,
     pub program: &'a PromptProgram,
@@ -124,6 +130,7 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
     let rollouts = rollouts_read_model(input);
     let scores = scores_read_model(input);
     let evidence_frames = evidence_frames_read_model(input);
+    let reflective_frames = reflective_frames_read_model(input);
     let links = links_read_model(input);
     let pareto_front = pareto_front_read_model(input);
     let gepa_summary = gepa_summary_read_model(input, &rollouts);
@@ -139,6 +146,7 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
         "rollouts": rollouts,
         "scores": scores,
         "evidence_frames": evidence_frames,
+        "reflective_frames": reflective_frames,
         "links": links,
         "pareto_front": pareto_front,
         "proposal_request": proposal_request,
@@ -192,6 +200,10 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
         &state_dir.join("evidence_frames.json"),
         &evidence_frames_read_model(input),
     )?;
+    write_json(
+        &state_dir.join("reflective_frames.json"),
+        &reflective_frames_read_model(input),
+    )?;
     write_json(&state_dir.join("links.json"), &links_read_model(input))?;
     write_json(
         &state_dir.join("algorithm_read_model.json"),
@@ -225,7 +237,7 @@ Read:
 4. `state/candidates.json` for candidate payloads and train/minibatch/heldout scores.
 5. `state/candidate_deltas.json` for payload differences from the selected parent.
 6. `state/rollouts.json` and `state/scores.json` for per-example rewards and score summaries.
-7. `state/evidence_frames.json` and `state/links.json` for durable rollout evidence.
+7. `state/evidence_frames.json`, `state/reflective_frames.json`, and `state/links.json` for durable rollout evidence.
 8. `state/algorithm_read_model.json` for the complete GEPA read model.
 9. `state/pareto_front.json`, `state/gepa_sidecar.json`, and `state/gepa_summary.json` for GEPA-specific mirrors.
 10. `state/parent_payload.json` and `state/reflector_input.json` for the parent prompt and sampled wins/losses.
@@ -264,6 +276,7 @@ Write `proposal/manifest.json` as strict JSON using this schema:
       "state/rollouts.json",
       "state/scores.json",
       "state/evidence_frames.json",
+      "state/reflective_frames.json",
       "state/links.json"
     ],
     "candidate_comparison": "Short comparison of parent, Pareto members, and recent candidates.",
@@ -295,10 +308,10 @@ Write `proposal/manifest.json` as strict JSON using this schema:
 
 Rules:
 
-- Read `state/run_context.json`, `state/program_contract.json`, `state/algorithm_read_model.json`, `state/candidates.json`, `state/candidate_deltas.json`, `state/rollouts.json`, `state/scores.json`, `state/evidence_frames.json`, `state/links.json`, `state/parent_payload.json`, and `state/reflector_input.json`.
+- Read `state/run_context.json`, `state/program_contract.json`, `state/algorithm_read_model.json`, `state/candidates.json`, `state/candidate_deltas.json`, `state/rollouts.json`, `state/scores.json`, `state/evidence_frames.json`, `state/reflective_frames.json`, `state/links.json`, `state/parent_payload.json`, and `state/reflector_input.json`.
 - Use shell/Python/JQ inspection to summarize the workspace before writing the manifest. Do not jump straight to editing `proposal/manifest.json`.
 - Minimum review workflow: inspect candidate scores/payloads, inspect Pareto membership, inspect rollout wins/losses, inspect parent payload, then write the manifest.
-- Use rollout rewards, candidate deltas, failures, wins, and Pareto membership as evidence.
+- Use rollout rewards, candidate deltas, reflective frames, failures, wins, and Pareto membership as evidence.
 - Fill `evidence` with concrete files reviewed, candidate comparison, failure patterns, winning patterns, and example ids from `state/rollouts.json`.
 - Create exactly `state/proposal_request.json.proposals_per_round` distinct proposals.
 - Use `proposal_type="frontier_variation"` for a mutation of one Pareto-front candidate.
@@ -476,6 +489,191 @@ fn evidence_frames_read_model(input: &CodexProposerInput<'_>) -> Value {
             .filter(|value| !value.is_null())
             .collect(),
     )
+}
+
+fn reflective_frames_read_model(input: &CodexProposerInput<'_>) -> Value {
+    let mut frames = input
+        .candidates
+        .iter()
+        .flat_map(|candidate| {
+            candidate
+                .sensor_frames
+                .iter()
+                .map(move |frame| reflective_frame_value(input, candidate, frame))
+        })
+        .collect::<Vec<_>>();
+    frames.sort_by(|left, right| {
+        let left_key = left
+            .get("frame_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let right_key = right
+            .get("frame_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        left_key.cmp(right_key)
+    });
+    if frames.len() > 80 {
+        frames.truncate(80);
+    }
+    json!({
+        "schema_version": GEPA_REFLECTIVE_FRAME_SCHEMA_VERSION,
+        "adapter": reflective_adapter_spec(),
+        "frame_count": frames.len(),
+        "frames": frames,
+    })
+}
+
+fn reflective_frame_value(
+    input: &CodexProposerInput<'_>,
+    candidate: &CandidateRecord,
+    frame: &synth_optimizer_platform::SensorFrame,
+) -> Value {
+    let component_id = input
+        .config
+        .candidate
+        .target_modules
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "candidate".to_string());
+    let rollout_id = frame.rollout_id.clone().unwrap_or_default();
+    let trace_refs = frame
+        .trace_digest
+        .as_ref()
+        .map(|digest| vec![format!("trace_sha256:{}", digest.sha256)])
+        .unwrap_or_default();
+    let confidence = reflective_confidence(frame);
+    let artifact_refs = frame
+        .artifact_refs
+        .iter()
+        .map(|artifact| serde_json::to_value(artifact).unwrap_or(Value::Null))
+        .filter(|value| !value.is_null())
+        .collect::<Vec<_>>();
+    let failure_class = frame
+        .failure
+        .as_ref()
+        .map(|failure| failure.failure_class().to_string())
+        .unwrap_or_default();
+    let verifier_rationale = frame
+        .objective_scores
+        .iter()
+        .filter_map(|score| score.rationale.as_deref())
+        .find(|value| !value.trim().is_empty())
+        .unwrap_or_default()
+        .to_string();
+    let evidence = json!({
+        "schema_version": GEPA_REFLECTIVE_FRAME_SCHEMA_VERSION,
+        "source": "sensor_frame_adapter",
+        "adapter": reflective_adapter_spec(),
+        "subject": {
+            "algorithm_id": GEPA_ALGORITHM_ID,
+            "candidate_id": candidate.candidate_id,
+            "parent_candidate_id": candidate.parent_id,
+            "component_id": component_id,
+            "rollout_id": rollout_id,
+            "example_id": frame.example_id,
+        },
+        "adapter_source": GEPA_ADAPTER_SOURCE,
+        "rollout_id": rollout_id,
+        "example_id": frame.example_id,
+        "split": frame.split,
+        "inputs": {
+            "example": {
+                "example_id": frame.example_id,
+                "seed": frame.seed,
+                "split": frame.split,
+            },
+            "request": {
+                "evaluation_stage": frame.evaluation_stage,
+                "target_modules": input.config.candidate.target_modules,
+            },
+        },
+        "generated_outputs": {
+            "summary": frame.metadata.get("summary").cloned().unwrap_or(Value::Null),
+            "outcome": {
+                "status": frame.status,
+                "success_status": frame.success_status,
+                "reward": frame.reward,
+            },
+        },
+        "feedback": {
+            "reward": frame.reward,
+            "objective_scores": frame.objective_scores,
+            "verifier_rationale": verifier_rationale,
+        },
+        "actionable_side_info": frame.actionable_side_info.clone().unwrap_or_else(|| json!({})),
+        "sensors": {
+            "confidence": confidence,
+            "trace_digest": frame.trace_digest,
+        },
+        "refs": {
+            "trace_refs": trace_refs,
+            "rollout_id": rollout_id,
+            "sensor_frame_id": frame.sensor_frame_id,
+            "artifact_refs": artifact_refs,
+        },
+        "trace_refs": trace_refs,
+        "tool_calls": frame.trace_digest.as_ref().map(|digest| digest.tool_call_count).unwrap_or(0),
+        "substitution_stats": Value::Null,
+        "failure_class": failure_class,
+        "usage": frame.usage,
+        "confidence": confidence,
+        "component_id": component_id,
+    });
+    json!({
+        "frame_id": format!("reflect:{}:{}:{}", GEPA_ALGORITHM_ID, candidate.candidate_id, frame.sensor_frame_id),
+        "algorithm_id": GEPA_ALGORITHM_ID,
+        "component_id": component_id,
+        "candidate_id": candidate.candidate_id,
+        "parent_candidate_id": candidate.parent_id,
+        "rollout_id": frame.rollout_id,
+        "artifact_refs": artifact_refs,
+        "metadata": {
+            "adapter_id": CONTAINER_SENSOR_ADAPTER_ID,
+            "adapter_version": CONTAINER_SENSOR_ADAPTER_VERSION,
+            "evidence_schema_version": GEPA_REFLECTIVE_FRAME_SCHEMA_VERSION,
+            "sensor_frame_id": frame.sensor_frame_id,
+        },
+        "evidence": evidence,
+    })
+}
+
+fn reflective_adapter_spec() -> Value {
+    json!({
+        "adapter_id": CONTAINER_SENSOR_ADAPTER_ID,
+        "adapter_version": CONTAINER_SENSOR_ADAPTER_VERSION,
+        "source": GEPA_ADAPTER_SOURCE,
+        "evidence_schema_version": GEPA_REFLECTIVE_FRAME_SCHEMA_VERSION,
+        "required_evidence_keys": [
+            "schema_version",
+            "source",
+            "adapter",
+            "subject",
+            "inputs",
+            "generated_outputs",
+            "feedback",
+            "actionable_side_info",
+            "sensors",
+            "refs",
+        ],
+    })
+}
+
+fn reflective_confidence(frame: &synth_optimizer_platform::SensorFrame) -> f64 {
+    let support_count = frame
+        .trace_digest
+        .as_ref()
+        .map(|digest| digest.llm_request_count + digest.tool_call_count)
+        .unwrap_or(0);
+    if frame.failure.is_some() {
+        0.55
+    } else if support_count > 0 {
+        0.85
+    } else if frame.actionable_side_info.is_some() {
+        0.7
+    } else {
+        0.35
+    }
 }
 
 fn links_read_model(input: &CodexProposerInput<'_>) -> Value {
