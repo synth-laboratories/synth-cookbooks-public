@@ -85,6 +85,14 @@ fn default_candidate_selector_config() -> GepaCandidateSelectorConfig {
     GepaCandidateSelectorConfig::default()
 }
 
+fn default_batch_sampler_name() -> String {
+    "seeded_shuffle".to_string()
+}
+
+fn default_batch_sampler_config() -> GepaBatchSamplerConfig {
+    GepaBatchSamplerConfig::default()
+}
+
 fn default_gepa_pipeline_config() -> GepaPipelineConfig {
     GepaPipelineConfig::default()
 }
@@ -332,6 +340,7 @@ impl SynthOptimizerConfig {
             ));
         }
         validate_gepa_candidate_selector_config(&self.gepa.candidate_selector)?;
+        validate_gepa_batch_sampler_config(&self.gepa.batch_sampler)?;
         validate_gepa_pipeline_config(&self.gepa.pipeline)?;
         if !self.gepa.max_cost_usd.is_finite() || self.gepa.max_cost_usd < 0.0 {
             return Err(OptimizerError::Config(
@@ -567,6 +576,27 @@ impl Default for GepaCandidateSelectorConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct GepaBatchSamplerConfig {
+    #[serde(default = "default_batch_sampler_name")]
+    pub name: String,
+    #[serde(default)]
+    pub epoch_width: Option<usize>,
+    #[serde(default)]
+    pub field: Option<String>,
+}
+
+impl Default for GepaBatchSamplerConfig {
+    fn default() -> Self {
+        Self {
+            name: default_batch_sampler_name(),
+            epoch_width: None,
+            field: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GepaConfig {
     #[serde(default = "default_max_generations")]
     pub max_generations: usize,
@@ -588,6 +618,8 @@ pub struct GepaConfig {
     pub selection_objective: Option<String>,
     #[serde(default = "default_candidate_selector_config")]
     pub candidate_selector: GepaCandidateSelectorConfig,
+    #[serde(default = "default_batch_sampler_config")]
+    pub batch_sampler: GepaBatchSamplerConfig,
     #[serde(default = "default_gepa_pipeline_config")]
     pub pipeline: GepaPipelineConfig,
     #[serde(default)]
@@ -633,6 +665,7 @@ impl Default for GepaConfig {
             frontier_type: default_frontier_type(),
             selection_objective: None,
             candidate_selector: default_candidate_selector_config(),
+            batch_sampler: default_batch_sampler_config(),
             pipeline: default_gepa_pipeline_config(),
             max_cost_usd: 0.0,
             max_time_seconds: None,
@@ -850,6 +883,39 @@ fn validate_gepa_candidate_selector_config(config: &GepaCandidateSelectorConfig)
     if config.k == Some(0) {
         return Err(OptimizerError::Config(
             "gepa.candidate_selector.k must be positive when set".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_gepa_batch_sampler_config(config: &GepaBatchSamplerConfig) -> Result<()> {
+    let strategy = config.name.trim().to_ascii_lowercase().replace('-', "_");
+    if !matches!(
+        strategy.as_str(),
+        "seeded_shuffle"
+            | "epoch_shuffled"
+            | "ordered_epoch"
+            | "sequential_epoch"
+            | "stratified"
+            | "stratified_by_field"
+    ) {
+        return Err(OptimizerError::Config(format!(
+            "gepa.batch_sampler.name must be seeded_shuffle, epoch_shuffled, ordered_epoch, or stratified; got {:?}",
+            config.name
+        )));
+    }
+    if config.epoch_width == Some(0) {
+        return Err(OptimizerError::Config(
+            "gepa.batch_sampler.epoch_width must be positive when set".to_string(),
+        ));
+    }
+    if config
+        .field
+        .as_deref()
+        .is_some_and(|field| field.trim().is_empty())
+    {
+        return Err(OptimizerError::Config(
+            "gepa.batch_sampler.field must be non-empty when set".to_string(),
         ));
     }
     Ok(())

@@ -17,7 +17,7 @@ use synth_optimizer_platform::{
     ContainerContractSnapshotInput, ContainerContractSnapshotRecord, DatasetResponse,
     DatasetRowsRequest, DatasetRowsResponse, DatasetSnapshotInput, DatasetSnapshotRecord,
     EvaluationCacheRecord, EvaluationCacheRecordInput, EventWriter, FailurePayload,
-    GepaCandidateSelectorConfig, GepaRunResult, LeverBundle, LeverManifest,
+    GepaBatchSamplerConfig, GepaCandidateSelectorConfig, GepaRunResult, LeverBundle, LeverManifest,
     ManagedContainerProcess, MaterializationRecord, MaterializationRecordInput, ObjectiveScore,
     ObjectiveSetRecord, ObjectiveSpec, OptimizerError, OptimizerJob, OptimizerJobKind,
     OptimizerJobStatus, OptimizerRunState, OptimizerStateMachine, OptimizerTransition,
@@ -2761,7 +2761,13 @@ fn plan_next_rollout_batch(
             "active evaluation candidate index {candidate_index} is outside candidate registry"
         ))
     })?;
-    let rows = rows_for_rollout_stage(&context.config, resources, &active.stage, active.generation);
+    let rows = rows_for_rollout_stage(
+        &context.config,
+        resources,
+        &active.stage,
+        active.generation,
+        active.proposal_index,
+    );
     if active.next_row_index == 0 {
         transition_to_rollout_running(
             context,
@@ -2855,6 +2861,7 @@ fn plan_next_rollout_group_batch(
             resources,
             &active.stage,
             candidate_eval.generation,
+            candidate_eval.proposal_index,
         );
         let remaining_rows = rows
             .get(candidate_eval.next_row_index..)
@@ -2942,12 +2949,16 @@ fn rows_for_rollout_stage(
     resources: &GepaStepResources,
     stage: &str,
     generation: usize,
+    proposal_index: usize,
 ) -> Vec<Value> {
     match stage {
         "candidate_minibatch" => minibatch_rows(
             &resources.train_rows,
+            &config.gepa.batch_sampler,
             config.gepa.minibatch_size,
             generation,
+            proposal_index,
+            config.gepa.proposals_per_generation,
         ),
         "seed_full_train" | "candidate_full_train" => resources.train_rows.clone(),
         "heldout" => resources.heldout_rows.clone(),
@@ -3365,7 +3376,13 @@ fn consume_rollout_outcome(
             "rollout outcome candidate index {candidate_index} is outside candidate registry"
         ))
     })?;
-    let rows = rows_for_rollout_stage(&context.config, resources, &stage, active.generation);
+    let rows = rows_for_rollout_stage(
+        &context.config,
+        resources,
+        &stage,
+        active.generation,
+        active.proposal_index,
+    );
     let row = rows.get(active.next_row_index).ok_or_else(|| {
         OptimizerError::Invariant(format!(
             "rollout outcome row index {} is outside {} rows",
@@ -3472,6 +3489,7 @@ fn consume_group_rollout_outcome(
         resources,
         &stage,
         candidate_eval.generation,
+        candidate_eval.proposal_index,
     );
     let row = rows.get(candidate_eval.next_row_index).ok_or_else(|| {
         OptimizerError::Invariant(format!(
@@ -4323,8 +4341,11 @@ fn finalize_candidate_minibatch(
         })?;
     let minibatch_rows = minibatch_rows(
         &resources.train_rows,
+        &context.config.gepa.batch_sampler,
         context.config.gepa.minibatch_size,
         active.generation,
+        active.proposal_index,
+        context.config.gepa.proposals_per_generation,
     );
     let parent_minibatch_reward =
         average_reward_for_rows(&state.candidates[parent_idx].train_scores, &minibatch_rows)?
@@ -4557,8 +4578,11 @@ fn finalize_candidate_minibatch_group(
             })?;
         let minibatch_rows = minibatch_rows(
             &resources.train_rows,
+            &context.config.gepa.batch_sampler,
             context.config.gepa.minibatch_size,
             candidate_active.generation,
+            candidate_active.proposal_index,
+            context.config.gepa.proposals_per_generation,
         );
         let parent_minibatch_reward =
             average_reward_for_rows(&state.candidates[parent_idx].train_scores, &minibatch_rows)?
@@ -5311,11 +5335,6 @@ fn advance_proposer_waiting(
         return complete_generation_boundary(context, state, resources);
     }
     let parent_idx = current_proposal_parent_idx(state)?;
-    let minibatch_rows = minibatch_rows(
-        &resources.train_rows,
-        context.config.gepa.minibatch_size,
-        state.cursor.generation,
-    );
     let minibatch_capacity =
         remaining_rollout_capacity(&context.workspace, &context.config.run.run_id)?;
     let mut active_candidates = Vec::new();
@@ -5405,6 +5424,14 @@ fn advance_proposer_waiting(
         )?;
         state.candidates.push(candidate);
         let candidate_idx = state.candidates.len() - 1;
+        let minibatch_rows = minibatch_rows(
+            &resources.train_rows,
+            &context.config.gepa.batch_sampler,
+            context.config.gepa.minibatch_size,
+            state.cursor.generation,
+            proposal_index,
+            context.config.gepa.proposals_per_generation,
+        );
         let remaining_capacity = minibatch_capacity.saturating_sub(planned_rollouts);
         if remaining_capacity < minibatch_rows.len() {
             state.candidates[candidate_idx].status = "deferred_budget".to_string();
@@ -6973,8 +7000,7 @@ fn execute_gepa_monolithic_with_options(
             }),
         )?;
 
-        let minibatch_rows = minibatch_rows(&train_rows, config.gepa.minibatch_size, generation);
-        for proposal in proposer_outcome.proposals {
+        for (proposal_index, proposal) in proposer_outcome.proposals.into_iter().enumerate() {
             check_cancelled(options.cancellation.as_ref())?;
             if rollout_count >= config.gepa.max_total_rollouts {
                 let mut metadata = Map::new();
@@ -7024,6 +7050,14 @@ fn execute_gepa_monolithic_with_options(
                 );
                 break;
             }
+            let minibatch_rows = minibatch_rows(
+                &train_rows,
+                &config.gepa.batch_sampler,
+                config.gepa.minibatch_size,
+                generation,
+                proposal_index,
+                config.gepa.proposals_per_generation,
+            );
             let proposal_parent_idx = proposal
                 .parent_candidate_ids
                 .iter()
@@ -8478,15 +8512,152 @@ fn normalize_candidate_payload(
     Ok(payload)
 }
 
-fn minibatch_rows(rows: &[Value], minibatch_size: usize, generation: usize) -> Vec<Value> {
+fn minibatch_rows(
+    rows: &[Value],
+    sampler: &GepaBatchSamplerConfig,
+    minibatch_size: usize,
+    generation: usize,
+    proposal_index: usize,
+    proposals_per_generation: usize,
+) -> Vec<Value> {
     if rows.is_empty() {
         return Vec::new();
     }
     let size = minibatch_size.min(rows.len()).max(1);
-    let start = (generation * size) % rows.len();
-    (0..size)
-        .map(|offset| rows[(start + offset) % rows.len()].clone())
+    if size >= rows.len() {
+        return rows.to_vec();
+    }
+    let strategy = normalize_gepa_batch_sampler_name(&sampler.name);
+    let mut indices = (0..rows.len()).collect::<Vec<_>>();
+    if strategy != "ordered_epoch" {
+        deterministic_shuffle_indices(&mut indices, rows, generation, proposal_index, &strategy);
+    }
+    if strategy == "epoch_shuffled" || strategy == "ordered_epoch" {
+        let epoch_width = sampler.epoch_width.unwrap_or(size).max(1);
+        let cursor = generation
+            .saturating_mul(proposals_per_generation.max(1))
+            .saturating_add(proposal_index);
+        let start = cursor.saturating_mul(epoch_width) % indices.len();
+        return (0..size)
+            .map(|offset| rows[indices[(start + offset) % indices.len()]].clone())
+            .collect();
+    }
+    if strategy == "stratified" {
+        let field = sampler
+            .field
+            .as_deref()
+            .map(str::trim)
+            .filter(|field| !field.is_empty())
+            .unwrap_or("metadata.difficulty");
+        let selected = stratified_minibatch_indices(rows, &indices, size, field);
+        if !selected.is_empty() {
+            return selected
+                .into_iter()
+                .map(|idx| rows[idx].clone())
+                .collect::<Vec<_>>();
+        }
+    }
+    indices
+        .into_iter()
+        .take(size)
+        .map(|idx| rows[idx].clone())
         .collect()
+}
+
+fn normalize_gepa_batch_sampler_name(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "epoch_shuffled" => "epoch_shuffled".to_string(),
+        "ordered_epoch" | "sequential_epoch" => "ordered_epoch".to_string(),
+        "stratified" | "stratified_by_field" => "stratified".to_string(),
+        _ => "seeded_shuffle".to_string(),
+    }
+}
+
+fn deterministic_shuffle_indices(
+    indices: &mut [usize],
+    rows: &[Value],
+    generation: usize,
+    proposal_index: usize,
+    strategy: &str,
+) {
+    indices.sort_by(|left, right| {
+        deterministic_row_shuffle_key(&rows[*left], *left, generation, proposal_index, strategy)
+            .cmp(&deterministic_row_shuffle_key(
+                &rows[*right],
+                *right,
+                generation,
+                proposal_index,
+                strategy,
+            ))
+            .then_with(|| left.cmp(right))
+    });
+}
+
+fn deterministic_row_shuffle_key(
+    row: &Value,
+    index: usize,
+    generation: usize,
+    proposal_index: usize,
+    strategy: &str,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"gepa:minibatch:");
+    hasher.update(strategy.as_bytes());
+    hasher.update(b":");
+    hasher.update(generation.to_le_bytes());
+    hasher.update(b":");
+    hasher.update(proposal_index.to_le_bytes());
+    hasher.update(b":");
+    let row_id = row_example_id(row).unwrap_or_else(|_| format!("row:{index}"));
+    hasher.update(row_id.as_bytes());
+    hasher.finalize().into()
+}
+
+fn stratified_minibatch_indices(
+    rows: &[Value],
+    shuffled_indices: &[usize],
+    limit: usize,
+    field: &str,
+) -> Vec<usize> {
+    let mut buckets: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for idx in shuffled_indices {
+        let key = row_path_value(&rows[*idx], field)
+            .and_then(value_to_bucket_key)
+            .unwrap_or_else(|| "default".to_string());
+        buckets.entry(key).or_default().push(*idx);
+    }
+    if buckets.len() <= 1 {
+        return Vec::new();
+    }
+    let mut selected = Vec::new();
+    while selected.len() < limit && buckets.values().any(|bucket| !bucket.is_empty()) {
+        for bucket in buckets.values_mut() {
+            if !bucket.is_empty() {
+                selected.push(bucket.remove(0));
+                if selected.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+    selected
+}
+
+fn row_path_value<'a>(row: &'a Value, field: &str) -> Option<&'a Value> {
+    let mut current = row;
+    for part in field.split('.').filter(|part| !part.is_empty()) {
+        current = current.get(part)?;
+    }
+    Some(current)
+}
+
+fn value_to_bucket_key(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
+        Value::Number(number) => Some(number.to_string()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        _ => None,
+    }
 }
 
 fn average_reward_for_rows(scores: &[RolloutScore], rows: &[Value]) -> Result<Option<f64>> {
