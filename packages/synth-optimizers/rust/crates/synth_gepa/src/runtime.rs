@@ -373,6 +373,7 @@ impl<'a> GepaRuntimeExecutor<'a> {
                 );
             }
         };
+        let dispatch_started = Instant::now();
         let outcome = match self.execute_dispatch(dispatch) {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -385,7 +386,23 @@ impl<'a> GepaRuntimeExecutor<'a> {
                 );
             }
         };
-        let (usage, cost_usd, rollout_count, metadata) = terminal_metadata(&outcome);
+        let wall_seconds = dispatch_started.elapsed().as_secs_f64();
+        let (usage, cost_usd, rollout_count, mut metadata) = terminal_metadata(&outcome);
+        metadata.insert("wall_seconds".to_string(), json!(wall_seconds));
+        if rollout_count > 0 {
+            metadata.insert(
+                "avg_wall_seconds_per_rollout".to_string(),
+                json!(wall_seconds / rollout_count as f64),
+            );
+            metadata.insert(
+                "rollout_concurrency".to_string(),
+                json!(rollout_concurrency(self.config).max(1)),
+            );
+            metadata.insert(
+                "rollout_submission_mode".to_string(),
+                json!(self.config.gepa.rollout_submission_mode),
+            );
+        }
         record_runtime_effect_completed(
             self.workspace,
             RuntimeEffectCompletionInput {

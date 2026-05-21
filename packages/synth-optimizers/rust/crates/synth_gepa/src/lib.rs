@@ -1,8 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -1985,6 +1984,7 @@ fn advance_pending_runtime_job(
         .optimizer_job(&context.config.run.run_id, job_id)?;
     match job.status {
         OptimizerJobStatus::Pending | OptimizerJobStatus::RetryScheduled => {
+            let runtime_started = Instant::now();
             let outcome = match runtime::execute_one_pending_optimizer_job_from_run_workspace(
                 &context.workspace,
                 &mut context.cache,
@@ -2017,6 +2017,8 @@ fn advance_pending_runtime_job(
                     );
                 }
             };
+            let wall_seconds = runtime_started.elapsed().as_secs_f64();
+            emit_runtime_job_completed_event(context, state, job_id, &job, &outcome, wall_seconds)?;
             let stored = stored_runtime_outcome(&outcome)?;
             let mut updated_job = context
                 .workspace
@@ -2104,6 +2106,195 @@ fn stored_runtime_outcome(outcome: &runtime::RuntimeEffectOutcome) -> Result<Sto
             }
         }
     })
+}
+
+fn emit_runtime_job_completed_event(
+    context: &mut GepaRunContext,
+    state: &GepaRunState,
+    job_id: &str,
+    job: &OptimizerJob,
+    outcome: &runtime::RuntimeEffectOutcome,
+    wall_seconds: f64,
+) -> Result<()> {
+    let mut fields = Map::new();
+    fields.insert("job_id".to_string(), json!(job_id));
+    if let Some(runtime_effect_id) = job.payload.get("runtime_effect_id").and_then(Value::as_str) {
+        fields.insert("runtime_effect_id".to_string(), json!(runtime_effect_id));
+    }
+    if let Some(effect_kind) = job.payload.get("effect_kind").and_then(Value::as_str) {
+        fields.insert("effect_kind".to_string(), json!(effect_kind));
+    }
+    if let Some(lane) = job.payload.get("lane").and_then(Value::as_str) {
+        fields.insert("lane".to_string(), json!(lane));
+    }
+    fields.insert(
+        "configured_rollout_workers".to_string(),
+        json!(context.config.gepa.pipeline.workers.rollout),
+    );
+    fields.insert(
+        "rollout_submission_mode".to_string(),
+        json!(context.config.gepa.rollout_submission_mode),
+    );
+    if let Some(active) = state.active_evaluation.as_ref() {
+        fields.insert("generation".to_string(), json!(active.generation));
+        fields.insert("active_stage".to_string(), json!(active.stage));
+        fields.insert("proposal_index".to_string(), json!(active.proposal_index));
+    }
+    fields.insert("wall_seconds".to_string(), json!(wall_seconds));
+
+    match outcome {
+        runtime::RuntimeEffectOutcome::Proposer(outcome) => {
+            fields.insert("runtime_kind".to_string(), json!("proposer"));
+            fields.insert("proposal_count".to_string(), json!(outcome.proposals.len()));
+            fields.insert("backend".to_string(), json!(&outcome.backend));
+            fields.insert("cache_hit".to_string(), json!(outcome.cache_hit));
+            fields.insert("cost_usd".to_string(), json!(outcome.cost_usd));
+            fields.insert("usage".to_string(), serde_json::to_value(&outcome.usage)?);
+            fields.insert(
+                "total_tokens".to_string(),
+                json!(outcome.usage.total_tokens),
+            );
+        }
+        runtime::RuntimeEffectOutcome::Rollout(outcome) => {
+            fields.insert("runtime_kind".to_string(), json!("rollout"));
+            fields.insert("stage".to_string(), json!(&outcome.stage));
+            fields.insert("candidate_id".to_string(), json!(&outcome.candidate_id));
+            fields.insert("example_id".to_string(), json!(&outcome.example_id));
+            fields.insert("rollout_count".to_string(), json!(1));
+            fields.insert(
+                "cache_hits".to_string(),
+                json!(usize::from(outcome.cache_hit)),
+            );
+            fields.insert(
+                "cache_misses".to_string(),
+                json!(usize::from(!outcome.cache_hit)),
+            );
+            fields.insert(
+                "avg_wall_seconds_per_rollout".to_string(),
+                json!(wall_seconds),
+            );
+            fields.insert("cost_usd".to_string(), json!(outcome.cost_usd));
+            fields.insert("usage".to_string(), serde_json::to_value(&outcome.usage)?);
+            fields.insert(
+                "total_tokens".to_string(),
+                json!(outcome.usage.total_tokens),
+            );
+        }
+        runtime::RuntimeEffectOutcome::RolloutBatch(outcomes) => {
+            let mut usage = UsageTotals::default();
+            let mut cost_usd = 0.0;
+            let mut cache_hits = 0usize;
+            let mut candidate_ids = BTreeSet::new();
+            let mut stages = BTreeMap::<String, usize>::new();
+            for outcome in outcomes {
+                usage.merge(&outcome.usage);
+                cost_usd += outcome.cost_usd;
+                if outcome.cache_hit {
+                    cache_hits += 1;
+                }
+                candidate_ids.insert(outcome.candidate_id.clone());
+                *stages.entry(outcome.stage.clone()).or_insert(0) += 1;
+            }
+            let rollout_count = outcomes.len();
+            fields.insert("runtime_kind".to_string(), json!("rollout_batch"));
+            fields.insert("rollout_count".to_string(), json!(rollout_count));
+            fields.insert("candidate_count".to_string(), json!(candidate_ids.len()));
+            fields.insert("candidate_ids".to_string(), json!(candidate_ids));
+            if stages.len() == 1 {
+                if let Some(stage) = stages.keys().next() {
+                    fields.insert("stage".to_string(), json!(stage));
+                }
+            }
+            fields.insert("stages".to_string(), json!(stages));
+            fields.insert("cache_hits".to_string(), json!(cache_hits));
+            fields.insert(
+                "cache_misses".to_string(),
+                json!(rollout_count.saturating_sub(cache_hits)),
+            );
+            if rollout_count > 0 {
+                fields.insert(
+                    "avg_wall_seconds_per_rollout".to_string(),
+                    json!(wall_seconds / rollout_count as f64),
+                );
+            }
+            fields.insert("cost_usd".to_string(), json!(cost_usd));
+            fields.insert("usage".to_string(), serde_json::to_value(&usage)?);
+            fields.insert("total_tokens".to_string(), json!(usage.total_tokens));
+        }
+    }
+
+    let warning_fields = runtime_throughput_warning_fields(&fields);
+    context.events.emit(
+        "runtime.job.completed",
+        "Runtime job completed",
+        Value::Object(fields),
+    )?;
+    if let Some(warning_fields) = warning_fields {
+        context.events.emit(
+            "runtime.throughput.warning",
+            "Runtime throughput lower than expected",
+            Value::Object(warning_fields),
+        )?;
+    }
+    Ok(())
+}
+
+fn runtime_throughput_warning_fields(fields: &Map<String, Value>) -> Option<Map<String, Value>> {
+    let runtime_kind = fields.get("runtime_kind").and_then(Value::as_str)?;
+    if !matches!(runtime_kind, "rollout" | "rollout_batch") {
+        return None;
+    }
+    let cache_misses = fields
+        .get("cache_misses")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let wall_seconds = fields
+        .get("wall_seconds")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let workers = fields
+        .get("configured_rollout_workers")
+        .and_then(Value::as_u64)
+        .unwrap_or(1)
+        .max(1);
+    if cache_misses < workers || wall_seconds <= 10.0 {
+        return None;
+    }
+    let observed_per_second = cache_misses as f64 / wall_seconds;
+    let expected_min_per_second = workers as f64 * 0.05;
+    if observed_per_second >= expected_min_per_second {
+        return None;
+    }
+    let mut warning = Map::new();
+    for key in [
+        "runtime_kind",
+        "stage",
+        "rollout_count",
+        "cache_hits",
+        "cache_misses",
+        "wall_seconds",
+        "configured_rollout_workers",
+        "rollout_submission_mode",
+        "job_id",
+        "generation",
+    ] {
+        if let Some(value) = fields.get(key) {
+            warning.insert(key.to_string(), value.clone());
+        }
+    }
+    warning.insert(
+        "observed_uncached_rollouts_per_second".to_string(),
+        json!(observed_per_second),
+    );
+    warning.insert(
+        "expected_min_uncached_rollouts_per_second".to_string(),
+        json!(expected_min_per_second),
+    );
+    warning.insert(
+        "diagnostic".to_string(),
+        json!("rollout throughput is low for the configured worker count; check container semaphore, provider throttling, or synchronous container bottlenecks"),
+    );
+    Some(warning)
 }
 
 fn runtime_outcome_from_job(job: &OptimizerJob) -> Result<StoredRuntimeOutcome> {
@@ -10094,60 +10285,11 @@ fn run_proposer(
                 workspace_dir,
             })
         }
-        "local_process_json" => run_local_process_proposer(config, program, parent, generation),
         "deterministic_public" => Ok(deterministic_proposals(config, parent, generation)),
         backend => Err(OptimizerError::Config(format!(
             "unsupported proposer.backend {backend:?}"
         ))),
     }
-}
-
-fn run_local_process_proposer(
-    config: &SynthOptimizerConfig,
-    program: &PromptProgram,
-    parent: &CandidateRecord,
-    generation: usize,
-) -> Result<Value> {
-    let mut command = Command::new(&config.proposer.command[0]);
-    command.args(&config.proposer.command[1..]);
-    command.stdin(Stdio::piped());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|err| OptimizerError::Proposer(format!("failed to start proposer: {err}")))?;
-    let stdin = child
-        .stdin
-        .as_mut()
-        .ok_or_else(|| OptimizerError::Proposer("proposer stdin unavailable".to_string()))?;
-    let request = json!({
-        "generation": generation,
-        "parent": parent,
-        "program": program,
-        "target_modules": config.candidate.target_modules,
-        "proposal_count": config.gepa.proposals_per_generation,
-        "model": config.proposer.model,
-        "sandbox_mode": config.proposer.sandbox_mode,
-        "approval_policy": config.proposer.approval_policy,
-        "reasoning_effort": config.proposer.reasoning_effort,
-    });
-    stdin
-        .write_all(serde_json::to_string(&request)?.as_bytes())
-        .map_err(|err| {
-            OptimizerError::Proposer(format!("failed to write proposer request: {err}"))
-        })?;
-    drop(child.stdin.take());
-    let output = child
-        .wait_with_output()
-        .map_err(|err| OptimizerError::Proposer(format!("proposer failed: {err}")))?;
-    if !output.status.success() {
-        return Err(OptimizerError::Proposer(format!(
-            "proposer exited with status {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-    serde_json::from_slice(&output.stdout).map_err(OptimizerError::from)
 }
 
 fn deterministic_proposals(

@@ -347,17 +347,9 @@ impl SynthOptimizerConfig {
         let backend = self.proposer.backend.trim();
         match backend {
             "codex_app_server" | "deterministic_public" => {}
-            "local_process_json" => {
-                if self.proposer.command.is_empty() {
-                    return Err(OptimizerError::Config(
-                        "proposer.command is required when proposer.backend = \"local_process_json\""
-                            .to_string(),
-                    ));
-                }
-            }
             _ => {
                 return Err(OptimizerError::Config(format!(
-                    "unsupported proposer.backend {backend:?}; expected codex_app_server, deterministic_public, or local_process_json"
+                    "unsupported proposer.backend {backend:?}; expected codex_app_server or deterministic_public"
                 )));
             }
         }

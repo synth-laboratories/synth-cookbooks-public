@@ -71,7 +71,7 @@ pub(crate) fn terminal_line_for_event(
         )),
         "optimizer.state.transitioned" => terminal_state_transition_line(message, fields),
         "proposer.completed" => Some(format!(
-            "  generation {} proposer completed backend={} candidates={}",
+            "  generation {} proposer finished backend={} candidates={}",
             field_usize(fields, "generation").unwrap_or(0),
             field_str(fields, "backend").unwrap_or("unknown"),
             field_usize(fields, "proposal_count").unwrap_or(0)
@@ -118,6 +118,8 @@ pub(crate) fn terminal_line_for_event(
             fmt_score(field_f64(fields, "train_reward")),
             fmt_score(field_f64(fields, "heldout_reward"))
         )),
+        "runtime.job.completed" => Some(terminal_runtime_job_completed_line(fields)),
+        "runtime.throughput.warning" => Some(terminal_runtime_throughput_warning_line(fields)),
         "score_chart.written" => Some(terminal_score_chart_line(fields)),
         "workspace.persisted" => None,
         "gepa.run.finished" => Some(terminal_finished_line(fields)),
@@ -249,7 +251,7 @@ fn terminal_frontier_update_line(fields: &Value) -> String {
         .map(format_signed)
         .unwrap_or_default();
     let mut out = format!(
-        "  frontier {}+{} size={}{} best={} train={} coverage=train {} {}",
+        "  frontier {}+{} size={}{} best={} train={} coverage=train {} frontier_seeds={} best_seeds={} {}",
         generation,
         changed,
         summary.frontier_size,
@@ -257,6 +259,8 @@ fn terminal_frontier_update_line(fields: &Value) -> String {
         summary.best_candidate_id,
         summary.best_train_reward,
         summary.coverage,
+        summary.frontier_seed_percent,
+        summary.best_seed_percent,
         summary.seed_list
     );
     append_frontier_detail(&mut out, fields, &summary);
@@ -269,12 +273,14 @@ fn terminal_frontier_snapshot_line(fields: &Value) -> String {
         .map(|generation| format!("generation {generation} "))
         .unwrap_or_default();
     let mut out = format!(
-        "  {}frontier summary: best={} train={} size={} coverage=train {} {}",
+        "  {}frontier summary: best={} train={} size={} coverage=train {} frontier_seeds={} best_seeds={} {}",
         generation,
         summary.best_candidate_id,
         summary.best_train_reward,
         summary.frontier_size,
         summary.coverage,
+        summary.frontier_seed_percent,
+        summary.best_seed_percent,
         summary.seed_list
     );
     append_frontier_detail(&mut out, fields, &summary);
@@ -288,11 +294,14 @@ struct FrontierSummary {
     seed_count: usize,
     row_count: usize,
     coverage: String,
+    frontier_seed_percent: String,
+    best_seed_percent: String,
     seed_list: String,
 }
 
 fn frontier_summary(fields: &Value) -> FrontierSummary {
     let coverage = fields.get("coverage").unwrap_or(&Value::Null);
+    let best_candidate_id = field_str(fields, "best_candidate_id").unwrap_or("unknown");
     let seed_count = field_usize(coverage, "train_seed_count")
         .or_else(|| field_usize(fields, "train_seed_count"))
         .unwrap_or(0);
@@ -305,8 +314,19 @@ fn frontier_summary(fields: &Value) -> FrontierSummary {
     let covered_row_count = field_usize(coverage, "covered_train_example_count")
         .or_else(|| field_usize(fields, "covered_train_example_count"))
         .unwrap_or(0);
+    let best_covered_seed_count = fields
+        .get("members")
+        .and_then(Value::as_array)
+        .and_then(|members| {
+            members.iter().find(|member| {
+                field_bool(member, "is_best").unwrap_or(false)
+                    || field_str(member, "candidate_id") == Some(best_candidate_id)
+            })
+        })
+        .and_then(|member| field_usize(member, "covered_seed_count"))
+        .unwrap_or(0);
     FrontierSummary {
-        best_candidate_id: short_id(field_str(fields, "best_candidate_id").unwrap_or("unknown")),
+        best_candidate_id: short_id(best_candidate_id),
         best_train_reward: fmt_score(field_f64(fields, "best_train_reward")),
         frontier_size: field_usize(fields, "frontier_size").unwrap_or(0),
         seed_count,
@@ -314,6 +334,8 @@ fn frontier_summary(fields: &Value) -> FrontierSummary {
         coverage: format!(
             "{covered_row_count}/{row_count} rows, {covered_seed_count}/{seed_count} seeds"
         ),
+        frontier_seed_percent: fmt_percent(covered_seed_count, seed_count),
+        best_seed_percent: fmt_percent(best_covered_seed_count, seed_count),
         seed_list: compact_i64_list(&field_array_i64(fields, "covered_train_seeds")),
     }
 }
@@ -364,20 +386,23 @@ fn terminal_state_transition_line(message: &str, fields: &Value) -> Option<Strin
     let details = fields.get("details").unwrap_or(&Value::Null);
     match message {
         "Container, program, and dataset ready" => Some("  container ready".to_string()),
-        "Proposer started" => Some(format!(
-            "\n  generation {} proposer started",
-            field_usize(details, "generation").unwrap_or(0)
+        "Proposer started" | "Async proposer started" => {
+            let mut line = format!(
+                "\n  generation {} proposer started",
+                field_usize(details, "generation").unwrap_or(0)
+            );
+            if let Some(parent_id) = field_str(details, "parent_candidate_id") {
+                let _ = write!(line, " parent={}", short_id(parent_id));
+            }
+            Some(line)
+        }
+        "Candidate minibatch rollouts started" => Some(terminal_candidate_rollouts_started_line(
+            details,
+            "minibatch",
         )),
-        "Candidate minibatch rollouts started" => Some(format!(
-            "  candidate {} minibatch rollouts n={}",
-            short_id(field_str(details, "candidate_id").unwrap_or("unknown")),
-            field_usize(details, "row_count").unwrap_or(0)
-        )),
-        "Candidate full-train rollouts queued" => Some(format!(
-            "  candidate {} full-train rollouts n={}",
-            short_id(field_str(details, "candidate_id").unwrap_or("unknown")),
-            field_usize(details, "row_count").unwrap_or(0)
-        )),
+        "Candidate full-train rollouts queued" | "Candidate full-train rollouts started" => Some(
+            terminal_candidate_rollouts_started_line(details, "full-train"),
+        ),
         "Heldout rollouts queued" => Some(format!(
             "\n  heldout rollouts candidates={} rows={} n={}",
             field_usize(details, "candidate_count").unwrap_or(0),
@@ -388,6 +413,85 @@ fn terminal_state_transition_line(message: &str, fields: &Value) -> Option<Strin
     }
 }
 
+fn terminal_candidate_rollouts_started_line(details: &Value, label: &str) -> String {
+    if let Some(candidate_id) = field_str(details, "candidate_id") {
+        return format!(
+            "  candidate {} {} rollouts n={}",
+            short_id(candidate_id),
+            label,
+            field_usize(details, "row_count")
+                .or_else(|| field_usize(details, "rollout_count"))
+                .unwrap_or(0)
+        );
+    }
+    format!(
+        "  generation {} {} rollouts candidates={} n={}",
+        field_usize(details, "generation").unwrap_or(0),
+        label,
+        field_usize(details, "candidate_count").unwrap_or(0),
+        field_usize(details, "rollout_count")
+            .or_else(|| field_usize(details, "row_count"))
+            .unwrap_or(0)
+    )
+}
+
+fn terminal_runtime_job_completed_line(fields: &Value) -> String {
+    match field_str(fields, "runtime_kind").unwrap_or("runtime") {
+        "proposer" => {
+            let generation = field_usize(fields, "generation")
+                .map(|generation| format!("generation {generation} "))
+                .unwrap_or_default();
+            format!(
+                "  {}proposer runtime wall={} cache={} proposals={} tokens={}",
+                generation,
+                fmt_seconds(field_f64(fields, "wall_seconds").unwrap_or(0.0)),
+                fmt_cache_bool(field_bool(fields, "cache_hit").unwrap_or(false)),
+                field_usize(fields, "proposal_count").unwrap_or(0),
+                fmt_tokens_millions(field_u64(fields, "total_tokens").unwrap_or(0))
+            )
+        }
+        "rollout" | "rollout_batch" => {
+            let rollout_count = field_usize(fields, "rollout_count").unwrap_or(0);
+            let cache_hits = field_usize(fields, "cache_hits").unwrap_or(0);
+            let cache_misses = field_usize(fields, "cache_misses").unwrap_or(0);
+            let avg = field_f64(fields, "avg_wall_seconds_per_rollout")
+                .map(fmt_seconds)
+                .unwrap_or_else(|| "-".to_string());
+            format!(
+                "  rollout runtime stage={} mode={} workers={} candidates={} rollouts={} cache={}/{} wall={} avg={} tokens={}",
+                field_str(fields, "stage").unwrap_or("mixed"),
+                field_str(fields, "rollout_submission_mode").unwrap_or("-"),
+                field_usize(fields, "configured_rollout_workers").unwrap_or(0),
+                field_usize(fields, "candidate_count").unwrap_or(1),
+                rollout_count,
+                cache_hits,
+                cache_hits + cache_misses,
+                fmt_seconds(field_f64(fields, "wall_seconds").unwrap_or(0.0)),
+                avg,
+                fmt_tokens_millions(field_u64(fields, "total_tokens").unwrap_or(0))
+            )
+        }
+        _ => format!(
+            "  runtime job completed kind={} wall={}",
+            field_str(fields, "runtime_kind").unwrap_or("unknown"),
+            fmt_seconds(field_f64(fields, "wall_seconds").unwrap_or(0.0))
+        ),
+    }
+}
+
+fn terminal_runtime_throughput_warning_line(fields: &Value) -> String {
+    format!(
+        "  warning: rollout throughput low stage={} mode={} workers={} uncached={} wall={} throughput={}/s expected>={}/s",
+        field_str(fields, "stage").unwrap_or("mixed"),
+        field_str(fields, "rollout_submission_mode").unwrap_or("-"),
+        field_usize(fields, "configured_rollout_workers").unwrap_or(0),
+        field_usize(fields, "cache_misses").unwrap_or(0),
+        fmt_seconds(field_f64(fields, "wall_seconds").unwrap_or(0.0)),
+        fmt_rate(field_f64(fields, "observed_uncached_rollouts_per_second").unwrap_or(0.0)),
+        fmt_rate(field_f64(fields, "expected_min_uncached_rollouts_per_second").unwrap_or(0.0))
+    )
+}
+
 fn terminal_finished_line(fields: &Value) -> String {
     let usage = fields.get("usage").unwrap_or(&Value::Null);
     format!(
@@ -396,8 +500,36 @@ fn terminal_finished_line(fields: &Value) -> String {
         short_id(field_str(fields, "best_candidate_id").unwrap_or("unknown")),
         field_usize(fields, "rollout_count").unwrap_or(0),
         field_f64(fields, "cost_usd").unwrap_or(0.0),
-        field_usize(usage, "total_tokens").unwrap_or(0)
+        fmt_tokens_millions(field_u64(usage, "total_tokens").unwrap_or(0))
     )
+}
+
+fn fmt_tokens_millions(tokens: u64) -> String {
+    format!("{:.3}M", tokens as f64 / 1_000_000.0)
+}
+
+fn fmt_seconds(seconds: f64) -> String {
+    if seconds.is_finite() {
+        format!("{seconds:.2}s")
+    } else {
+        "-".to_string()
+    }
+}
+
+fn fmt_cache_bool(cache_hit: bool) -> &'static str {
+    if cache_hit {
+        "hit"
+    } else {
+        "miss"
+    }
+}
+
+fn fmt_rate(value: f64) -> String {
+    if value.is_finite() {
+        format!("{value:.2}")
+    } else {
+        "-".to_string()
+    }
 }
 
 fn append_score_scatter(out: &mut String, rows: &[Value], seed_id: &str, best_id: &str) {
@@ -475,6 +607,10 @@ fn field_usize(value: &Value, key: &str) -> Option<usize> {
         .get(key)
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
+}
+
+fn field_u64(value: &Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(Value::as_u64)
 }
 
 fn field_i64(value: &Value, key: &str) -> Option<i64> {
@@ -628,6 +764,14 @@ fn fmt_score(value: Option<f64>) -> String {
     match value {
         Some(value) if value.is_finite() => format!("{value:.3}"),
         _ => "-".to_string(),
+    }
+}
+
+fn fmt_percent(numerator: usize, denominator: usize) -> String {
+    if denominator == 0 {
+        "-".to_string()
+    } else {
+        format!("{:.1}%", numerator as f64 * 100.0 / denominator as f64)
     }
 }
 

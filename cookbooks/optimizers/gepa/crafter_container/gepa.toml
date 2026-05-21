@@ -38,15 +38,15 @@ model = "gpt-4.1-nano"
 api_key_env = "OPENAI_API_KEY"
 
 [proposer]
-backend = "local_process_json"
+backend = "codex_app_server"
 execution_mode = "local_process"
-command = [
-  "uv", "run", "--quiet", "--with", "openai>=1.0", "python3",
-  "cookbooks/optimizers/gepa/_proposers/openai_api/proposer.py",
-]
-timeout_seconds = 300
-model = "gpt-4.1-mini"
-reasoning_effort = ""
+timeout_seconds = 900
+model = "gpt-5.3-codex-spark"
+reasoning_effort = "medium"
+copy_host_auth = true
+api_key_env = "OPENAI_API_KEY"
+sandbox_mode = "workspace-write"
+approval_policy = "never"
 
 [gepa]
 max_generations = 1

@@ -43,15 +43,12 @@ cookbooks/optimizers/gepa/
     crafter_text_env.py
     gepa.toml
     synth_service_app.py     # real Craftax episodes
-  _proposers/
-    openai_api/
-      README.md
-      proposer.py            # local_process_json wrapper, OPENAI_API_KEY auth
 ```
 
 Each example keeps its optimizer config beside the container it exercises. There
-is no shared cookbook-level config directory; shared proposer wrappers live
-under `_proposers/`.
+is no shared cookbook-level config directory. The public cookbooks use the
+Codex app-server proposer so the proposer can inspect a materialized workspace
+and write `proposal/manifest.json`.
 
 ## Acceptance Path
 
@@ -62,7 +59,7 @@ CONFIG=cookbooks/optimizers/gepa/banking77_container/gepa.toml
 NAME=banking77_gepa
 ```
 
-Available configs (all four use the OpenAI-API proposer + a live policy):
+Available configs (all four use the Codex app-server proposer + a live policy):
 
 - `cookbooks/optimizers/gepa/banking77_container/gepa.toml` — live OpenAI classifier
 - `cookbooks/optimizers/gepa/tblite_container/gepa.toml` — real pytest verifier
@@ -102,12 +99,13 @@ Each container installs its own deps on first boot via `uv run --project <contai
      --right cookbooks/optimizers/gepa/runs/${NAME}_cached/events.normalized.jsonl
    ```
 
-TBLite ships with the OpenAI API-key proposer (`backend = "local_process_json"`
-pointing at `_proposers/openai_api/proposer.py`); set `OPENAI_API_KEY` and
-invoke from the repo root. Banking77 and Crafter still use the deterministic
-fixture proposer for cache-replayable cookbooks; live runs against either
-container can be configured by editing their `[proposer]` block to point at
-the same OpenAI wrapper.
+Cookbooks ship with the Codex app-server proposer (`backend =
+"codex_app_server"`). GEPA materializes a run-local proposer workspace with
+`state/algorithm_read_model.json`, `state/candidates.json`,
+`state/rollouts.json`, `state/evidence_frames.json`, and
+`proposal/PROPOSAL_SCHEMA.md`; Codex must inspect those files and write
+`proposal/manifest.json`. Set `OPENAI_API_KEY` or use host Codex auth, then
+invoke from the repo root.
 
 ## Config Shape
 

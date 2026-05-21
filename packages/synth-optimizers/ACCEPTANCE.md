@@ -484,10 +484,8 @@ namespace.
   measurable lift is not shown by this small default split because accepted
   candidates tied the seed and rejected candidates were worse on full-train.
 
-This run also hardened two internal bugs found by the probes: config-relative
-`local_process_json` proposer command paths are now resolved against the config
-checkout, and terminal heldout selection keeps the incumbent on heldout ties
-unless a challenger is better on the train score vector.
+This run also hardened terminal heldout selection: the incumbent is kept on
+heldout ties unless a challenger is better on the train score vector.
 
 ## GEPA Parallel Rollout Batch Smoke
 
