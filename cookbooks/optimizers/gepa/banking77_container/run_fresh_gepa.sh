@@ -303,7 +303,8 @@ replace_toml_array() {
 }
 
 cp "$BASE_CONFIG" "$CONFIG"
-perl -0pi -e "s/\\Q$BASE_RUN_ID\\E/$RUN_ID/g" "$CONFIG"
+set_toml_value "run" "run_id" "$RUN_ID"
+set_toml_value "cache" "namespace" "$RUN_ID"
 perl -0pi -e "s|^url[[:space:]]*=.*$|url = \"$CONTAINER_URL\"|m" "$CONFIG"
 perl -0pi -e "s/\"--port\", \"[0-9]+\"/\"--port\", \"$CONTAINER_PORT\"/g" "$CONFIG"
 set_toml_value "policy" "provider" "$POLICY_PROVIDER"
