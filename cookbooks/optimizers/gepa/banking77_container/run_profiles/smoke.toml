@@ -13,7 +13,7 @@ base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 api_mode = "auto"
 concurrency = 120
-retries = 1
+retries = 2
 max_tokens = 16
 disable_reasoning = "auto"
 
@@ -54,4 +54,4 @@ heldout_rollouts = 1
 policy_seconds = 20
 rollout_seconds = 25
 container_http_seconds = 30
-rollout_http_retries = 0
+rollout_http_retries = 1
