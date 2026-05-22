@@ -1,0 +1,11 @@
+[project]
+name = "hotpotqa-gepa-container"
+version = "0.1.0"
+description = "Public GEPA cookbook container for HotpotQA multi-hop QA."
+requires-python = ">=3.11"
+dependencies = [
+  "datasets>=2.18,<4",
+  "fastapi>=0.110",
+  "openai>=1.0",
+  "uvicorn>=0.27",
+]

@@ -59,7 +59,7 @@ heldout_seeds = [
 target_modules = ["stage2_system"]
 
 [seed_candidate]
-stage2_system = "Classify the customer banking query into exactly one Banking77 intent. Return the answer only with the best single label."
+stage2_system = "Classify the customer banking query into exactly one Banking77 intent. Return exactly one label from the allowed label list, preserving the label's spelling, underscores, capitalization, and punctuation. Use the full query, not one keyword. Prefer the label for the user's concrete banking action, status, or problem: separate physical-card ordering from delivery timing, virtual-card creation from virtual-card problems, card payments from cash withdrawals, top-ups from incoming transfers, pending from failed/declined/reverted, passcodes from card PINs, and phone loss from card compromise. Return only the label."
 
 [policy]
 # Live OpenAI policy. Container reads OPENAI_API_KEY from its env.
@@ -72,9 +72,10 @@ api_key_env = "OPENAI_API_KEY"
 backend = "codex_app_server"
 execution_mode = "local_process"
 timeout_seconds = 900
-model = "gpt-5.3-codex-spark"
+model = "gpt-5.4-nano"
 reasoning_effort = "medium"
-copy_host_auth = true
+auth_mode = "api_key"
+copy_host_auth = false
 api_key_env = "OPENAI_API_KEY"
 sandbox_mode = "workspace-write"
 approval_policy = "never"
@@ -82,7 +83,7 @@ approval_policy = "never"
 [gepa]
 max_generations = 3
 proposals_per_generation = 6
-minibatch_size = 30
+minibatch_size = 40
 max_total_rollouts = 4096
 max_cost_usd = 0.0
 

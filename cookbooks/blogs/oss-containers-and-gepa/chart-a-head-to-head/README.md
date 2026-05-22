@@ -15,7 +15,7 @@ budget.
   TBLite uses `3` train / `2` heldout rows, Crafter uses `2` train /
   `1` heldout row.
 - Policy model: `gpt-4.1-nano`.
-- Synth proposer: `gpt-5.3-codex-spark` via `codex_app_server`.
+- Synth proposer: `gpt-5.4-nano` via `codex_app_server` with API-key auth.
 
 ## Layout
 

@@ -83,6 +83,9 @@ and runtime/tool/proxy declarations.
 - `rewards.py`
   - reusable reward helpers, including the NLE Scout discovered-tile reward for
     NetHack / NLE rollouts
+- `prompt_programs.py`
+  - public GEPA prompt-program nouns, candidate overlays, target modules, and
+    the `synth_optimizers.gepa.v1` optimizer contract helper
 
 ## Core ontology
 
@@ -182,6 +185,9 @@ The reference FastAPI adapter implements:
 - `GET /task_info`
 - `GET /task_catalog`
 - `GET /compatibility`
+- `GET /program`
+- `GET /dataset`
+- `POST /dataset/rows`
 - `POST /rollout`
 - `POST /rollouts`
 - `GET /rollouts/{rollout_id}`

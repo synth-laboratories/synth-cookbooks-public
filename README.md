@@ -11,9 +11,9 @@ logs/screenshots.
 ## Layout
 
 - `packages/` - public package source, with independently releasable packages
-  such as `synth-containers` and `synth-optimizers`.
-- `cookbooks/` - published recipes, narrative tutorials, runnable
-  walkthroughs, and cookbook-local example files.
+  such as `synth-containers`.
+- `cookbooks/` - public recipes, including the Banking77 GEPA optimizer slice.
+  Active private drafts still live in `synth-cookbooks-private` until promoted.
 - `skills/` - portable agent skills that help users run or adapt the public
   packages and cookbooks.
 - `assets/` - public-safe screenshots, diagrams, and generated media.
@@ -32,8 +32,8 @@ synth-cookbooks-public/
   assets/
 ```
 
-Keep recipe-first content in `cookbooks/`; move installable, versioned code
-under `packages/`.
+Keep recipe-first content in `cookbooks/` only after public promotion review;
+move installable, versioned code under `packages/`.
 
 ## Packages
 
@@ -42,7 +42,8 @@ metadata, README, version, build command, and publish command.
 
 - `packages/synth-containers/` - public container harnesses, service wrappers,
   and task adapters used by published recipes.
-- `packages/synth-optimizers/` - public optimizer package source.
+- `packages/synth-optimizers/` - prerelease public optimizer tooling with a
+  Rust GEPA core and thin Python bindings.
 
 ## Development
 

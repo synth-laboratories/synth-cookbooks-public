@@ -1,0 +1,55 @@
+[profile]
+name = "default"
+description = "Default HotpotQA GEPA run with modest train and heldout samples."
+
+[base]
+config = "gepa.toml"
+run_id = "hotpotqa_gepa_public"
+
+[policy]
+provider = "openrouter"
+model = "qwen/qwen-2.5-7b-instruct"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+concurrency = 120
+retries = 1
+max_tokens = 32
+
+[timeouts]
+policy_seconds = 20
+rollout_seconds = 25
+container_http_seconds = 30
+rollout_http_retries = 0
+
+[proposer]
+model = "gpt-5.4-nano"
+auth_mode = "api_key"
+api_key_env = "OPENAI_API_KEY"
+copy_host_auth = false
+
+[dataset]
+train_size = 50
+heldout_size = 100
+train_seed_start = "random"
+heldout_seed_start = "random"
+
+[pipeline]
+max_generations = 1
+proposals_per_generation = 4
+minibatch_size = 20
+max_in_flight_candidates = 4
+rollout_workers = 20
+rollout_chunk_size = "auto"
+
+[pipeline.adaptive_rollout_concurrency]
+enabled = true
+initial = 50
+min = 1
+max = 120
+increase_step = 10
+decrease_step = 10
+increase_after_successes = 40
+
+[budgets]
+train_rollouts = 520
+heldout_rollouts = 220

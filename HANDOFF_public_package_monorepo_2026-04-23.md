@@ -2,7 +2,11 @@
 
 Date: 2026-04-23
 
-Audience: the next engineer setting up the public-facing Synth package layout for cookbooks, containers, and optimizers.
+Audience: the next engineer setting up the public-facing Synth package layout for cookbooks and containers.
+
+2026-05-18 update: optimizer code was cut from this public repo and moved to
+`synth-cookbooks-private`. This handoff now reflects the public-safe package
+layout after that cut.
 
 ## Decision
 
@@ -20,7 +24,6 @@ still publishing proper versioned packages from a clean package-oriented layout.
 synth-cookbooks-public/
   packages/
     synth-containers/
-    synth-optimizers/
   cookbooks/
   assets/
   README.md
@@ -41,12 +44,11 @@ top-level standalone examples directory becomes clearly necessary.
 
 This is the authoritative source for public publishable packages.
 
-Initial package candidates:
+Initial package candidate:
 
 - `synth-containers`
-- `synth-optimizers`
 
-These should be treated as first-class packages:
+This should be treated as a first-class package:
 
 - their own `pyproject.toml`
 - explicit versioning
@@ -102,19 +104,14 @@ folder is likely:
 packages/synth-containers/
 ```
 
-and the optimizer package should live at:
-
-```text
-packages/synth-optimizers/
-```
+Optimizer packages should remain private until they are ready for public
+promotion.
 
 ## Packaging Conventions
 
 Use distinct distribution names on PyPI, not generic names:
 
 - `synth-containers`
-- `synth-optimizers`
-
 Avoid trying to publish overly generic names like:
 
 - `containers`
@@ -131,11 +128,10 @@ should be clear and consistent.
 
 1. Create `packages/` in this repo.
 2. Move the current public container package/code into `packages/synth-containers/`.
-3. Move or re-home the public optimizer package/code into `packages/synth-optimizers/`.
-4. Update the top-level README to describe the repo as a public monorepo with
+3. Update the top-level README to describe the repo as a public monorepo with
    published packages plus cookbook content.
-5. Add package-local READMEs and release instructions.
-6. Add CI/release jobs that build and publish package artifacts from the
+4. Add package-local READMEs and release instructions.
+5. Add CI/release jobs that build and publish package artifacts from the
    package subdirectories.
 
 ## Release Model

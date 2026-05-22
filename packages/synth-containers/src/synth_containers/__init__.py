@@ -80,6 +80,14 @@ from .ontology import (
     StatefulnessTier,
 )
 from .profiles import all_profile_specs, infer_profiles, missing_protocols, spec_for_profile
+from .prompt_programs import (
+    GEPA_OPTIMIZER_CONTRACT_VERSION,
+    CandidateOverlay,
+    PromptModule,
+    PromptProgram,
+    TargetModule,
+    gepa_optimizer_contract,
+)
 from .proxying import AgentRuntimeTarget, InferenceApiFamily, InferenceTarget, ProxyMode, ProxyResolution, ToolCallStyle, TraceIdentity
 from .recovery import (
     ArtifactTrustLevel,
@@ -92,6 +100,15 @@ from .recovery import (
 from .reference_runtime import CounterRuntime, InMemoryAsyncRolloutExecutor, ReferenceManagedRuntime
 from .resources import ResourceKind, ResourceRef
 from .rewards import NLEScoutRewardTracker, ScoutRewardUpdate, TimePenaltyMode
+from .rubrics import (
+    CriterionVerdictV1,
+    RubricCriterionV1,
+    RubricDefinitionV1,
+    RubricScaleV1,
+    TraceEvidenceRefV1,
+    VerifierResultV1,
+    openenv_react_base_v1,
+)
 from .runtime_requests import (
     CheckpointLabelsRequest,
     PauseRequest,
@@ -123,6 +140,7 @@ __all__ = [
     "ArtifactTrustLevel",
     "CONSUMER_REQUIREMENTS",
     "CapabilityLevel",
+    "CandidateOverlay",
     "CheckpointDescriptor",
     "CheckpointLabelsRequest",
     "CheckpointResumeContract",
@@ -133,6 +151,7 @@ __all__ = [
     "ContainerExecutionContract",
     "ConsumerRequirement",
     "ConsumerTarget",
+    "CriterionVerdictV1",
     "CoreNoun",
     "CounterRuntime",
     "DatasetDescriptor",
@@ -141,6 +160,7 @@ __all__ = [
     "ExecutionProfile",
     "ExecutionRecord",
     "FrameworkAdapterDescriptor",
+    "GEPA_OPTIMIZER_CONTRACT_VERSION",
     "GoExContractDump",
     "HTTPContainerClient",
     "InMemoryAsyncRolloutExecutor",
@@ -155,6 +175,8 @@ __all__ = [
     "OutcomeKind",
     "PauseRequest",
     "PrimitiveProtocol",
+    "PromptModule",
+    "PromptProgram",
     "ProxyMode",
     "ProxyResolution",
     "RecoveryActionKind",
@@ -166,6 +188,9 @@ __all__ = [
     "RewardSource",
     "ResourceKind",
     "ResourceRef",
+    "RubricCriterionV1",
+    "RubricDefinitionV1",
+    "RubricScaleV1",
     "RolloutMode",
     "RolloutState",
     "RouteHints",
@@ -187,6 +212,7 @@ __all__ = [
     "TaskFilter",
     "TaskInfo",
     "TaskInstance",
+    "TargetModule",
     "TerminateRequest",
     "TimePenaltyMode",
     "TokenEmissionCapabilities",
@@ -199,12 +225,14 @@ __all__ = [
     "ToolRuntimeKind",
     "ToolSpecification",
     "TraceEvent",
+    "TraceEvidenceRefV1",
     "TraceIdentity",
     "Trajectory",
     "TransformFailure",
     "TransformPreferencePolicy",
     "TurnRecord",
     "VerifierResult",
+    "VerifierResultV1",
     "all_framework_descriptors",
     "all_profile_specs",
     "archipelago_descriptor",
@@ -219,12 +247,14 @@ __all__ = [
     "evaluate_runtime_requirement",
     "execution_to_rollout_payload",
     "execution_to_state_payload",
+    "gepa_optimizer_contract",
     "harbor_descriptor",
     "infer_profiles",
     "lifecycle_projection",
     "metadata_to_http_payload",
     "missing_protocols",
     "openenv_descriptor",
+    "openenv_react_base_v1",
     "project_lifecycle_fields",
     "resolve_submission_mode",
     "spec_for_profile",
