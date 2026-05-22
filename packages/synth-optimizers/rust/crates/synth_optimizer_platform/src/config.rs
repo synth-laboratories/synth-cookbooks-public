@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::configured_limits::validate_gepa_limit_config;
+use crate::disk_budget::DiskBudgetConfig;
 use crate::error::{OptimizerError, Result};
 
 fn default_output_dir() -> PathBuf {
@@ -39,6 +40,10 @@ fn default_proposer_backend() -> String {
 
 fn default_execution_mode() -> String {
     "local_process".to_string()
+}
+
+fn default_proposer_auth_mode() -> String {
+    "auto".to_string()
 }
 
 fn default_timeout_seconds() -> u64 {
@@ -125,6 +130,38 @@ fn default_pipeline_evaluate_workers() -> usize {
     1
 }
 
+fn default_gepa_adaptive_rollout_concurrency_enabled() -> bool {
+    crate::limits::GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_ENABLED
+}
+
+fn default_gepa_adaptive_rollout_concurrency_initial() -> usize {
+    crate::limits::GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_INITIAL
+}
+
+fn default_gepa_adaptive_rollout_concurrency_min() -> usize {
+    crate::limits::GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_MIN
+}
+
+fn default_gepa_adaptive_rollout_concurrency_max() -> usize {
+    crate::limits::GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_MAX
+}
+
+fn default_gepa_adaptive_rollout_concurrency_increase_step() -> usize {
+    crate::limits::GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_INCREASE_STEP
+}
+
+fn default_gepa_adaptive_rollout_concurrency_decrease_step() -> usize {
+    crate::limits::GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_DECREASE_STEP
+}
+
+fn default_gepa_adaptive_rollout_concurrency_increase_after_successes() -> usize {
+    crate::limits::GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_INCREASE_AFTER_SUCCESSES
+}
+
+fn default_gepa_adaptive_rollout_concurrency_overload_status_codes() -> Vec<u16> {
+    crate::limits::GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_OVERLOAD_STATUS_CODES.to_vec()
+}
+
 fn default_cache_mode() -> CacheConfigMode {
     CacheConfigMode::Readwrite
 }
@@ -150,6 +187,8 @@ pub struct SynthOptimizerConfig {
     pub gepa: GepaConfig,
     #[serde(default)]
     pub cache: CacheConfig,
+    #[serde(default)]
+    pub disk_budget: DiskBudgetConfig,
 }
 
 impl SynthOptimizerConfig {
@@ -250,6 +289,29 @@ impl SynthOptimizerConfig {
             self.gepa.pipeline.workers.evaluate =
                 parse_usize_override("SYNTH_OPTIMIZERS_GEPA_WORKERS_EVALUATE", &evaluate_workers)?;
         }
+        if let Some(rollout_chunk_size) =
+            read_env_override(&["SYNTH_OPTIMIZERS_GEPA_ROLLOUT_CHUNK_SIZE"])
+        {
+            self.gepa.rollout_chunk_size = Some(parse_usize_override(
+                "SYNTH_OPTIMIZERS_GEPA_ROLLOUT_CHUNK_SIZE",
+                &rollout_chunk_size,
+            )?);
+        }
+        if let Some(raw) = read_env_override(&["SYNTH_OPTIMIZERS_DISK_BUDGET_ENABLED"]) {
+            self.disk_budget.enabled =
+                parse_bool_override("SYNTH_OPTIMIZERS_DISK_BUDGET_ENABLED", &raw)?;
+        }
+        if let Some(raw) = read_env_override(&["SYNTH_OPTIMIZERS_DISK_BUDGET_SOFT_LIMIT_GB"]) {
+            self.disk_budget.soft_limit_gb =
+                parse_f64_override("SYNTH_OPTIMIZERS_DISK_BUDGET_SOFT_LIMIT_GB", &raw)?;
+        }
+        if let Some(raw) = read_env_override(&["SYNTH_OPTIMIZERS_DISK_BUDGET_HARD_LIMIT_GB"]) {
+            self.disk_budget.hard_limit_gb =
+                parse_f64_override("SYNTH_OPTIMIZERS_DISK_BUDGET_HARD_LIMIT_GB", &raw)?;
+        }
+        if let Some(raw) = read_env_override(&["SYNTH_OPTIMIZERS_DISK_BUDGET_PATH"]) {
+            self.disk_budget.path = Some(PathBuf::from(raw));
+        }
         Ok(())
     }
 
@@ -303,6 +365,16 @@ impl SynthOptimizerConfig {
         if self.gepa.max_total_rollouts == 0 {
             return Err(OptimizerError::Config(
                 "gepa.max_total_rollouts must be positive".to_string(),
+            ));
+        }
+        if self.gepa.max_train_rollouts == Some(0) {
+            return Err(OptimizerError::Config(
+                "gepa.max_train_rollouts must be positive when set".to_string(),
+            ));
+        }
+        if self.gepa.max_heldout_rollouts == Some(0) {
+            return Err(OptimizerError::Config(
+                "gepa.max_heldout_rollouts must be positive when set".to_string(),
             ));
         }
         let rollout_submission_mode = self
@@ -425,13 +497,24 @@ impl SynthOptimizerConfig {
             "gepa.rollout_estimated_wall_seconds",
             self.gepa.rollout_estimated_wall_seconds,
         )?;
+        if self.gepa.rollout_chunk_size == Some(0) {
+            return Err(OptimizerError::Config(
+                "gepa.rollout_chunk_size must be positive".to_string(),
+            ));
+        }
         validate_gepa_limit_config(&self.gepa)?;
+        self.disk_budget.validate()?;
         let backend = self.proposer.backend.trim();
         match backend {
-            "codex_app_server" | "deterministic_public" => {}
+            "codex_app_server" => {}
+            "local_process_json" => {
+                return Err(OptimizerError::Config(
+                    "unsupported proposer.backend \"local_process_json\"; GEPA proposer work must use codex_app_server workspace-backed proposing".to_string(),
+                ));
+            }
             _ => {
                 return Err(OptimizerError::Config(format!(
-                    "unsupported proposer.backend {backend:?}; expected codex_app_server or deterministic_public"
+                    "unsupported proposer.backend {backend:?}; expected codex_app_server"
                 )));
             }
         }
@@ -440,6 +523,19 @@ impl SynthOptimizerConfig {
                 "unsupported proposer.execution_mode {:?}; expected local_process",
                 self.proposer.execution_mode
             )));
+        }
+        match self.proposer.auth_mode.trim() {
+            "auto" | "host" | "api_key" => {}
+            mode => {
+                return Err(OptimizerError::Config(format!(
+                    "unsupported proposer.auth_mode {mode:?}; expected auto, host, or api_key"
+                )));
+            }
+        }
+        if self.proposer.auth_mode.trim() == "api_key" && self.proposer.copy_host_auth {
+            return Err(OptimizerError::Config(
+                "proposer.auth_mode = \"api_key\" cannot be combined with proposer.copy_host_auth = true".to_string(),
+            ));
         }
         Ok(())
     }
@@ -561,6 +657,8 @@ pub struct ProposerConfig {
     pub approval_policy: Option<String>,
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    #[serde(default = "default_proposer_auth_mode")]
+    pub auth_mode: String,
     #[serde(default)]
     pub copy_host_auth: bool,
     #[serde(default)]
@@ -580,6 +678,7 @@ impl Default for ProposerConfig {
             sandbox_mode: None,
             approval_policy: None,
             reasoning_effort: None,
+            auth_mode: default_proposer_auth_mode(),
             copy_host_auth: false,
             api_key_env: None,
             timeout_seconds: default_timeout_seconds(),
@@ -667,12 +766,18 @@ pub struct GepaConfig {
     pub minibatch_accept_margin: f64,
     #[serde(default = "default_max_total_rollouts")]
     pub max_total_rollouts: usize,
+    #[serde(default)]
+    pub max_train_rollouts: Option<usize>,
+    #[serde(default)]
+    pub max_heldout_rollouts: Option<usize>,
     #[serde(default = "default_rollout_submission_mode")]
     pub rollout_submission_mode: String,
     #[serde(default = "default_rollout_poll_interval_ms")]
     pub rollout_poll_interval_ms: u64,
     #[serde(default = "default_rollout_async_timeout_seconds")]
     pub rollout_async_timeout_seconds: u64,
+    #[serde(default)]
+    pub rollout_chunk_size: Option<usize>,
     #[serde(default = "default_frontier_type")]
     pub frontier_type: String,
     #[serde(default)]
@@ -731,9 +836,12 @@ impl Default for GepaConfig {
             minibatch_size: default_minibatch_size(),
             minibatch_accept_margin: 0.0,
             max_total_rollouts: default_max_total_rollouts(),
+            max_train_rollouts: None,
+            max_heldout_rollouts: None,
             rollout_submission_mode: default_rollout_submission_mode(),
             rollout_poll_interval_ms: default_rollout_poll_interval_ms(),
             rollout_async_timeout_seconds: default_rollout_async_timeout_seconds(),
+            rollout_chunk_size: None,
             frontier_type: default_frontier_type(),
             selection_objective: None,
             objective_keys: Vec::new(),
@@ -758,6 +866,29 @@ impl Default for GepaConfig {
             rollout_estimated_completion_tokens: None,
             rollout_estimated_total_tokens: None,
             rollout_estimated_wall_seconds: None,
+        }
+    }
+}
+
+impl GepaConfig {
+    pub fn split_rollout_budgets_enabled(&self) -> bool {
+        self.max_train_rollouts.is_some() || self.max_heldout_rollouts.is_some()
+    }
+
+    pub fn train_rollout_limit(&self) -> usize {
+        self.max_train_rollouts.unwrap_or(self.max_total_rollouts)
+    }
+
+    pub fn heldout_rollout_limit(&self) -> usize {
+        self.max_heldout_rollouts.unwrap_or(self.max_total_rollouts)
+    }
+
+    pub fn effective_max_total_rollouts(&self) -> usize {
+        if self.split_rollout_budgets_enabled() {
+            self.train_rollout_limit()
+                .saturating_add(self.heldout_rollout_limit())
+        } else {
+            self.max_total_rollouts
         }
     }
 }
@@ -809,6 +940,8 @@ pub struct GepaPipelineConfig {
     pub max_in_flight_candidates: usize,
     #[serde(default)]
     pub workers: GepaPipelineWorkers,
+    #[serde(default)]
+    pub adaptive_rollout_concurrency: GepaAdaptiveRolloutConcurrencyConfig,
 }
 
 impl Default for GepaPipelineConfig {
@@ -818,6 +951,45 @@ impl Default for GepaPipelineConfig {
             staleness_policy: GepaStalenessPolicy::Full,
             max_in_flight_candidates: default_pipeline_max_in_flight_candidates(),
             workers: GepaPipelineWorkers::default(),
+            adaptive_rollout_concurrency: GepaAdaptiveRolloutConcurrencyConfig::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GepaAdaptiveRolloutConcurrencyConfig {
+    #[serde(default = "default_gepa_adaptive_rollout_concurrency_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_gepa_adaptive_rollout_concurrency_initial")]
+    pub initial: usize,
+    #[serde(default = "default_gepa_adaptive_rollout_concurrency_min")]
+    pub min: usize,
+    #[serde(default = "default_gepa_adaptive_rollout_concurrency_max")]
+    pub max: usize,
+    #[serde(default = "default_gepa_adaptive_rollout_concurrency_increase_step")]
+    pub increase_step: usize,
+    #[serde(default = "default_gepa_adaptive_rollout_concurrency_decrease_step")]
+    pub decrease_step: usize,
+    #[serde(default = "default_gepa_adaptive_rollout_concurrency_increase_after_successes")]
+    pub increase_after_successes: usize,
+    #[serde(default = "default_gepa_adaptive_rollout_concurrency_overload_status_codes")]
+    pub overload_status_codes: Vec<u16>,
+}
+
+impl Default for GepaAdaptiveRolloutConcurrencyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_gepa_adaptive_rollout_concurrency_enabled(),
+            initial: default_gepa_adaptive_rollout_concurrency_initial(),
+            min: default_gepa_adaptive_rollout_concurrency_min(),
+            max: default_gepa_adaptive_rollout_concurrency_max(),
+            increase_step: default_gepa_adaptive_rollout_concurrency_increase_step(),
+            decrease_step: default_gepa_adaptive_rollout_concurrency_decrease_step(),
+            increase_after_successes:
+                default_gepa_adaptive_rollout_concurrency_increase_after_successes(),
+            overload_status_codes: default_gepa_adaptive_rollout_concurrency_overload_status_codes(
+            ),
         }
     }
 }
@@ -1090,6 +1262,22 @@ fn parse_usize_override(name: &str, raw_value: &str) -> Result<usize> {
     })
 }
 
+fn parse_f64_override(name: &str, raw_value: &str) -> Result<f64> {
+    raw_value.trim().parse::<f64>().map_err(|source| {
+        OptimizerError::Config(format!("invalid {name} override {raw_value:?}: {source}"))
+    })
+}
+
+fn parse_bool_override(name: &str, raw_value: &str) -> Result<bool> {
+    match raw_value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" | "y" => Ok(true),
+        "0" | "false" | "no" | "off" | "n" | "" => Ok(false),
+        other => Err(OptimizerError::Config(format!(
+            "invalid {name} override {other:?}: expected one of 0/1/true/false/yes/no/on/off"
+        ))),
+    }
+}
+
 fn parse_gepa_pipeline_mode_override(raw_mode: &str) -> Result<GepaPipelineMode> {
     match raw_mode.trim().to_ascii_lowercase().as_str() {
         "sync_serial" | "sync" | "serial" => Ok(GepaPipelineMode::SyncSerial),
@@ -1138,6 +1326,39 @@ fn validate_gepa_pipeline_config(config: &GepaPipelineConfig) -> Result<()> {
     if config.workers.evaluate == 0 {
         return Err(OptimizerError::Config(
             "gepa.pipeline.workers.evaluate must be positive".to_string(),
+        ));
+    }
+    let adaptive = &config.adaptive_rollout_concurrency;
+    if adaptive.min == 0 {
+        return Err(OptimizerError::Config(
+            "gepa.pipeline.adaptive_rollout_concurrency.min must be positive".to_string(),
+        ));
+    }
+    if adaptive.max < adaptive.min {
+        return Err(OptimizerError::Config(
+            "gepa.pipeline.adaptive_rollout_concurrency.max must be >= min".to_string(),
+        ));
+    }
+    if adaptive.initial < adaptive.min || adaptive.initial > adaptive.max {
+        return Err(OptimizerError::Config(
+            "gepa.pipeline.adaptive_rollout_concurrency.initial must be between min and max"
+                .to_string(),
+        ));
+    }
+    if adaptive.increase_step == 0 {
+        return Err(OptimizerError::Config(
+            "gepa.pipeline.adaptive_rollout_concurrency.increase_step must be positive".to_string(),
+        ));
+    }
+    if adaptive.decrease_step == 0 {
+        return Err(OptimizerError::Config(
+            "gepa.pipeline.adaptive_rollout_concurrency.decrease_step must be positive".to_string(),
+        ));
+    }
+    if adaptive.increase_after_successes == 0 {
+        return Err(OptimizerError::Config(
+            "gepa.pipeline.adaptive_rollout_concurrency.increase_after_successes must be positive"
+                .to_string(),
         ));
     }
     Ok(())

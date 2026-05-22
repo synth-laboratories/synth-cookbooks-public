@@ -1779,6 +1779,62 @@ impl WorkspaceStore {
         self.optimizer_job(run_id, job_id).map(Some)
     }
 
+    pub fn optimizer_job_claimable(&self, run_id: &str, job_id: &str) -> Result<bool> {
+        let count = self.conn.query_row(
+            r#"
+            SELECT COUNT(*)
+            FROM optimizer_jobs
+            WHERE run_id = ?1
+              AND job_id = ?2
+              AND (
+                status = 'pending'
+                OR (
+                    status = 'retry_scheduled'
+                    AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))
+                )
+              )
+            "#,
+            params![run_id, job_id],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn schedule_optimizer_job_retry(
+        &self,
+        run_id: &str,
+        job_id: &str,
+        lease_id: &str,
+        backoff_seconds: u64,
+        failure: &crate::failures::FailurePayload,
+    ) -> Result<Option<OptimizerJob>> {
+        let retry_modifier = format!("+{backoff_seconds} seconds");
+        let failure_json = stable_json(&serde_json::to_value(failure)?);
+        let updated = self.conn.execute(
+            r#"
+            UPDATE optimizer_jobs
+            SET status = 'retry_scheduled',
+                lease_id = NULL,
+                worker_id = NULL,
+                leased_at = NULL,
+                lease_expires_at = NULL,
+                heartbeat_at = NULL,
+                next_retry_at = datetime('now', ?4),
+                failure_json = ?5,
+                updated_at = datetime('now')
+            WHERE run_id = ?1
+              AND job_id = ?2
+              AND lease_id = ?3
+              AND status IN ('leased', 'running')
+            "#,
+            params![run_id, job_id, lease_id, retry_modifier, failure_json],
+        )?;
+        if updated == 0 {
+            return Ok(None);
+        }
+        self.optimizer_job(run_id, job_id).map(Some)
+    }
+
     pub fn heartbeat_optimizer_job(
         &self,
         run_id: &str,

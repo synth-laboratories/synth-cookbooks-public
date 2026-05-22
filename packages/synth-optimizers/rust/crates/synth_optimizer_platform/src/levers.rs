@@ -64,15 +64,28 @@ impl LeverManifest {
                 } else {
                     module.candidate_field.clone()
                 };
+                let kind = module
+                    .metadata
+                    .get("lever_kind")
+                    .or_else(|| module.metadata.get("kind"))
+                    .and_then(Value::as_str)
+                    .and_then(parse_lever_kind)
+                    .unwrap_or_else(|| prompt_role_to_lever_kind(&module.role));
+                let constraints = module
+                    .metadata
+                    .get("constraints")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
                 LeverSpec {
                     lever_id: candidate_field.clone(),
-                    kind: prompt_role_to_lever_kind(&module.role),
+                    kind,
                     mutable: module.mutable,
                     required: module.mutable,
                     candidate_field: Some(candidate_field),
                     module_id: Some(module.module_id.clone()),
                     template_variables: module.template_variables.clone(),
-                    constraints: Map::new(),
+                    constraints,
                     metadata: module.metadata.clone(),
                 }
             })
@@ -155,5 +168,22 @@ fn prompt_role_to_lever_kind(role: &str) -> LeverKind {
         "system" => LeverKind::SystemPrompt,
         "user" => LeverKind::UserPrompt,
         _ => LeverKind::TextPrompt,
+    }
+}
+
+fn parse_lever_kind(value: &str) -> Option<LeverKind> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "text" | "text_prompt" => Some(LeverKind::TextPrompt),
+        "system" | "system_prompt" => Some(LeverKind::SystemPrompt),
+        "user" | "user_prompt" => Some(LeverKind::UserPrompt),
+        "agents" | "agents_md" | "agents.md" => Some(LeverKind::AgentsMd),
+        "skill" | "skill_md" | "skill.md" => Some(LeverKind::SkillMd),
+        "workspace_file" | "file" => Some(LeverKind::WorkspaceFile),
+        "tool_policy" | "tools" => Some(LeverKind::ToolPolicy),
+        "config_append" | "config" => Some(LeverKind::ConfigAppend),
+        "verifier_rubric" | "rubric" => Some(LeverKind::VerifierRubric),
+        "action_policy" | "policy" => Some(LeverKind::ActionPolicy),
+        "other" => Some(LeverKind::Other),
+        _ => None,
     }
 }

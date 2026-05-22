@@ -77,6 +77,11 @@ impl SensorFrame {
             .unwrap_or(0);
         let split = row
             .get("split")
+            .or_else(|| row.get("example").and_then(|example| example.get("split")))
+            .or_else(|| {
+                row.get("dataset_row")
+                    .and_then(|dataset_row| dataset_row.get("split"))
+            })
             .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string();

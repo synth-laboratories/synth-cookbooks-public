@@ -29,6 +29,7 @@ from . import (
     workspace_start_run_request,
     workspace_status,
     workspace_submit_run_request,
+    SynthOptimizerError,
 )
 
 
@@ -137,6 +138,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             os.environ["SYNTH_OPTIMIZERS_TERMINAL"] = "1"
         try:
             result = GepaRun.from_toml(args.config).execute()
+        except SynthOptimizerError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
         finally:
             if args.json:
                 pass

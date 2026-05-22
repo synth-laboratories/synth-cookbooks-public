@@ -8,13 +8,14 @@ budget.
 
 ## Parity conditions
 
-- `max_total_rollouts = 256`
-- Proposer: `gpt-5.4-mini`, `reasoning_effort = medium`
-- Student: cookbook fixture policy (deterministic; ensures cache-replay
-  works for both stacks)
-- Train seeds / heldout seeds: cookbook defaults (see each cookbook's
-  `gepa.toml`)
-- Minibatch size: cookbook defaults
+- Both stacks call the same public HTTP container for each task.
+- Banking77 is the broadest run: `24` train rows, `200` heldout rows,
+  and roughly `2400` metric calls.
+- TBLite and Crafter are smoke-scale public parity splits:
+  TBLite uses `3` train / `2` heldout rows, Crafter uses `2` train /
+  `1` heldout row.
+- Policy model: `gpt-4.1-nano`.
+- Synth proposer: `gpt-5.4-nano` via `codex_app_server` with API-key auth.
 
 ## Layout
 
@@ -23,37 +24,47 @@ chart-a-head-to-head/
   README.md
   configs/
     synth_gepa/                # Our gepa.toml per cookbook
-      banking77.toml
-      tblite.toml
-      crafter.toml
-    gepa_ai/                   # gepa-ai run configs (their YAML/JSON shape)
-      banking77.yaml
-      tblite.yaml
-      crafter.yaml
-  run_parity.sh                # Top-level: runs both stacks end-to-end
+      banking77_parity.toml
+      tblite_parity.toml
+      crafter_parity.toml
+    gepa_ai/                   # gepa-ai adapters against the same containers
+      banking77_via_container.py
+      container_task.py
+  run_banking77_parity.sh      # Banking77 full-budget parity runner
   build_chart.py               # Reads runs/, emits figures/head_to_head.svg
   runs/
     synth_gepa/
-      banking77_<timestamp>/   # result_manifest.json, events.jsonl, ...
-      tblite_<timestamp>/
-      crafter_<timestamp>/
-    gepa_ai/
-      banking77_<timestamp>/
+      banking77_parity_synth_gepa/
+      tblite_parity_synth_gepa/
+      crafter_parity_synth_gepa/
+    gepa_ai_via_container/
+      banking77_<timestamp>/   # summary.json
       ...
   figures/
+    source_evidence.json       # Compact tracked snapshot of ignored raw runs
     head_to_head.svg           # The chart as it appears in the post
 ```
 
 ## Reproduce
 
 ```bash
-./run_parity.sh                # Launches both stacks on all 4 cookbooks
-python build_chart.py          # Generates figures/head_to_head.svg
+python configs/gepa_ai/container_task.py --task tblite
+python configs/gepa_ai/container_task.py --task crafter
+synth-optimizers gepa run --config configs/synth_gepa/tblite_parity.toml
+synth-optimizers gepa run --config configs/synth_gepa/crafter_parity.toml
+python build_chart.py
 ```
 
 ## Status
 
-- [ ] Synth GEPA runs on all 3 public cookbooks at parity budget.
-- [ ] gepa-ai runs on all 3 public cookbooks at parity budget.
-- [ ] `build_chart.py` reads from `runs/` and emits SVG.
-- [ ] Chart embedded in blog MDX.
+- [x] Synth GEPA same-container manifests selected for all 3 public cookbooks.
+- [x] gepa-ai same-container runs completed for all 3 public cookbooks.
+- [x] `build_chart.py` reads from `runs/` and emits JSON, Markdown, and SVG.
+- [x] `figures/source_evidence.json` preserves a tracked compact snapshot
+      of the ignored raw run manifests/summaries.
+- [x] Chart table embedded in blog MDX.
+
+Current caveat: Banking77 is the strongest true full same-container comparison
+(`24` train rows, `200` heldout rows, `2400` metric-call budget). TBLite and
+Crafter now have fresh same-container runs for both stacks, but they are
+small public smoke-scale splits.

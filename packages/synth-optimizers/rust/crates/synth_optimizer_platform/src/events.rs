@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 
 use crate::cache::normalize_for_cache;
+use crate::disk_budget::DiskBudget;
 use crate::error::{OptimizerError, Result};
 use crate::event_visualization::{
     render_terminal_event, terminal_events_enabled, terminal_line_for_event,
@@ -29,6 +30,7 @@ pub struct EventWriter {
     path: PathBuf,
     writer: BufWriter<File>,
     records: Vec<EventStreamRecord>,
+    disk_budget: Option<DiskBudget>,
 }
 
 impl EventWriter {
@@ -42,6 +44,7 @@ impl EventWriter {
             path,
             writer: BufWriter::new(file),
             records: Vec::new(),
+            disk_budget: None,
         })
     }
 
@@ -64,10 +67,25 @@ impl EventWriter {
             path,
             writer: BufWriter::new(file),
             records,
+            disk_budget: None,
         })
     }
 
+    /// Attach a [`DiskBudget`] so each emit checks the hard limit before
+    /// touching the file. Returns `self` for builder-style chaining at
+    /// the construction site.
+    pub fn with_disk_budget(mut self, disk_budget: DiskBudget) -> Self {
+        self.disk_budget = Some(disk_budget);
+        self
+    }
+
     pub fn emit(&mut self, event_type: &str, message: &str, fields: Value) -> Result<()> {
+        // Hard-limit gate: refuse the write before we corrupt the jsonl
+        // by partial-appending under ENOSPC. Soft-limit is enforced at
+        // run-start, not here.
+        if let Some(budget) = &self.disk_budget {
+            budget.require_below_hard()?;
+        }
         let timestamp = OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
@@ -78,7 +96,14 @@ impl EventWriter {
             "fields": fields.clone(),
         });
         let line = serde_json::to_string(&event)?;
+        let bytes_written = (line.len() + 1) as u64; // +1 for the newline
         writeln!(self.writer, "{line}").map_err(|source| OptimizerError::io(&self.path, source))?;
+        self.writer
+            .flush()
+            .map_err(|source| OptimizerError::io(&self.path, source))?;
+        if let Some(budget) = &self.disk_budget {
+            budget.note_appended_bytes(bytes_written);
+        }
         if terminal_events_enabled() {
             render_terminal_event(event_type, message, &fields);
         }

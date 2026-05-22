@@ -11,6 +11,16 @@ pub const BUDGET_RESERVATION_SCHEMA_VERSION: &str = "budget_reservation.v1";
 pub const BUDGET_COMMIT_SCHEMA_VERSION: &str = "budget_commit.v1";
 pub const BUDGET_RELEASE_SCHEMA_VERSION: &str = "budget_release.v1";
 
+pub const GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_ENABLED: bool = true;
+pub const GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_INITIAL: usize = 50;
+pub const GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_MIN: usize = 1;
+pub const GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_MAX: usize = 120;
+pub const GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_INCREASE_STEP: usize = 10;
+pub const GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_DECREASE_STEP: usize = 10;
+pub const GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_INCREASE_AFTER_SUCCESSES: usize = 40;
+pub const GEPA_ADAPTIVE_ROLLOUT_CONCURRENCY_OVERLOAD_STATUS_CODES: &[u16] =
+    &[408, 425, 429, 500, 502, 503, 504, 529];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RunLimitsRecord {
     pub schema_version: String,

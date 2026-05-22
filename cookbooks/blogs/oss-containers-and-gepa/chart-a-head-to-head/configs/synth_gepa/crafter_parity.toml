@@ -1,0 +1,51 @@
+# Synth GEPA against the same live Crafter container used by the gepa-ai adapter.
+
+[run]
+run_id = "crafter_parity_synth_gepa"
+output_dir = "../../runs/synth_gepa"
+seed = 0
+
+[container]
+url = "http://127.0.0.1:8812"
+startup_timeout_seconds = 5
+
+[dataset]
+train_split = "train"
+heldout_split = "test"
+train_seeds = [11, 13]
+heldout_seeds = [101]
+
+[candidate]
+target_modules = ["react_system_prompt"]
+
+[seed_candidate]
+react_system_prompt = "You are controlling a Crafter survival agent. Each turn you see a compact text observation (player stats, inventory, local map). Respond ONLY with a single <tool_call> block of the form: <tool_call>{\"name\":\"crafter_interact\",\"arguments\":{\"actions_list\":[\"move_right\",\"do\"]}}</tool_call>. Use 1-5 valid actions per call. Prioritize collecting wood, placing a table, crafting tools, then collecting stone/coal/iron. Avoid lava."
+
+[policy]
+provider = "openai"
+model = "gpt-4.1-nano"
+api_key_env = "OPENAI_API_KEY"
+
+[proposer]
+backend = "codex_app_server"
+execution_mode = "local_process"
+timeout_seconds = 900
+model = "gpt-5.4-nano"
+reasoning_effort = "medium"
+auth_mode = "api_key"
+copy_host_auth = false
+api_key_env = "OPENAI_API_KEY"
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+
+[gepa]
+max_generations = 1
+proposals_per_generation = 1
+minibatch_size = 2
+max_total_rollouts = 8
+max_cost_usd = 0.0
+
+[cache]
+mode = "off"
+path = "../../runs/synth_gepa/crafter_parity_cache.sqlite"
+namespace = "crafter_parity"

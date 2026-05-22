@@ -238,6 +238,14 @@ token, or time limits are set, proposer and rollout estimate fields must be
 positive so the runtime can reject spending work before dispatch instead of
 falling back to an implicit zero estimate.
 
+`max_total_rollouts` remains the legacy single rollout cap. For runs that need
+heldout reporting after train optimization, set `max_train_rollouts` and
+`max_heldout_rollouts`; the optimizer stops proposing/training at the train
+budget, then evaluates heldout against the separate heldout budget. When either
+split budget is set, the runtime reservation cap is `max_train_rollouts +
+max_heldout_rollouts` with unspecified split values falling back to
+`max_total_rollouts`.
+
 Rollout transport and optimizer pipeline mode are separate axes. Transport is
 controlled by `gepa.rollout_submission_mode = "sync" | "async"`. Pipeline mode
 is controlled by the nested `gepa.pipeline` table:
@@ -254,9 +262,8 @@ rollout = 8
 evaluate = 1
 ```
 
-`async_pipelined` is a recognized internal mode for the FlashEvolve-style
-runtime sketch. It is intentionally not executable until the queue workers and
-pool-version staleness handling land.
+`async_pipelined` is the durable queue-worker mode for overlapping proposer,
+rollout, and evaluate lanes with pool-version staleness handling.
 
 ## Boundary Rules
 
@@ -264,11 +271,9 @@ pool-version staleness handling land.
 - No arbitrary user Python imports from the optimizer core.
 - No private backend services.
 - No Go-EX or MIPROv2 surfaces in this slice.
-- No Docker proposer mode until local-process mode is accepted across the
-  public examples.
-- `codex_app_server` launches a real local `codex app-server`; deterministic
-  proposals are available only through the explicit `deterministic_public`
-  backend.
+- No Docker or local-process proposer fallback mode.
+- `codex_app_server` launches a real local `codex app-server`; unsupported
+  proposer backends fail during config validation.
 - Cache modes are exactly `off`, `readwrite`, and `readonly`.
 
 For cookbook acceptance runs, the loader accepts narrow runtime overrides such

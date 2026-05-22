@@ -58,6 +58,15 @@ pub enum OptimizerError {
         #[source]
         source: std::io::Error,
     },
+    #[error(
+        "disk budget {limit_kind} limit exceeded path={path} used_bytes={used_bytes} limit_bytes={limit_bytes}"
+    )]
+    DiskBudgetExceeded {
+        path: PathBuf,
+        used_bytes: u64,
+        limit_bytes: u64,
+        limit_kind: &'static str,
+    },
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("toml decode error: {0}")]
@@ -91,6 +100,7 @@ impl OptimizerError {
             Self::Invariant(_) => "synth_optimizer_invariant_error",
             Self::StateTransition { .. } => "synth_optimizer_state_transition_error",
             Self::Io { .. } => "synth_optimizer_io_error",
+            Self::DiskBudgetExceeded { .. } => "synth_optimizer_disk_budget_exceeded",
             Self::Json(_) => "synth_optimizer_json_error",
             Self::TomlDecode(_) => "synth_optimizer_toml_decode_error",
             Self::Http(_) => "synth_optimizer_http_error",

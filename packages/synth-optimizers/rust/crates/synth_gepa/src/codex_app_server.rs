@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -19,6 +21,7 @@ const CONTAINER_SENSOR_ADAPTER_ID: &str = "synth.container_sensor_frame_adapter"
 const CONTAINER_SENSOR_ADAPTER_VERSION: &str = "v1";
 const GEPA_ADAPTER_SOURCE: &str = "https://gepa-ai.github.io/gepa/guides/adapters/";
 const GEPA_ALGORITHM_ID: &str = "synth_gepa.v1";
+const PROMPTING_BEST_PRACTICES: &str = include_str!("prompting_best_practices.md");
 
 pub(crate) struct CodexProposerInput<'a> {
     pub config: &'a SynthOptimizerConfig,
@@ -28,6 +31,14 @@ pub(crate) struct CodexProposerInput<'a> {
     pub generation: usize,
     pub seed_pool_rows: Value,
     pub workspace_dir: PathBuf,
+}
+
+#[derive(Default)]
+struct ProposerCandidateEvidenceStats {
+    rollouts: usize,
+    wins: usize,
+    losses: usize,
+    reward_sum: f64,
 }
 
 pub(crate) fn run_codex_app_server_proposer(input: CodexProposerInput<'_>) -> Result<Value> {
@@ -82,6 +93,7 @@ fn run_session(
 
     let manifest = read_manifest(&input.workspace_dir)?;
     let proposals = proposals_from_manifest(&manifest)?;
+    let evidence_warnings = manifest_evidence_warnings(input, &manifest, &proposals);
     let usage = usage_from_message(&final_turn)
         .unwrap_or_else(|| json!({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}));
     let response = json!({
@@ -90,6 +102,7 @@ fn run_session(
         "manifest": manifest,
         "proposals": proposals,
         "usage": usage,
+        "evidence_warnings": evidence_warnings,
     });
     write_agent_artifacts(
         input,
@@ -117,6 +130,10 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
         &workspace_readme(input),
     )?;
     write_text(
+        &input.workspace_dir.join("prompting_best_practices.md"),
+        PROMPTING_BEST_PRACTICES,
+    )?;
+    write_text(
         &proposal_dir.join("PROPOSAL_SCHEMA.md"),
         &proposal_schema(input),
     )?;
@@ -141,6 +158,16 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
     let candidates = candidates_read_model(input);
     let candidate_deltas = candidate_deltas_read_model(input);
     let rollouts = rollouts_read_model(input);
+    let proposer_examples = proposer_examples_read_model(input);
+    let proposer_failure_summary = proposer_failure_summary_read_model(input, &proposer_examples);
+    let proposer_repair_hints = proposer_repair_hints_read_model(input, &proposer_examples);
+    let proposer_metadata = proposer_metadata_read_model(
+        input,
+        &rollouts,
+        &proposer_examples,
+        &proposer_failure_summary,
+    );
+    let proposer_readme = proposer_readme_read_model();
     let scores = scores_read_model(input);
     let evidence_frames = evidence_frames_read_model(input);
     let reflective_frames = reflective_frames_read_model(input);
@@ -166,6 +193,11 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
         "candidates": candidates,
         "candidate_deltas": candidate_deltas,
         "rollouts": rollouts,
+        "proposer_examples": proposer_examples,
+        "proposer_failure_summary": proposer_failure_summary,
+        "proposer_repair_hints": proposer_repair_hints,
+        "proposer_metadata": proposer_metadata,
+        "proposer_readme": proposer_readme,
         "scores": scores,
         "evidence_frames": evidence_frames,
         "reflective_frames": reflective_frames,
@@ -188,6 +220,10 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
             "acceptance": acceptance,
             "seed_pool_counts": seed_pool_counts(input),
         }),
+    )?;
+    write_json(
+        &state_dir.join("task_info.json"),
+        &task_info_value(input).cloned().unwrap_or(Value::Null),
     )?;
     write_json(
         &state_dir.join("program_contract.json"),
@@ -219,6 +255,23 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
         &state_dir.join("rollouts.json"),
         &rollouts_read_model(input),
     )?;
+    write_json(
+        &state_dir.join("proposer_examples.json"),
+        &proposer_examples_read_model(input),
+    )?;
+    write_json(
+        &state_dir.join("proposer_failure_summary.json"),
+        &proposer_failure_summary,
+    )?;
+    write_json(
+        &state_dir.join("proposer_repair_hints.json"),
+        &proposer_repair_hints,
+    )?;
+    write_json(
+        &state_dir.join("proposer_metadata.json"),
+        &proposer_metadata,
+    )?;
+    write_json(&state_dir.join("proposer_readme.json"), &proposer_readme)?;
     write_json(&state_dir.join("scores.json"), &scores_read_model(input))?;
     write_json(
         &state_dir.join("evidence_frames.json"),
@@ -298,7 +351,7 @@ fn collect_workspace_files(root: &Path, current: &Path, files: &mut Vec<Value>) 
 fn should_skip_workspace_manifest_path(path: &Path) -> bool {
     path.components().any(|component| {
         let text = component.as_os_str().to_string_lossy();
-        matches!(text.as_ref(), ".codex_home")
+        matches!(text.as_ref(), ".codex_home" | ".codex_api_key_home")
     })
 }
 
@@ -327,6 +380,7 @@ fn write_agent_artifacts(
             "workspace": input.workspace_dir,
             "sandbox_mode": input.config.proposer.sandbox_mode,
             "approval_policy": input.config.proposer.approval_policy,
+            "auth_mode": input.config.proposer.auth_mode,
             "thread_response": thread_response,
             "final_turn": final_turn,
         }),
@@ -350,6 +404,7 @@ fn write_agent_artifacts(
 }
 
 fn workspace_readme(input: &CodexProposerInput<'_>) -> String {
+    let proposal_policy = proposer_policy_text(input);
     format!(
         r#"# GEPA Proposer Workspace
 
@@ -357,23 +412,35 @@ You are proposing the next GEPA prompt candidate.
 
 Read:
 
-1. `proposal/PROPOSAL_SCHEMA.md` for the exact manifest schema.
-2. `state/run_context.json` for the optimizer run context and target modules.
-3. `state/program_contract.json` for the program and mutable fields.
-4. `state/candidates.json` for candidate payloads and train/minibatch/heldout scores.
-5. `state/candidate_deltas.json` for payload differences from the selected parent.
-6. `state/rollouts.json` and `state/scores.json` for per-example rewards and score summaries.
-7. `state/evidence_frames.json`, `state/reflective_frames.json`, and `state/links.json` for durable rollout evidence.
-8. `state/seed_pools.json` for pareto-eval, minibatch, reflection, and validation row pools.
-9. `state/algorithm_read_model.json` for the complete GEPA read model.
-10. `state/pareto_front.json`, `state/gepa_sidecar.json`, and `state/gepa_summary.json` for GEPA-specific mirrors.
-11. `state/parent_payload.json` and `state/reflector_input.json` for the parent prompt and sampled wins/losses.
+1. `prompting_best_practices.md` for the shared premise/context/task_priority/heuristics/constraints/rules typology.
+2. `proposal/PROPOSAL_SCHEMA.md` for the exact manifest schema.
+3. `state/proposer_metadata.json` for run/generation metadata, model names, target levers, counts, budgets, and top failures.
+4. `state/proposer_readme.json` for a machine-readable file index.
+5. `state/proposer_failure_summary.json` first for flat losses, wins, label confusions, text, expected labels, predictions, rewards, and prompt payloads.
+6. `state/proposer_repair_hints.json` for generalized reflection hints, label-confusion clusters, and guard wins.
+7. `state/proposer_examples.json` for every flat rollout evidence row.
+8. `state/run_context.json` for the optimizer run context and target modules.
+9. `state/task_info.json` for the container-declared task, output space, metrics, and proposer hints.
+10. `state/program_contract.json` for the program and mutable fields.
+11. `state/candidates.json` for candidate payloads and train/minibatch/heldout scores.
+12. `state/candidate_deltas.json` for payload differences from the selected parent.
+13. `state/rollouts.json` and `state/scores.json` for per-example rollouts and score summaries. Sensor-backed rows in `state/rollouts.json` include summaries, outcomes, expected outputs, predictions, text, rationale, and trace refs.
+14. `state/evidence_frames.json`, `state/reflective_frames.json`, and `state/links.json` for durable nested rollout evidence. `state/reflective_frames.json` is an object; inspect `.frames[]`.
+15. `state/seed_pools.json` for pareto-eval, minibatch, reflection, and validation row pools.
+16. `state/algorithm_read_model.json` for the complete GEPA read model.
+17. `state/pareto_front.json`, `state/gepa_sidecar.json`, and `state/gepa_summary.json` for GEPA-specific mirrors.
+18. `state/parent_payload.json` and `state/reflector_input.json` for the parent prompt and sampled wins/losses.
 
-Before writing the manifest, inspect those files with shell, Python, or JQ and form a short evidence summary.
+Before writing the manifest, inspect those files with shell, Python, or JQ and form a short evidence summary. Use `state/task_info.json`, rollout traces, rationales, and expected/predicted outputs to infer what kind of task this is before deciding what style of prompt edit is valid.
 Use a real review workflow: summarize candidate scores and payloads, inspect Pareto membership, inspect rollout wins/losses, inspect the parent payload, then write `proposal/manifest.json`.
+
+Reflect over the evidence like GEPA's Python workspace proposer. You have wide latitude over the prompt content: rewrite structure, add role priming, include numbered sections, restate the task contract, and add examples when the task policy allows them.
+
+{proposal_policy}
 
 Write exactly {proposal_count} distinct candidate proposals to `proposal/manifest.json`.
 "#,
+        proposal_policy = proposal_policy,
         proposal_count = input.config.gepa.proposals_per_generation
     )
 }
@@ -384,6 +451,7 @@ fn proposal_schema(input: &CodexProposerInput<'_>) -> String {
     } else {
         "- Keep the change targeted to the target module named in `state/run_context.json`.\n"
     };
+    let proposal_policy = proposer_policy_text(input);
     format!(
         r#"# GEPA Workspace Proposer Schema
 
@@ -395,11 +463,18 @@ Write `proposal/manifest.json` as strict JSON using this schema:
   "critique": "What the parent candidate is missing, grounded in state/ evidence.",
   "evidence": {{
     "reviewed_files": [
+      "prompting_best_practices.md",
+      "state/proposer_metadata.json",
+      "state/proposer_readme.json",
       "state/run_context.json",
+      "state/task_info.json",
       "state/program_contract.json",
       "state/algorithm_read_model.json",
       "state/candidates.json",
       "state/candidate_deltas.json",
+      "state/proposer_failure_summary.json",
+      "state/proposer_repair_hints.json",
+      "state/proposer_examples.json",
       "state/rollouts.json",
       "state/scores.json",
       "state/evidence_frames.json",
@@ -436,11 +511,18 @@ Write `proposal/manifest.json` as strict JSON using this schema:
 
 Rules:
 
-- Read `state/run_context.json`, `state/program_contract.json`, `state/algorithm_read_model.json`, `state/candidates.json`, `state/candidate_deltas.json`, `state/rollouts.json`, `state/scores.json`, `state/evidence_frames.json`, `state/reflective_frames.json`, `state/links.json`, `state/parent_payload.json`, and `state/reflector_input.json`.
+- Read `prompting_best_practices.md`, `state/proposer_metadata.json`, `state/proposer_readme.json`, `state/run_context.json`, `state/task_info.json`, `state/program_contract.json`, `state/algorithm_read_model.json`, `state/candidates.json`, `state/candidate_deltas.json`, `state/proposer_failure_summary.json`, `state/proposer_repair_hints.json`, `state/proposer_examples.json`, `state/rollouts.json`, `state/scores.json`, `state/evidence_frames.json`, `state/reflective_frames.json`, `state/links.json`, `state/parent_payload.json`, and `state/reflector_input.json`.
 - Use shell/Python/JQ inspection to summarize the workspace before writing the manifest. Do not jump straight to editing `proposal/manifest.json`.
-- Minimum review workflow: inspect candidate scores/payloads, inspect Pareto membership, inspect rollout wins/losses, inspect parent payload, then write the manifest.
-- Use rollout rewards, candidate deltas, reflective frames, failures, wins, and Pareto membership as evidence.
-- Fill `evidence` with concrete files reviewed, candidate comparison, failure patterns, winning patterns, and example ids from `state/rollouts.json`.
+- Minimum review workflow: inspect `state/proposer_metadata.json`, inspect `state/task_info.json`, inspect candidate scores/payloads, inspect Pareto membership, inspect rollout wins/losses and trace refs, inspect parent payload, then write the manifest.
+- Use `state/proposer_failure_summary.json`, `state/proposer_repair_hints.json`, and `state/proposer_examples.json` as the primary source for rollout rewards, failures, wins, expected outputs, predictions, and example text. Use nested evidence frames when task semantics or trace-level behavior are unclear.
+- Use `prompting_best_practices.md` to classify each proposed change as a premise, context, task_priority, core_task_description, heuristic, constraint, rule, input_description, or output_description.
+- Fill `evidence` with concrete files reviewed, candidate comparison, failure patterns, winning patterns, and example ids from `state/proposer_failure_summary.json`.
+- Proposals should aim to generalize. Add structural sections (role, task, output rules, examples) and domain-specific rules only when they are task-valid.
+- {proposal_policy}
+- At most one proposal may be conservative. The remaining proposals must be very ambitious, high-variance, task-specific updates that could plausibly produce substantially better task performance than the parent, and each rationale must name the failure clusters it attacks.
+- Shoot for large wins. Mild parent clarifications are wasted candidate budget unless they are the single conservative control.
+- Do not waste candidates on generic output-contract polish, canonical-label reminders, or baseline paraphrases unless the dominant failures are actually output-format failures.
+- Use whatever combination works: label-disambiguation rules, output-format constraints, structural rewrites, few-shot examples, role priming, edge-case enumeration. Distinct proposals should explore distinct strategies, not paraphrase each other.
 - Create exactly `state/proposal_request.json.proposals_per_round` distinct proposals.
 - Use `proposal_type="frontier_variation"` for a mutation of one Pareto-front candidate.
 - Use `proposal_type="frontier_merge"` for an attempted combination of two Pareto-front candidates with complementary wins. If fewer than two Pareto-front candidates exist, replace requested merges with additional frontier variations.
@@ -487,7 +569,16 @@ fn proposal_request(input: &CodexProposerInput<'_>) -> Value {
         "batch_sampler": batch_sampler_read_model(input),
         "acceptance": acceptance_read_model(input),
         "seed_pool_counts": seed_pool_counts(input),
-        "instructions": "Create exactly proposals_per_round distinct candidates. Use frontier_variation for one Pareto-front parent and frontier_merge to combine two complementary Pareto-front parents from merge_candidate_pairs. If no merge pairs are available, replace requested merges with additional frontier variations.",
+        "literal_example_policy": proposer_literal_policy_json(input),
+        "prompting_best_practices": PROMPTING_BEST_PRACTICES,
+        "ambition_contract": [
+            "At most one proposal may be conservative.",
+            "Every other proposal must be a very ambitious, task-specific prompt update that names the top failure cluster it is meant to fix and could plausibly produce substantially better task performance than the parent.",
+            "Shoot for large wins. Small prompt polish, extra canonical-output reminders, or mild clarifications are not acceptable except for the single conservative control.",
+            "Generic output-contract reminders, canonical-label reminders, or paraphrases of the parent are wasted proposals unless paired with concrete task heuristics.",
+            "Make at least half the proposals structurally different from the parent, not just longer."
+        ],
+        "instructions": format!("Create exactly proposals_per_round distinct candidates. Use frontier_variation for one Pareto-front parent and frontier_merge to combine two complementary Pareto-front parents from merge_candidate_pairs. If no merge pairs are available, replace requested merges with additional frontier variations. {} At most one proposal may be conservative; the rest must be very ambitious, task-specific changes aimed at named top failure clusters and designed to substantially outperform the parent. Make distinct candidates explore genuinely different strategies (structural rewrites, boundary taxonomies, conflict precedence, answer-routing procedures, few-shot examples when allowed, role priming, etc.) rather than paraphrasing one another.", proposer_policy_text(input)),
     })
 }
 
@@ -747,6 +838,61 @@ fn rollouts_read_model(input: &CodexProposerInput<'_>) -> Value {
             }));
         }
         for frame in &candidate.sensor_frames {
+            let rollout_trace = frame.metadata.get("rollout_trace").unwrap_or(&Value::Null);
+            let summary = json_path(rollout_trace, &["summary"])
+                .cloned()
+                .unwrap_or(Value::Null);
+            let outcome = json_path(rollout_trace, &["outcome"])
+                .cloned()
+                .unwrap_or_else(|| {
+                    json!({
+                        "status": frame.status,
+                        "success_status": frame.success_status,
+                        "reward": frame.reward,
+                    })
+                });
+            let example = json_path(rollout_trace, &["task_payload", "example"])
+                .cloned()
+                .unwrap_or_else(|| {
+                    json!({
+                        "example_id": frame.example_id,
+                        "seed": frame.seed,
+                        "split": frame.split,
+                    })
+                });
+            let reward_details = json_path(&outcome, &["reward_info", "details"])
+                .or_else(|| frame.metadata.get("reward_details"))
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let expected = string_path(&summary, &["expected"])
+                .or_else(|| string_path(&reward_details, &["expected"]))
+                .or_else(|| string_path(&example, &["label"]))
+                .unwrap_or_default();
+            let prediction = string_path(&summary, &["prediction"])
+                .or_else(|| string_path(&reward_details, &["prediction"]))
+                .unwrap_or_default();
+            let text = string_path(&example, &["text"]).unwrap_or_default();
+            let policy_model = string_path(&reward_details, &["policy_model"])
+                .or_else(|| string_path(&frame.usage, &["model"]))
+                .unwrap_or_default();
+            let rationale_text = frame
+                .objective_scores
+                .iter()
+                .filter_map(|score| score.rationale.as_deref())
+                .find(|value| !value.trim().is_empty())
+                .unwrap_or_default()
+                .to_string();
+            let artifact_refs = frame
+                .artifact_refs
+                .iter()
+                .map(|artifact| serde_json::to_value(artifact).unwrap_or(Value::Null))
+                .filter(|value| !value.is_null())
+                .collect::<Vec<_>>();
+            let trace_refs = frame
+                .trace_digest
+                .as_ref()
+                .map(|digest| vec![format!("trace_sha256:{}", digest.sha256)])
+                .unwrap_or_default();
             rows.push(json!({
                 "candidate_id": frame.candidate_id,
                 "evaluation_stage": frame.evaluation_stage,
@@ -757,11 +903,779 @@ fn rollouts_read_model(input: &CodexProposerInput<'_>) -> Value {
                 "status": frame.status,
                 "success_status": frame.success_status,
                 "failure": frame.failure,
+                "summary": summary,
+                "outcome": outcome,
+                "rationale_text": rationale_text,
+                "expected": expected,
+                "prediction": prediction,
+                "text": text,
+                "policy_model": policy_model,
+                "usage": frame.usage,
+                "artifact_refs": artifact_refs,
+                "trace_refs": trace_refs,
+                "candidate_status": candidate.status,
                 "actionable_side_info": frame.actionable_side_info,
             }));
         }
     }
     Value::Array(rows)
+}
+
+fn proposer_examples_read_model(input: &CodexProposerInput<'_>) -> Value {
+    let pareto_front = compute_pareto_front(input);
+    let mut rows = Vec::new();
+    for candidate in input.candidates {
+        for frame in &candidate.sensor_frames {
+            rows.push(proposer_example_row(input, &pareto_front, candidate, frame));
+        }
+    }
+    rows.sort_by(|left, right| {
+        proposer_example_sort_key(left).cmp(&proposer_example_sort_key(right))
+    });
+    Value::Array(rows)
+}
+
+fn proposer_example_row(
+    input: &CodexProposerInput<'_>,
+    pareto_front: &CodexParetoFront,
+    candidate: &CandidateRecord,
+    frame: &synth_optimizer_platform::SensorFrame,
+) -> Value {
+    let rollout_trace = frame.metadata.get("rollout_trace").unwrap_or(&Value::Null);
+    let summary = json_path(rollout_trace, &["summary"])
+        .cloned()
+        .unwrap_or(Value::Null);
+    let outcome = json_path(rollout_trace, &["outcome"])
+        .cloned()
+        .unwrap_or_else(|| {
+            json!({
+                "status": frame.status,
+                "success_status": frame.success_status,
+                "reward": frame.reward,
+            })
+        });
+    let example = json_path(rollout_trace, &["task_payload", "example"])
+        .cloned()
+        .unwrap_or_else(|| {
+            json!({
+                "example_id": frame.example_id,
+                "seed": frame.seed,
+                "split": frame.split,
+            })
+        });
+    let reward_details = json_path(&outcome, &["reward_info", "details"])
+        .or_else(|| frame.metadata.get("reward_details"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let expected = string_path(&summary, &["expected"])
+        .or_else(|| string_path(&reward_details, &["expected"]))
+        .or_else(|| string_path(&example, &["label"]))
+        .unwrap_or_default();
+    let prediction = string_path(&summary, &["prediction"])
+        .or_else(|| string_path(&reward_details, &["prediction"]))
+        .unwrap_or_default();
+    let text = string_path(&example, &["text"]).unwrap_or_default();
+    let policy_model = string_path(&reward_details, &["policy_model"])
+        .or_else(|| string_path(&frame.usage, &["model"]))
+        .unwrap_or_default();
+    let objective_rationale = frame
+        .objective_scores
+        .iter()
+        .filter_map(|score| score.rationale.as_deref())
+        .find(|value| !value.trim().is_empty())
+        .unwrap_or_default()
+        .to_string();
+    let target_payload = input
+        .config
+        .candidate
+        .target_modules
+        .iter()
+        .filter_map(|module_id| {
+            candidate
+                .payload
+                .get(module_id)
+                .map(|value| (module_id.clone(), Value::String(value.clone())))
+        })
+        .collect::<Map<_, _>>();
+    let artifact_refs = frame
+        .artifact_refs
+        .iter()
+        .map(|artifact| serde_json::to_value(artifact).unwrap_or(Value::Null))
+        .filter(|value| !value.is_null())
+        .collect::<Vec<_>>();
+    let trace_refs = frame
+        .trace_digest
+        .as_ref()
+        .map(|digest| vec![format!("trace_sha256:{}", digest.sha256)])
+        .unwrap_or_default();
+    json!({
+        "schema_version": "gepa_proposer_example.v1",
+        "candidate_id": candidate.candidate_id,
+        "parent_candidate_id": candidate.parent_id,
+        "candidate_status": candidate.status,
+        "is_parent": candidate.candidate_id == input.parent.candidate_id,
+        "is_pareto_front": pareto_front.members.contains(&candidate.candidate_id),
+        "evaluation_stage": frame.evaluation_stage,
+        "example_id": frame.example_id,
+        "seed": frame.seed,
+        "split": frame.split,
+        "reward": frame.reward,
+        "status": frame.status,
+        "success_status": frame.success_status,
+        "expected": expected,
+        "prediction": prediction,
+        "text": text,
+        "policy_model": policy_model,
+        "objective_rationale": objective_rationale,
+        "failure": frame.failure,
+        "usage": frame.usage,
+        "target_payload": Value::Object(target_payload),
+        "artifact_refs": artifact_refs,
+        "trace_refs": trace_refs,
+    })
+}
+
+fn proposer_failure_summary_read_model(
+    input: &CodexProposerInput<'_>,
+    proposer_examples: &Value,
+) -> Value {
+    let rows = proposer_examples.as_array().cloned().unwrap_or_default();
+    let abstract_training_targets = literal_training_target_policy(input) == "forbid";
+    let mut losses = Vec::new();
+    let mut wins = Vec::new();
+    let mut loss_labels: BTreeMap<String, usize> = BTreeMap::new();
+    let mut win_labels: BTreeMap<String, usize> = BTreeMap::new();
+    let mut confusion_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut candidate_stats: BTreeMap<String, ProposerCandidateEvidenceStats> = BTreeMap::new();
+
+    for row in &rows {
+        let candidate_id = string_path(row, &["candidate_id"]).unwrap_or_default();
+        let expected = string_path(row, &["expected"]).unwrap_or_else(|| "unknown".to_string());
+        let prediction = string_path(row, &["prediction"]).unwrap_or_else(|| "unknown".to_string());
+        let expected_key = if abstract_training_targets {
+            answer_value_bucket(&expected)
+        } else {
+            expected.clone()
+        };
+        let reward = row.get("reward").and_then(Value::as_f64).unwrap_or(0.0);
+        let stats = candidate_stats.entry(candidate_id).or_default();
+        stats.rollouts += 1;
+        stats.reward_sum += reward;
+        if reward >= 1.0 {
+            stats.wins += 1;
+            *win_labels.entry(expected_key).or_default() += 1;
+            wins.push(proposer_example_compact(row));
+        } else {
+            stats.losses += 1;
+            *loss_labels.entry(expected_key).or_default() += 1;
+            *confusion_counts
+                .entry(if abstract_training_targets {
+                    abstract_target_confusion_key(&expected, &prediction)
+                } else {
+                    format!("{expected} -> {prediction}")
+                })
+                .or_default() += 1;
+            losses.push(proposer_example_compact(row));
+        }
+    }
+
+    let total_loss_count = losses.len();
+    let total_win_count = wins.len();
+
+    losses.sort_by(|left, right| {
+        proposer_summary_sort_key(left).cmp(&proposer_summary_sort_key(right))
+    });
+    wins.sort_by(|left, right| {
+        proposer_summary_sort_key(left).cmp(&proposer_summary_sort_key(right))
+    });
+    losses.truncate(80);
+    wins.truncate(80);
+
+    let candidate_outcomes = candidate_stats
+        .into_iter()
+        .map(|(candidate_id, stats)| {
+            json!({
+                "candidate_id": candidate_id,
+                "rollouts": stats.rollouts,
+                "wins": stats.wins,
+                "losses": stats.losses,
+                "average_reward": if stats.rollouts == 0 {
+                    0.0
+                } else {
+                    stats.reward_sum / stats.rollouts as f64
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "schema_version": "gepa_proposer_failure_summary.v1",
+        "instructions": if abstract_training_targets {
+            "Use this file first. The container task policy forbids literal training-target mappings: label_confusions are bucketed by output shape. Do not convert exact expected outputs or predictions from rollout evidence into prompt mappings."
+        } else {
+            "Use this file first. It is a flat, jq-friendly view of rollout evidence with text, expected output, prediction, reward, and prompt payload for wins/losses."
+        },
+        "literal_example_policy": proposer_literal_policy_json(input),
+        "parent_candidate_id": input.parent.candidate_id,
+        "target_modules": input.config.candidate.target_modules,
+        "loss_count": total_loss_count,
+        "win_count": total_win_count,
+        "losses": losses,
+        "wins": wins,
+        "loss_labels": top_count_pairs(loss_labels, 40),
+        "win_labels": top_count_pairs(win_labels, 40),
+        "label_confusions": top_count_pairs(confusion_counts, 40),
+        "candidate_outcomes": candidate_outcomes,
+    })
+}
+
+fn proposer_repair_hints_read_model(
+    input: &CodexProposerInput<'_>,
+    proposer_examples: &Value,
+) -> Value {
+    let mut parent_loss_examples = Vec::new();
+    let mut guard_win_examples = Vec::new();
+    let mut confusion_clusters: BTreeMap<String, ProposerConfusionCluster> = BTreeMap::new();
+    let rows = proposer_examples.as_array().cloned().unwrap_or_default();
+    let abstract_training_targets = literal_training_target_policy(input) == "forbid";
+    for row in &rows {
+        let is_parent = row
+            .get("is_parent")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let is_frontier = row
+            .get("is_pareto_front")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !is_parent && !is_frontier {
+            continue;
+        }
+        let reward = row.get("reward").and_then(Value::as_f64).unwrap_or(0.0);
+        if reward >= 1.0 {
+            guard_win_examples.push(proposer_reflection_example(row));
+        } else {
+            let expected = string_path(row, &["expected"]).unwrap_or_else(|| "unknown".to_string());
+            let prediction =
+                string_path(row, &["prediction"]).unwrap_or_else(|| "unknown".to_string());
+            let key = if abstract_training_targets {
+                abstract_target_confusion_key(&expected, &prediction)
+            } else {
+                format!("{expected} -> {prediction}")
+            };
+            let cluster =
+                confusion_clusters
+                    .entry(key)
+                    .or_insert_with(|| ProposerConfusionCluster {
+                        expected_label: if abstract_training_targets {
+                            answer_value_bucket(&expected)
+                        } else {
+                            expected
+                        },
+                        observed_prediction: if abstract_training_targets {
+                            answer_value_bucket(&prediction)
+                        } else {
+                            prediction
+                        },
+                        count: 0,
+                        example_ids: Vec::new(),
+                        candidate_ids: BTreeSet::new(),
+                    });
+            cluster.count += 1;
+            if let Some(example_id) = string_path(row, &["example_id"]) {
+                if cluster.example_ids.len() < 8 {
+                    cluster.example_ids.push(example_id);
+                }
+            }
+            if let Some(candidate_id) = string_path(row, &["candidate_id"]) {
+                cluster.candidate_ids.insert(candidate_id);
+            }
+            parent_loss_examples.push(proposer_reflection_example(row));
+        }
+    }
+    parent_loss_examples.sort_by(|left, right| {
+        proposer_summary_sort_key(left).cmp(&proposer_summary_sort_key(right))
+    });
+    guard_win_examples.sort_by(|left, right| {
+        proposer_summary_sort_key(left).cmp(&proposer_summary_sort_key(right))
+    });
+    parent_loss_examples.truncate(40);
+    guard_win_examples.truncate(24);
+    let mut clusters = confusion_clusters.into_values().collect::<Vec<_>>();
+    clusters.sort_by(|left, right| {
+        right.count.cmp(&left.count).then_with(|| {
+            left.expected_label
+                .cmp(&right.expected_label)
+                .then_with(|| left.observed_prediction.cmp(&right.observed_prediction))
+        })
+    });
+    clusters.truncate(40);
+    json!({
+        "schema_version": "gepa_proposer_repair_hints.v1",
+        "instructions": if abstract_training_targets {
+            "Use this after proposer_failure_summary. The task policy forbids literal training-target mappings: use rollout evidence to infer general rules, but do not lift observed exact targets into prompt tables."
+        } else {
+            "Use this after proposer_failure_summary. It is a reflection guide that highlights common confusions and guard wins. Use concrete examples only when the task_info/program policy says they are valid for this output space."
+        },
+        "literal_example_policy": proposer_literal_policy_json(input),
+        "parent_candidate_id": input.parent.candidate_id,
+        "target_modules": input.config.candidate.target_modules,
+        "label_confusion_clusters": clusters.into_iter().map(ProposerConfusionCluster::to_json).collect::<Vec<_>>(),
+        "parent_loss_examples": parent_loss_examples,
+        "guard_win_examples": guard_win_examples,
+        "proposal_guidance": [
+            "Preserve the program's hard output contract (e.g. exact label format), but feel free to change everything else.",
+            if abstract_training_targets { "Turn repeated confusions into general task procedures. Do not add literal train target mappings." } else { "Turn repeated confusions into explicit fixes: rules, output-disambiguation tables, or input→output few-shot pairs — whichever is most direct and task-valid." },
+            if abstract_training_targets { "If examples are useful, make them abstract or synthetic examples rather than copied train input-target pairs." } else { "You may quote, paraphrase, or summarize training inputs as illustrative examples when that is the clearest way to teach a distinction." },
+            "At most one proposal may be conservative. The remaining proposals should be very ambitious, high-variance, task-specific changes that could plausibly produce substantially better task performance than the parent.",
+            "Shoot for large wins; mild polish and safe clarifications are wasted unless used as the single conservative control.",
+            "Do not spend proposals on output-contract polish unless the dominant failures are output-format failures. Target the top confusion clusters directly.",
+            "Make proposals meaningfully distinct from each other and from the parent — paraphrases of the seed are wasted budget."
+        ],
+    })
+}
+
+struct ProposerConfusionCluster {
+    expected_label: String,
+    observed_prediction: String,
+    count: usize,
+    example_ids: Vec<String>,
+    candidate_ids: BTreeSet<String>,
+}
+
+impl ProposerConfusionCluster {
+    fn to_json(self) -> Value {
+        json!({
+            "expected_label": self.expected_label,
+            "observed_prediction": self.observed_prediction,
+            "count": self.count,
+            "example_ids": self.example_ids,
+            "candidate_ids": self.candidate_ids.into_iter().collect::<Vec<_>>(),
+            "reflection_prompt": "Diagnose and fix the confusion. First infer the task/output space from task_info and traces. Use concrete tables only for tasks where literal mappings are valid; otherwise write general procedures instead of target memorization.",
+        })
+    }
+}
+
+fn proposer_reflection_example(row: &Value) -> Value {
+    json!({
+        "candidate_id": row.get("candidate_id").cloned().unwrap_or(Value::Null),
+        "candidate_status": row.get("candidate_status").cloned().unwrap_or(Value::Null),
+        "is_parent": row.get("is_parent").cloned().unwrap_or(Value::Bool(false)),
+        "is_pareto_front": row.get("is_pareto_front").cloned().unwrap_or(Value::Bool(false)),
+        "evaluation_stage": row.get("evaluation_stage").cloned().unwrap_or(Value::Null),
+        "example_id": row.get("example_id").cloned().unwrap_or(Value::Null),
+        "seed": row.get("seed").cloned().unwrap_or(Value::Null),
+        "split": row.get("split").cloned().unwrap_or(Value::Null),
+        "reward": row.get("reward").cloned().unwrap_or(Value::Null),
+        "expected": row.get("expected").cloned().unwrap_or(Value::Null),
+        "prediction": row.get("prediction").cloned().unwrap_or(Value::Null),
+        "policy_model": row.get("policy_model").cloned().unwrap_or(Value::Null),
+        "objective_rationale": row.get("objective_rationale").cloned().unwrap_or(Value::Null),
+        "artifact_refs": row.get("artifact_refs").cloned().unwrap_or(Value::Array(Vec::new())),
+        "trace_refs": row.get("trace_refs").cloned().unwrap_or(Value::Array(Vec::new())),
+        "text_policy": "Full text is in proposer_examples.json. Follow state/proposal_request.json.literal_example_policy before quoting or mapping examples inside candidate prompts.",
+    })
+}
+
+fn proposer_metadata_read_model(
+    input: &CodexProposerInput<'_>,
+    rollouts: &Value,
+    proposer_examples: &Value,
+    proposer_failure_summary: &Value,
+) -> Value {
+    let pareto_front = compute_pareto_front(input);
+    let proposer_model = input
+        .config
+        .proposer
+        .model
+        .clone()
+        .unwrap_or_else(|| "gpt-5.4-mini".to_string());
+    let workspace_root = input
+        .workspace_dir
+        .parent()
+        .and_then(Path::parent)
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| input.workspace_dir.display().to_string());
+    json!({
+        "schema_version": "gepa_proposer_metadata.v1",
+        "run_id": input.config.run.run_id,
+        "generation": input.generation,
+        "workspace_dir": input.workspace_dir,
+        "workspace_root": workspace_root.clone(),
+        "run_artifact_dir": workspace_root,
+        "parent_candidate_id": input.parent.candidate_id,
+        "frontier_size": pareto_front.members.len(),
+        "frontier_type": pareto_front.frontier_type,
+        "candidate_count": input.candidates.len(),
+        "rollout_row_count": count_json_array(rollouts),
+        "proposer_example_count": count_json_array(proposer_examples),
+        "loss_count": proposer_failure_summary
+            .get("loss_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        "win_count": proposer_failure_summary
+            .get("win_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        "top_failures": proposer_failure_summary
+            .get("label_confusions")
+            .and_then(Value::as_array)
+            .map(|items| Value::Array(items.iter().take(5).cloned().collect()))
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        "task_info": task_info_value(input).cloned().unwrap_or(Value::Null),
+        "task_output_space_kind": task_output_space_kind(input),
+        "literal_training_target_policy": literal_training_target_policy(input),
+        "literal_example_policy": proposer_literal_policy_json(input),
+        "target_modules": input.config.candidate.target_modules,
+        "mutable_levers": input.program.mutable_field_ids(),
+        "proposal_count": input.config.gepa.proposals_per_generation,
+        "proposals_per_generation": input.config.gepa.proposals_per_generation,
+        "minibatch_size": input.config.gepa.minibatch_size,
+        "policy": {
+            "provider": input.config.policy.provider,
+            "model": input.config.policy.model,
+            "base_url": input.config.policy.base_url,
+            "api_key_env": input.config.policy.api_key_env,
+        },
+        "proposer": {
+            "backend": input.config.proposer.backend,
+            "model": proposer_model,
+            "timeout_seconds": input.config.proposer.timeout_seconds,
+            "sandbox_mode": input.config.proposer.sandbox_mode,
+            "approval_policy": input.config.proposer.approval_policy,
+        },
+        "budgets": {
+            "max_total_rollouts": input.config.gepa.effective_max_total_rollouts(),
+            "max_train_rollouts": input.config.gepa.train_rollout_limit(),
+            "max_heldout_rollouts": input.config.gepa.heldout_rollout_limit(),
+            "max_cost_usd": input.config.gepa.max_cost_usd,
+        },
+        "seed_pool_counts": seed_pool_counts(input),
+        "read_first": [
+            "state/proposer_metadata.json",
+            "state/task_info.json",
+            "state/proposer_failure_summary.json",
+            "state/proposer_repair_hints.json",
+            "state/proposer_examples.json",
+            "state/scores.json",
+            "state/parent_payload.json",
+            "state/candidate_deltas.json",
+            "state/rollouts.json"
+        ],
+    })
+}
+
+fn proposer_readme_read_model() -> Value {
+    json!({
+        "schema_version": "gepa_proposer_readme.v1",
+        "purpose": "Machine-readable index for the GEPA proposer workspace.",
+        "read_order": [
+            {
+                "path": "prompting_best_practices.md",
+                "use": "Shared GEPA proposer/reflector guidance: instruction typology, evidence-first loop, diagnosis rules, good changes, and bad changes."
+            },
+            {
+                "path": "state/proposer_metadata.json",
+                "use": "Small run/generation context, policy/proposer model names, counts, target modules, and top failure labels."
+            },
+            {
+                "path": "state/task_info.json",
+                "use": "Container-declared task description, output space, metrics, and proposer hints. Read this before deciding whether literal examples, tables, or abstract rules are valid."
+            },
+            {
+                "path": "state/proposer_failure_summary.json",
+                "use": "Primary flat evidence file. Start here for losses, wins, label confusions, expected/predicted labels, text, rewards, and target payloads."
+            },
+            {
+                "path": "state/proposer_repair_hints.json",
+                "use": "Reflection hints derived from parent/Pareto losses and guard wins. Use it to pick which confusions to fix. Follow state/proposal_request.json.literal_example_policy before quoting or mapping examples inside candidate prompts."
+            },
+            {
+                "path": "state/proposer_examples.json",
+                "use": "All flat rollout evidence rows with text, expected, prediction, reward, prompt payload, trace refs, and usage."
+            },
+            {
+                "path": "state/scores.json",
+                "use": "Candidate-level scores and rollout counts."
+            },
+            {
+                "path": "state/parent_payload.json",
+                "use": "The parent prompt payload to mutate."
+            },
+            {
+                "path": "state/candidate_deltas.json",
+                "use": "Prompt diffs between candidates and parents."
+            },
+            {
+                "path": "state/rollouts.json",
+                "use": "Per-rollout rows. Sensor-backed rows include summaries, outcomes, expected, prediction, text, rationale, and trace refs."
+            },
+            {
+                "path": "state/reflective_frames.json",
+                "use": "Nested reflective evidence under .frames[] for deeper trace-level detail."
+            }
+        ],
+        "manifest_evidence_contract": [
+            "List the files actually reviewed.",
+            "Summarize parent/Pareto/recent candidate comparison.",
+            "Name failure patterns grounded in losing examples.",
+            "Name winning patterns grounded in successful examples.",
+            "Cite concrete example_id values used."
+        ],
+        "candidate_prompt_contract": [
+            "Read prompting_best_practices.md and classify each change as a premise, context, task_priority, core_task_description, heuristic, constraint, rule, input_description, or output_description.",
+            "Ground the prompt in the rollout evidence; pull in any task-specific factual knowledge you can extract from wins and losses.",
+            "Follow state/proposal_request.json.literal_example_policy. The valid use of concrete examples depends on the container-declared task/output space and the rollout traces.",
+            "Mix strategies across proposals: structural rewrites, examples where task-valid, role priming, output-disambiguation rules, terse contracts — don't paraphrase the seed.",
+            "Preserve any hard output contract (e.g. exact label format) declared in the program contract."
+        ]
+    })
+}
+
+fn proposer_example_compact(row: &Value) -> Value {
+    json!({
+        "candidate_id": row.get("candidate_id").cloned().unwrap_or(Value::Null),
+        "candidate_status": row.get("candidate_status").cloned().unwrap_or(Value::Null),
+        "is_parent": row.get("is_parent").cloned().unwrap_or(Value::Bool(false)),
+        "is_pareto_front": row.get("is_pareto_front").cloned().unwrap_or(Value::Bool(false)),
+        "evaluation_stage": row.get("evaluation_stage").cloned().unwrap_or(Value::Null),
+        "example_id": row.get("example_id").cloned().unwrap_or(Value::Null),
+        "seed": row.get("seed").cloned().unwrap_or(Value::Null),
+        "split": row.get("split").cloned().unwrap_or(Value::Null),
+        "reward": row.get("reward").cloned().unwrap_or(Value::Null),
+        "expected": row.get("expected").cloned().unwrap_or(Value::Null),
+        "prediction": row.get("prediction").cloned().unwrap_or(Value::Null),
+        "text": row.get("text").cloned().unwrap_or(Value::Null),
+        "policy_model": row.get("policy_model").cloned().unwrap_or(Value::Null),
+        "target_payload": row.get("target_payload").cloned().unwrap_or(Value::Null),
+        "artifact_refs": row.get("artifact_refs").cloned().unwrap_or(Value::Array(Vec::new())),
+        "trace_refs": row.get("trace_refs").cloned().unwrap_or(Value::Array(Vec::new())),
+    })
+}
+
+fn count_json_array(value: &Value) -> usize {
+    value.as_array().map(Vec::len).unwrap_or(0)
+}
+
+fn proposer_example_sort_key(row: &Value) -> (String, String, i64, String) {
+    (
+        string_path(row, &["candidate_id"]).unwrap_or_default(),
+        string_path(row, &["evaluation_stage"]).unwrap_or_default(),
+        row.get("seed").and_then(Value::as_i64).unwrap_or(0),
+        string_path(row, &["example_id"]).unwrap_or_default(),
+    )
+}
+
+fn proposer_summary_sort_key(row: &Value) -> (String, i64, String) {
+    (
+        string_path(row, &["evaluation_stage"]).unwrap_or_default(),
+        row.get("seed").and_then(Value::as_i64).unwrap_or(0),
+        string_path(row, &["example_id"]).unwrap_or_default(),
+    )
+}
+
+fn top_count_pairs(counts: BTreeMap<String, usize>, limit: usize) -> Value {
+    let mut items = counts.into_iter().collect::<Vec<_>>();
+    items.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    Value::Array(
+        items
+            .into_iter()
+            .take(limit)
+            .map(|(key, count)| json!({"key": key, "count": count}))
+            .collect(),
+    )
+}
+
+fn json_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    Some(current)
+}
+
+fn string_path(value: &Value, path: &[&str]) -> Option<String> {
+    json_path(value, path)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn task_info_value<'a>(input: &'a CodexProposerInput<'_>) -> Option<&'a Value> {
+    input.program.metadata.get("task_info")
+}
+
+fn metadata_string_at(input: &CodexProposerInput<'_>, paths: &[&[&str]]) -> Option<String> {
+    let metadata = Value::Object(input.program.metadata.clone());
+    for path in paths {
+        if let Some(value) = json_path(&metadata, path).and_then(Value::as_str) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn task_output_space_kind(input: &CodexProposerInput<'_>) -> Option<String> {
+    metadata_string_at(
+        input,
+        &[
+            &["task_info", "output_space", "kind"],
+            &["task_info", "task", "output_space", "kind"],
+            &["task_info", "metadata", "output_space", "kind"],
+            &["task_info", "metadata", "task_output_space"],
+            &["proposer_hints", "task_output_space"],
+            &["proposer_constraints", "task_output_space"],
+        ],
+    )
+}
+
+fn literal_training_target_policy(input: &CodexProposerInput<'_>) -> &'static str {
+    if let Some(policy) = metadata_string_at(
+        input,
+        &[
+            &["task_info", "proposer_hints", "literal_training_targets"],
+            &[
+                "task_info",
+                "metadata",
+                "proposer_hints",
+                "literal_training_targets",
+            ],
+            &["proposer_hints", "literal_training_targets"],
+            &["proposer_constraints", "literal_training_targets"],
+        ],
+    ) {
+        let policy = policy.to_ascii_lowercase();
+        if policy.contains("forbid") || policy.contains("disallow") || policy.contains("avoid") {
+            return "forbid";
+        }
+        if policy.contains("allow") {
+            return "allow";
+        }
+    }
+    if let Some(kind) = task_output_space_kind(input) {
+        let kind = kind.to_ascii_lowercase();
+        if kind.contains("finite")
+            || kind.contains("label")
+            || kind.contains("closed")
+            || kind.contains("intent")
+            || kind.contains("class")
+        {
+            return "allow";
+        }
+        if kind.contains("open")
+            || kind.contains("free")
+            || kind.contains("answer")
+            || kind.contains("extract")
+            || kind.contains("span")
+            || kind.contains("generat")
+        {
+            return "forbid";
+        }
+    }
+    if input.program.metadata.get("labels").is_some()
+        || input.program.metadata.get("label_guidance").is_some()
+    {
+        return "allow";
+    }
+    let primary_metric = metadata_string_at(
+        input,
+        &[
+            &["task_info", "metadata", "primary_metric"],
+            &["primary_metric"],
+        ],
+    )
+    .unwrap_or_default()
+    .to_ascii_lowercase();
+    let answer_contract = metadata_string_at(
+        input,
+        &[
+            &["task_info", "metadata", "answer_contract"],
+            &["answer_contract"],
+        ],
+    )
+    .unwrap_or_default()
+    .to_ascii_lowercase();
+    if primary_metric.contains("f1")
+        || primary_metric.contains("rouge")
+        || answer_contract.contains("answer")
+        || answer_contract.contains("span")
+    {
+        return "forbid";
+    }
+    "infer"
+}
+
+fn proposer_literal_policy_json(input: &CodexProposerInput<'_>) -> Value {
+    json!({
+        "source": "container /task_info, /program metadata, and rollout trace evidence",
+        "task_output_space_kind": task_output_space_kind(input),
+        "literal_training_targets": literal_training_target_policy(input),
+        "policy": [
+            "First infer the task and output space from state/program_contract.json.metadata.task_info, state/proposer_metadata.json, rollout traces, expected outputs, predictions, and objective rationales.",
+            "If the task has a finite closed output space, concrete boundary examples or compact output mappings can be valid when they teach the output contract.",
+            "If the task is not a finite closed-output mapping, convert trace evidence into general procedures and do not copy observed training targets into the prompt.",
+            "When task_info.proposer_hints is present, treat it as authoritative unless trace evidence contradicts it."
+        ],
+    })
+}
+
+fn proposer_policy_text(input: &CodexProposerInput<'_>) -> String {
+    let output_kind = task_output_space_kind(input).unwrap_or_else(|| "unspecified".to_string());
+    let literal_policy = literal_training_target_policy(input);
+    format!(
+        "Task policy: infer the task from container task_info, program metadata, rollout traces, expected outputs, predictions, and objective rationales before proposing. Output-space kind from the container is {output_kind:?}; literal-training-target policy is {literal_policy:?}. Finite closed-output tasks may use concrete boundary examples or output tables when they generalize. Non-closed-output tasks should turn traces into general procedures and avoid copying observed training targets into candidate prompts. Follow any task_info.proposer_hints fields."
+    )
+}
+
+fn answer_value_bucket(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return "empty answer".to_string();
+    }
+    if trimmed.eq_ignore_ascii_case("yes") || trimmed.eq_ignore_ascii_case("no") {
+        return "yes/no answer".to_string();
+    }
+    if trimmed.chars().any(|ch| ch.is_ascii_digit()) {
+        return "date/number answer".to_string();
+    }
+    let word_count = trimmed.split_whitespace().count();
+    if word_count >= 8 {
+        return "long clause answer".to_string();
+    }
+    if trimmed
+        .chars()
+        .next()
+        .map(|ch| ch.is_uppercase())
+        .unwrap_or(false)
+    {
+        return "proper-name/title answer".to_string();
+    }
+    if word_count <= 3 {
+        "short phrase/category answer".to_string()
+    } else {
+        "clause answer".to_string()
+    }
+}
+
+fn abstract_target_confusion_key(expected: &str, prediction: &str) -> String {
+    format!(
+        "{} expected -> {} prediction",
+        answer_value_bucket(expected),
+        answer_value_bucket(prediction)
+    )
+}
+
+fn literal_target_is_specific(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.len() < 4 || trimmed.len() > 96 {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    !matches!(
+        lower.as_str(),
+        "yes" | "no" | "unknown" | "none" | "true" | "false" | "n/a"
+    )
 }
 
 fn scores_read_model(input: &CodexProposerInput<'_>) -> Value {
@@ -1430,32 +2344,34 @@ fn legacy_frontier_read_model(input: &CodexProposerInput<'_>) -> Value {
 fn reflector_input_read_model(input: &CodexProposerInput<'_>) -> Value {
     let mut wins = Vec::new();
     let mut losses = Vec::new();
-    for frame in input
-        .candidates
-        .iter()
-        .flat_map(|candidate| candidate.sensor_frames.iter())
-    {
-        let row = json!({
-            "candidate_id": frame.candidate_id,
-            "evaluation_stage": frame.evaluation_stage,
-            "example_id": frame.example_id,
-            "reward": frame.reward,
-            "status": frame.status,
-            "failure": frame.failure,
-            "actionable_side_info": frame.actionable_side_info,
-        });
-        if frame.reward >= 1.0 {
-            wins.push(row);
+    let proposer_examples = proposer_examples_read_model(input);
+    let proposal_policy = proposer_policy_text(input);
+    for row in proposer_examples.as_array().into_iter().flatten() {
+        let sample = proposer_example_compact(row);
+        if row.get("reward").and_then(Value::as_f64).unwrap_or(0.0) >= 1.0 {
+            wins.push(sample);
         } else {
-            losses.push(row);
+            losses.push(sample);
         }
     }
     wins.truncate(20);
     losses.truncate(20);
     json!({
         "parent_candidate_id": input.parent.candidate_id,
+        "target_modules": input.config.candidate.target_modules,
+        "sample_winning_traces": wins,
+        "sample_losing_traces": losses,
         "wins": wins,
         "losses": losses,
+        "prompting_best_practices": PROMPTING_BEST_PRACTICES,
+        "instructions": [
+            "Read prompting_best_practices.md before diagnosing prompt changes.",
+            "Classify likely edits using the shared typology: premise, context, task_priority, core_task_description, heuristics, constraints, rules, input_description, output_description.",
+            "Use sampled wins and losses to drive substantive prompt changes — not paraphrases of the seed.",
+            "At most one proposal may be conservative. The others must be very ambitious task-specific changes that attack named top failure clusters and could substantially outperform the parent.",
+            proposal_policy,
+            "Across proposals, explore different strategies (structural rewrite, few-shot examples, role priming, label-disambiguation table, terse contract). Distinct proposals should be genuinely distinct."
+        ],
     })
 }
 
@@ -1525,11 +2441,24 @@ fn turn_start_params(input: &CodexProposerInput<'_>, model: &str, thread_id: &st
 }
 
 fn proposer_instructions(input: &CodexProposerInput<'_>) -> String {
+    let context = proposer_prompt_context(input);
+    let proposal_policy = proposer_policy_text(input);
+    let best_practices = PROMPTING_BEST_PRACTICES.trim();
     format!(
-        "Read README.md, proposal/PROPOSAL_SCHEMA.md, and all files under state/.\n\
+        "{context}\n\n\
+         Prompting best practices:\n\
+         {best_practices}\n\n\
+         Read README.md, prompting_best_practices.md, proposal/PROPOSAL_SCHEMA.md, and all files under state/.\n\
+         Start with state/proposer_metadata.json, state/proposer_failure_summary.json, state/proposer_repair_hints.json, and state/proposer_examples.json.\n\
          Use shell/Python/JQ tools to inspect candidates, Pareto data, and rollout failures before editing proposal/manifest.json.\n\
          Propose exactly {} prompt candidates for generation {}.\n\
          Use only these target modules: {}.\n\
+         Follow the Python GEPA workspace proposer style: diagnose the missing instruction type, reflect over wins and losses, then propose substantive prompt changes.\n\
+         {proposal_policy}\n\
+         At most one proposal may be conservative. The others must be very ambitious, task-specific updates that target named top failure clusters and are intended to substantially outperform the parent.\n\
+         Shoot for large task-performance wins, not mild prompt polish. A safe clarification is only acceptable as the single conservative control.\n\
+         Do not spend candidates on generic output-contract polish or parent paraphrases unless the dominant failures are output-format failures.\n\
+         Across the requested proposals, explore genuinely different strategies (structural rewrite, few-shot examples, terse contract, label-table, role priming) rather than paraphrasing the seed or each other.\n\
          Write strict JSON to proposal/manifest.json using schema_version gepa_workspace_proposal_v3.\n\
          Include the required evidence block with reviewed files, candidate comparison, failure patterns, winning patterns, and example ids.\n\
          Do not print pseudo-tool calls. Use real file inspection and file editing.",
@@ -1537,6 +2466,114 @@ fn proposer_instructions(input: &CodexProposerInput<'_>) -> String {
         input.generation,
         input.config.candidate.target_modules.join(", ")
     )
+}
+
+fn proposer_prompt_context(input: &CodexProposerInput<'_>) -> String {
+    let rollouts = rollouts_read_model(input);
+    let proposer_examples = proposer_examples_read_model(input);
+    let proposer_failure_summary = proposer_failure_summary_read_model(input, &proposer_examples);
+    let metadata = proposer_metadata_read_model(
+        input,
+        &rollouts,
+        &proposer_examples,
+        &proposer_failure_summary,
+    );
+    let proposer_model = metadata
+        .pointer("/proposer/model")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let policy_model = metadata
+        .pointer("/policy/model")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let frontier_size = metadata
+        .get("frontier_size")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let candidate_count = metadata
+        .get("candidate_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let rollout_count = metadata
+        .get("rollout_row_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let loss_count = metadata
+        .get("loss_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let win_count = metadata
+        .get("win_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let top_failures = prompt_top_failures(&metadata);
+    format!(
+        "GEPA proposer context\n\
+         run_id: {}\n\
+         generation: {}\n\
+         parent: {}\n\
+         policy_model: {}\n\
+         proposer_model: {}\n\
+         target_levers: {}\n\
+         mutable_levers: {}\n\
+         proposals_requested: {}\n\
+         minibatch_size: {}\n\
+         candidates_seen: {}\n\
+         frontier_size: {}\n\
+         rollout_rows: {}\n\
+         evidence: losses={} wins={}\n\
+         workspace: {}\n\
+         top_failures:\n\
+         {}\n\
+         read_first:\n\
+         1. prompting_best_practices.md\n\
+         2. state/proposer_metadata.json\n\
+         3. state/proposer_failure_summary.json\n\
+         4. state/proposer_repair_hints.json\n\
+         5. state/proposer_examples.json\n\
+         6. state/scores.json\n\
+         7. state/parent_payload.json\n\
+         8. state/candidate_deltas.json",
+        input.config.run.run_id,
+        input.generation,
+        input.parent.candidate_id,
+        policy_model,
+        proposer_model,
+        input.config.candidate.target_modules.join(", "),
+        input.program.mutable_field_ids().join(", "),
+        input.config.gepa.proposals_per_generation,
+        input.config.gepa.minibatch_size,
+        candidate_count,
+        frontier_size,
+        rollout_count,
+        loss_count,
+        win_count,
+        input.workspace_dir.display(),
+        top_failures
+    )
+}
+
+fn prompt_top_failures(metadata: &Value) -> String {
+    let items = metadata
+        .get("top_failures")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if items.is_empty() {
+        return "         - none observed yet".to_string();
+    }
+    items
+        .into_iter()
+        .take(3)
+        .map(|item| {
+            format!(
+                "         - {}: {}",
+                item.get("key").and_then(Value::as_str).unwrap_or("unknown"),
+                item.get("count").and_then(Value::as_u64).unwrap_or(0)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn sandbox_policy_for_mode(mode: &str) -> Value {
@@ -1558,6 +2595,7 @@ struct AppServerClient {
     receiver: Receiver<Result<Value>>,
     buffer: VecDeque<Value>,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    auth_home_to_cleanup: Option<PathBuf>,
     next_id: u64,
     sent_messages: Vec<Value>,
     received_messages: Vec<Value>,
@@ -1572,15 +2610,32 @@ impl AppServerClient {
         } else {
             input.config.proposer.command.clone()
         };
+        let auth_mode = input.config.proposer.auth_mode.trim();
         let mut env_map = env::vars().collect::<BTreeMap<_, _>>();
-        if let Some(api_key_env) = non_empty(input.config.proposer.api_key_env.as_deref()) {
-            if let Ok(api_key) = env::var(api_key_env) {
-                if !api_key.trim().is_empty() {
-                    env_map.insert("OPENAI_API_KEY".to_string(), api_key);
-                }
-            }
+        let mut auth_home_to_cleanup = None;
+        let proposer_api_key_env =
+            non_empty(input.config.proposer.api_key_env.as_deref()).unwrap_or("OPENAI_API_KEY");
+        let proposer_api_key = env::var(proposer_api_key_env)
+            .ok()
+            .filter(|api_key| !api_key.trim().is_empty());
+        if auth_mode == "api_key" && proposer_api_key.is_none() {
+            return Err(OptimizerError::Proposer(format!(
+                "proposer.auth_mode = \"api_key\" requires non-empty {proposer_api_key_env}"
+            )));
         }
-        if input.config.proposer.copy_host_auth {
+        if let Some(api_key) = proposer_api_key.as_deref() {
+            env_map.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+        }
+        if auth_mode == "api_key" {
+            let codex_home = workspace_dir.join(".codex_api_key_home");
+            prepare_api_key_codex_home(
+                &codex_home,
+                model,
+                proposer_api_key.as_deref().unwrap_or_default(),
+            )?;
+            env_map.insert("CODEX_HOME".to_string(), codex_home.display().to_string());
+            auth_home_to_cleanup = Some(codex_home);
+        } else if input.config.proposer.copy_host_auth {
             let codex_home = workspace_dir.join(".codex_home");
             copy_codex_home(&codex_home)?;
             env_map.insert("CODEX_HOME".to_string(), codex_home.display().to_string());
@@ -1618,6 +2673,7 @@ impl AppServerClient {
             receiver,
             buffer: VecDeque::new(),
             stderr_tail,
+            auth_home_to_cleanup,
             next_id: 1,
             sent_messages: Vec::new(),
             received_messages: Vec::new(),
@@ -1777,13 +2833,21 @@ impl AppServerClient {
             })?
             .is_some()
         {
+            self.cleanup_auth_home();
             return Ok(());
         }
         self.child.kill().map_err(|source| {
             OptimizerError::Proposer(format!("failed to stop codex app-server: {source}"))
         })?;
         let _ = self.child.wait();
+        self.cleanup_auth_home();
         Ok(())
+    }
+
+    fn cleanup_auth_home(&mut self) {
+        if let Some(path) = self.auth_home_to_cleanup.take() {
+            let _ = fs::remove_dir_all(path);
+        }
     }
 }
 
@@ -1900,7 +2964,51 @@ fn read_manifest(workspace_dir: &Path) -> Result<Value> {
             path.display()
         )));
     }
-    Ok(serde_json::from_str(&text)?)
+    match serde_json::from_str(&text) {
+        Ok(value) => Ok(value),
+        Err(original_error) => {
+            let repaired = join_adjacent_json_strings(&text);
+            if repaired == text {
+                return Err(original_error.into());
+            }
+            let value = serde_json::from_str(&repaired).map_err(|_| original_error)?;
+            write_text(&path, &repaired)?;
+            Ok(value)
+        }
+    }
+}
+
+fn join_adjacent_json_strings(input: &str) -> String {
+    let chars = input.chars().collect::<Vec<_>>();
+    let mut out = String::with_capacity(input.len());
+    let mut index = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    while index < chars.len() {
+        let ch = chars[index];
+        out.push(ch);
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+                let mut next = index + 1;
+                while next < chars.len() && chars[next].is_whitespace() {
+                    next += 1;
+                }
+                if next < chars.len() && chars[next] == '"' {
+                    out.pop();
+                    index = next;
+                }
+            }
+        } else if ch == '"' {
+            in_string = true;
+        }
+        index += 1;
+    }
+    out
 }
 
 fn proposals_from_manifest(manifest: &Value) -> Result<Value> {
@@ -1944,25 +3052,10 @@ fn validate_manifest_contract(manifest: &Value) -> Result<()> {
         .into_iter()
         .filter_map(|value| value.as_str().map(str::to_string))
         .collect::<BTreeSet<_>>();
-    let required = [
-        "state/run_context.json",
-        "state/program_contract.json",
-        "state/algorithm_read_model.json",
-        "state/candidates.json",
-        "state/candidate_deltas.json",
-        "state/rollouts.json",
-        "state/scores.json",
-        "state/evidence_frames.json",
-        "state/links.json",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect::<BTreeSet<_>>();
-    let missing = required.difference(&reviewed).cloned().collect::<Vec<_>>();
-    if !missing.is_empty() {
-        return Err(OptimizerError::Proposer(format!(
-            "codex app-server proposer evidence missing reviewed_files={missing:?}"
-        )));
+    if reviewed.is_empty() {
+        return Err(OptimizerError::Proposer(
+            "codex app-server proposer evidence reviewed_files is empty".to_string(),
+        ));
     }
     for field in [
         "candidate_comparison",
@@ -1991,6 +3084,136 @@ fn validate_manifest_contract(manifest: &Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn manifest_evidence_warnings(
+    input: &CodexProposerInput<'_>,
+    manifest: &Value,
+    proposals: &Value,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let evidence = manifest.get("evidence").and_then(Value::as_object);
+    let reviewed = evidence
+        .and_then(|evidence| evidence.get("reviewed_files"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|value| value.as_str().map(str::to_string))
+        .collect::<BTreeSet<_>>();
+    for required_file in [
+        "state/proposer_metadata.json",
+        "state/proposer_failure_summary.json",
+        "state/proposer_repair_hints.json",
+        "state/proposer_examples.json",
+        "state/scores.json",
+        "state/parent_payload.json",
+    ] {
+        if !reviewed.contains(required_file) {
+            warnings.push(format!(
+                "evidence reviewed_files did not include {required_file}"
+            ));
+        }
+    }
+
+    let cited_examples = evidence
+        .and_then(|evidence| evidence.get("example_ids_used"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|value| value.as_str().map(str::to_string))
+        .collect::<BTreeSet<_>>();
+    let proposer_examples = proposer_examples_read_model(input);
+    let mut losing_examples = BTreeSet::new();
+    let mut winning_examples = BTreeSet::new();
+    for row in proposer_examples.as_array().into_iter().flatten() {
+        let Some(example_id) = string_path(row, &["example_id"]) else {
+            continue;
+        };
+        let reward = row.get("reward").and_then(Value::as_f64).unwrap_or(0.0);
+        if reward >= 1.0 {
+            winning_examples.insert(example_id);
+        } else {
+            losing_examples.insert(example_id);
+        }
+    }
+    if !losing_examples.is_empty() && cited_examples.is_disjoint(&losing_examples) {
+        warnings
+            .push("evidence example_ids_used did not cite any losing rollout examples".to_string());
+    }
+    if !winning_examples.is_empty() && cited_examples.is_disjoint(&winning_examples) {
+        warnings.push(
+            "evidence example_ids_used did not cite any winning rollout examples".to_string(),
+        );
+    }
+
+    let failure_summary = proposer_failure_summary_read_model(input, &proposer_examples);
+    if let Some(dominant_failure_label) = dominant_failure_label(&failure_summary) {
+        let evidence_text = evidence
+            .map(|evidence| Value::Object(evidence.clone()).to_string())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let proposal_text = proposals.to_string().to_ascii_lowercase();
+        let needle = dominant_failure_label.to_ascii_lowercase();
+        if !evidence_text.contains(&needle) && !proposal_text.contains(&needle) {
+            warnings.push(format!(
+                "proposal did not mention dominant failure label {dominant_failure_label:?}"
+            ));
+        }
+    }
+    let proposal_text = proposals.to_string().to_ascii_lowercase();
+    for row in proposer_examples.as_array().into_iter().flatten() {
+        let Some(example_text) = string_path(row, &["text"]) else {
+            continue;
+        };
+        let normalized = example_text.trim().to_ascii_lowercase();
+        if normalized.len() >= 32 && proposal_text.contains(&normalized) {
+            let example_id = string_path(row, &["example_id"]).unwrap_or_default();
+            warnings.push(format!(
+                "proposal appears to quote training example text from {example_id}; GEPA candidates should generalize rather than memorize exact queries"
+            ));
+            break;
+        }
+    }
+    if literal_training_target_policy(input) == "forbid" {
+        for row in proposer_examples.as_array().into_iter().flatten() {
+            for field in ["expected", "prediction"] {
+                let Some(literal) = string_path(row, &[field]) else {
+                    continue;
+                };
+                let normalized = literal.trim().to_ascii_lowercase();
+                if literal_target_is_specific(&normalized) && proposal_text.contains(&normalized) {
+                    let example_id = string_path(row, &["example_id"]).unwrap_or_default();
+                    warnings.push(format!(
+                        "proposal appears to quote {field} target literal from {example_id} despite task policy forbidding literal training-target mappings"
+                    ));
+                    return warnings;
+                }
+            }
+        }
+    }
+    warnings
+}
+
+fn dominant_failure_label(failure_summary: &Value) -> Option<String> {
+    let key = failure_summary
+        .get("label_confusions")
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("key"))
+        .and_then(Value::as_str)?;
+    let label = key
+        .split(" -> ")
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if label.is_empty() || label == "unknown" {
+        None
+    } else {
+        Some(label)
+    }
 }
 
 fn extract_thread_id(message: &Value) -> Option<String> {
@@ -2060,6 +3283,45 @@ fn copy_codex_home(destination: &Path) -> Result<()> {
                 .map_err(|copy_error| OptimizerError::io(destination_file, copy_error))?;
         }
     }
+    Ok(())
+}
+
+fn prepare_api_key_codex_home(destination: &Path, model: &str, api_key: &str) -> Result<()> {
+    if destination.exists() {
+        fs::remove_dir_all(destination)
+            .map_err(|source| OptimizerError::io(destination, source))?;
+    }
+    fs::create_dir_all(destination).map_err(|source| OptimizerError::io(destination, source))?;
+    let config_path = destination.join("config.toml");
+    write_text(
+        &config_path,
+        &format!(
+            "model = {model:?}\n\
+             preferred_auth_method = \"apikey\"\n\
+             \n\
+             [features]\n\
+             apps = false\n\
+             browser_use = false\n\
+             browser_use_external = false\n\
+             computer_use = false\n\
+             image_generation = false\n\
+             in_app_browser = false\n\
+             multi_agent = false\n\
+             plugins = false\n\
+             skill_mcp_dependency_install = false\n\
+             tool_suggest = false\n\
+             workspace_dependencies = false\n"
+        ),
+    )?;
+    let auth_path = destination.join("auth.json");
+    let encoded_key = serde_json::to_string(api_key)?;
+    write_text(
+        &auth_path,
+        &format!("{{\"OPENAI_API_KEY\":{encoded_key}}}\n"),
+    )?;
+    #[cfg(unix)]
+    fs::set_permissions(&auth_path, fs::Permissions::from_mode(0o600))
+        .map_err(|source| OptimizerError::io(&auth_path, source))?;
     Ok(())
 }
 

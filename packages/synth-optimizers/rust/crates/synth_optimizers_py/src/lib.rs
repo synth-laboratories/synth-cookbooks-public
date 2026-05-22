@@ -36,6 +36,11 @@ create_exception!(
     SynthOptimizerError
 );
 create_exception!(synth_optimizers_py, OptimizerIoError, SynthOptimizerError);
+create_exception!(
+    synth_optimizers_py,
+    OptimizerDiskBudgetError,
+    SynthOptimizerError
+);
 create_exception!(synth_optimizers_py, OptimizerJsonError, SynthOptimizerError);
 create_exception!(
     synth_optimizers_py,
@@ -547,6 +552,12 @@ fn _synth_optimizers(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<(
         "OptimizerIoError",
         "synth_optimizer_io_error",
     )?;
+    add_exception_class::<OptimizerDiskBudgetError>(
+        py,
+        module,
+        "OptimizerDiskBudgetError",
+        "synth_optimizer_disk_budget_exceeded",
+    )?;
     add_exception_class::<OptimizerJsonError>(
         py,
         module,
@@ -637,6 +648,7 @@ fn py_error(error: OptimizerError) -> PyErr {
         OptimizerError::Invariant(_) => InvariantError::new_err(message),
         OptimizerError::StateTransition { .. } => StateTransitionError::new_err(message),
         OptimizerError::Io { .. } => OptimizerIoError::new_err(message),
+        OptimizerError::DiskBudgetExceeded { .. } => OptimizerDiskBudgetError::new_err(message),
         OptimizerError::Json(_) => OptimizerJsonError::new_err(message),
         OptimizerError::TomlDecode(_) => OptimizerTomlDecodeError::new_err(message),
         OptimizerError::Http(_) => OptimizerHttpError::new_err(message),

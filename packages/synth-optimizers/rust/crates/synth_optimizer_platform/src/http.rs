@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{env, time::Duration};
 
 use reqwest::blocking::Client;
 use serde::de::DeserializeOwned;
@@ -25,8 +25,13 @@ impl ContainerClient {
                 "container url is required".to_string(),
             ));
         }
+        let timeout_seconds = env::var("SYNTH_OPTIMIZERS_CONTAINER_HTTP_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(120);
         let client = Client::builder()
-            .timeout(Duration::from_secs(120))
+            .timeout(Duration::from_secs(timeout_seconds))
             .build()?;
         Ok(Self { base_url, client })
     }
@@ -53,6 +58,10 @@ impl ContainerClient {
 
     pub fn program_typed(&self) -> Result<PromptProgram> {
         self.get_typed("/program")
+    }
+
+    pub fn task_info(&self) -> Result<Value> {
+        self.get("/task_info")
     }
 
     pub fn dataset(&self) -> Result<Value> {

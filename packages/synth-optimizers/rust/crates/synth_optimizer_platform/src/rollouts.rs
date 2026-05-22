@@ -135,17 +135,22 @@ impl RolloutEventRecord {
             trace_ref: trace_ref.clone(),
             event: observed_payload,
         }];
+        let mut next_sequence = 2u64;
         if let Some(trace_payload) = frame.metadata.get("rollout_trace") {
             records.push(Self {
                 schema_version: "rollout_event_record.v1".to_string(),
                 rollout_event_id: stable_id(
                     "rolloutev",
-                    &[&rollout.rollout_record_id, "2", "trace"],
+                    &[
+                        &rollout.rollout_record_id,
+                        &next_sequence.to_string(),
+                        "trace",
+                    ],
                 ),
                 rollout_record_id: rollout.rollout_record_id.clone(),
                 candidate_id: frame.candidate_id.clone(),
                 sensor_frame_id: frame.sensor_frame_id.clone(),
-                sequence_number: 2,
+                sequence_number: next_sequence,
                 event_type: "trace".to_string(),
                 kind: "trace".to_string(),
                 summary: format!(
@@ -160,18 +165,127 @@ impl RolloutEventRecord {
                     "trace_ref": trace_ref,
                 }),
             });
+            next_sequence += 1;
+
+            for (index, event) in trace_payload
+                .get("event_history")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                let kind = event_kind(event, "trace_event");
+                let event_type = if kind.is_empty() {
+                    "trace_event".to_string()
+                } else {
+                    kind.clone()
+                };
+                records.push(Self {
+                    schema_version: "rollout_event_record.v1".to_string(),
+                    rollout_event_id: stable_id(
+                        "rolloutev",
+                        &[
+                            &rollout.rollout_record_id,
+                            &next_sequence.to_string(),
+                            "trace_event",
+                            &index.to_string(),
+                        ],
+                    ),
+                    rollout_record_id: rollout.rollout_record_id.clone(),
+                    candidate_id: frame.candidate_id.clone(),
+                    sensor_frame_id: frame.sensor_frame_id.clone(),
+                    sequence_number: next_sequence,
+                    event_type,
+                    kind: "trace_event".to_string(),
+                    summary: event_summary(event, "rollout trace event captured"),
+                    payload: json!({
+                        "index": index,
+                        "event": event,
+                    }),
+                    trace_ref: trace_ref.clone(),
+                    event: event.clone(),
+                });
+                next_sequence += 1;
+            }
+
+            for (index, tool_call) in trace_payload
+                .get("tool_calls")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                records.push(Self {
+                    schema_version: "rollout_event_record.v1".to_string(),
+                    rollout_event_id: stable_id(
+                        "rolloutev",
+                        &[
+                            &rollout.rollout_record_id,
+                            &next_sequence.to_string(),
+                            "tool_call",
+                            &index.to_string(),
+                        ],
+                    ),
+                    rollout_record_id: rollout.rollout_record_id.clone(),
+                    candidate_id: frame.candidate_id.clone(),
+                    sensor_frame_id: frame.sensor_frame_id.clone(),
+                    sequence_number: next_sequence,
+                    event_type: "tool_call".to_string(),
+                    kind: "tool_call".to_string(),
+                    summary: tool_call_summary(tool_call),
+                    payload: json!({
+                        "index": index,
+                        "tool_call": tool_call,
+                    }),
+                    trace_ref: trace_ref.clone(),
+                    event: tool_call.clone(),
+                });
+                next_sequence += 1;
+            }
+
+            if let Some(substitution_stats) = trace_payload.get("substitution_stats") {
+                records.push(Self {
+                    schema_version: "rollout_event_record.v1".to_string(),
+                    rollout_event_id: stable_id(
+                        "rolloutev",
+                        &[
+                            &rollout.rollout_record_id,
+                            &next_sequence.to_string(),
+                            "substitution_stats",
+                        ],
+                    ),
+                    rollout_record_id: rollout.rollout_record_id.clone(),
+                    candidate_id: frame.candidate_id.clone(),
+                    sensor_frame_id: frame.sensor_frame_id.clone(),
+                    sequence_number: next_sequence,
+                    event_type: "substitution_stats".to_string(),
+                    kind: "substitution_stats".to_string(),
+                    summary: "rollout substitution stats captured".to_string(),
+                    payload: substitution_stats.clone(),
+                    trace_ref: trace_ref.clone(),
+                    event: json!({
+                        "kind": "substitution_stats",
+                        "payload": substitution_stats,
+                    }),
+                });
+                next_sequence += 1;
+            }
         }
         if let Some(trace_digest) = &frame.trace_digest {
             records.push(Self {
                 schema_version: "rollout_event_record.v1".to_string(),
                 rollout_event_id: stable_id(
                     "rolloutev",
-                    &[&rollout.rollout_record_id, "3", "trace_digest_observed"],
+                    &[
+                        &rollout.rollout_record_id,
+                        &next_sequence.to_string(),
+                        "trace_digest_observed",
+                    ],
                 ),
                 rollout_record_id: rollout.rollout_record_id.clone(),
                 candidate_id: frame.candidate_id.clone(),
                 sensor_frame_id: frame.sensor_frame_id.clone(),
-                sequence_number: 3,
+                sequence_number: next_sequence,
                 event_type: "trace_digest_observed".to_string(),
                 kind: "trace_digest".to_string(),
                 summary: format!(
@@ -198,6 +312,52 @@ impl RolloutEventRecord {
             });
         }
         records
+    }
+}
+
+fn event_kind(event: &Value, default: &str) -> String {
+    event
+        .get("kind")
+        .or_else(|| event.get("type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default)
+        .to_string()
+}
+
+fn event_summary(event: &Value, default: &str) -> String {
+    event
+        .get("summary")
+        .or_else(|| event.get("message"))
+        .or_else(|| event.get("name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default)
+        .chars()
+        .take(240)
+        .collect()
+}
+
+fn tool_call_summary(tool_call: &Value) -> String {
+    let name = tool_call
+        .get("name")
+        .or_else(|| tool_call.get("tool_name"))
+        .or_else(|| tool_call.pointer("/function/name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("tool");
+    let call_id = tool_call
+        .get("id")
+        .or_else(|| tool_call.get("tool_call_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    match call_id {
+        Some(call_id) => format!("tool call {name} ({call_id}) captured"),
+        None => format!("tool call {name} captured"),
     }
 }
 

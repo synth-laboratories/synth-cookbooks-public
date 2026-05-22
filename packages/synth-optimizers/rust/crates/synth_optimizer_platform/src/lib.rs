@@ -6,6 +6,7 @@ pub mod config;
 pub mod configured_limits;
 pub mod container_contract;
 pub mod data_models;
+pub mod disk_budget;
 pub mod error;
 mod event_visualization;
 pub mod events;
@@ -43,10 +44,11 @@ pub use candidates::{
 };
 pub use checkpoints::{CheckpointInput, CheckpointRecord};
 pub use config::{
-    CacheConfig, CandidateConfig, ContainerConfig, DatasetConfig, GepaBatchSamplerConfig,
-    GepaCandidateSelectorConfig, GepaConfig, GepaObjectiveAcceptanceConfig, GepaPipelineConfig,
-    GepaPipelineMode, GepaPipelineWorkers, GepaSeedPoolsConfig, GepaStalenessPolicy, PolicyConfig,
-    ProposerConfig, RunConfig, SynthOptimizerConfig,
+    CacheConfig, CandidateConfig, ContainerConfig, DatasetConfig,
+    GepaAdaptiveRolloutConcurrencyConfig, GepaBatchSamplerConfig, GepaCandidateSelectorConfig,
+    GepaConfig, GepaObjectiveAcceptanceConfig, GepaPipelineConfig, GepaPipelineMode,
+    GepaPipelineWorkers, GepaSeedPoolsConfig, GepaStalenessPolicy, PolicyConfig, ProposerConfig,
+    RunConfig, SynthOptimizerConfig,
 };
 pub use configured_limits::{
     ConfiguredGepaRunLimits, GepaRuntimeEffectBudgetEstimates, GEPA_LIMIT_STOP_POLICY,
@@ -65,6 +67,7 @@ pub use data_models::{
     EVALUATION_CACHE_KEY_FIELDS_SCHEMA_VERSION, EVALUATION_CACHE_PROFILE,
     EVALUATION_CACHE_SCHEMA_VERSION, MATERIALIZATION_SCHEMA_VERSION,
 };
+pub use disk_budget::{directory_size_bytes, DiskBudget, DiskBudgetConfig, DiskBudgetState};
 pub use error::{OptimizerError, Result};
 pub use events::{
     compare_normalized_event_feeds, normalize_event_feed, replay_event_feed, EventStreamRecord,

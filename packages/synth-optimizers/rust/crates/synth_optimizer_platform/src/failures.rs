@@ -31,6 +31,7 @@ pub enum OptimizerFailureType {
     StateTransition,
     Invariant,
     Io,
+    DiskBudget,
     Json,
     Toml,
     Http,
@@ -66,6 +67,7 @@ impl OptimizerFailureType {
             Self::StateTransition => "state_transition",
             Self::Invariant => "invariant",
             Self::Io => "io",
+            Self::DiskBudget => "disk_budget",
             Self::Json => "json",
             Self::Toml => "toml",
             Self::Http => "http",
@@ -224,6 +226,25 @@ impl FailurePayload {
                 true,
             )
             .with_detail("path", json!(path.display().to_string())),
+            OptimizerError::DiskBudgetExceeded {
+                path,
+                used_bytes,
+                limit_bytes,
+                limit_kind,
+            } => Self::new(
+                OptimizerFailureType::DiskBudget,
+                "disk_budget_exceeded",
+                error.to_string(),
+                // Hard-limit failures are not retryable in-process — the
+                // operator must prune the runs dir or raise the limit
+                // before the next launch can succeed. Soft-limit hits
+                // are launch-only and equally non-retryable.
+                false,
+            )
+            .with_detail("path", json!(path.display().to_string()))
+            .with_detail("used_bytes", json!(used_bytes))
+            .with_detail("limit_bytes", json!(limit_bytes))
+            .with_detail("limit_kind", json!(limit_kind)),
             OptimizerError::Json(error) => Self::new(
                 OptimizerFailureType::Json,
                 "json_error",

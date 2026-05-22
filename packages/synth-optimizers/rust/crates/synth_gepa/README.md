@@ -42,8 +42,8 @@ except through `synth_optimizer_platform` traits and structs.
   budget, and config.
 - `ProposerResponse`: candidate proposals plus usage and raw trace.
 - `ProposedCandidate`: candidate payload and rationale.
-- `ProposerBackend`: `codex_app_server` or `deterministic_public`. Unknown
-  backends fail during config validation.
+- `ProposerBackend`: `codex_app_server`. Unknown backends, including the old
+  `local_process_json` fallback, fail during config validation.
 - `CodexAppServerWorkspace`: run-local files under artifacts that Codex reads
   and updates by writing `proposal/manifest.json`. The workspace contract uses
   `gepa_workspace_proposal_v3` plus `state/algorithm_read_model.json`,

@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -17,16 +18,17 @@ use synth_optimizer_platform::{
     CacheProfileRecord, CandidateOverlay, CheckpointInput, CheckpointRecord,
     ConfiguredGepaRunLimits, ContainerClient, ContainerContractSnapshotInput,
     ContainerContractSnapshotRecord, DatasetResponse, DatasetRowsRequest, DatasetRowsResponse,
-    DatasetSnapshotInput, DatasetSnapshotRecord, EvaluationCacheRecord, EvaluationCacheRecordInput,
-    EventWriter, EvidenceFrame, FailurePayload, GepaBatchSamplerConfig,
-    GepaCandidateSelectorConfig, GepaObjectiveAcceptanceConfig, GepaRunResult, LeverBundle,
-    LeverManifest, ManagedContainerProcess, MaterializationRecord, MaterializationRecordInput,
-    ObjectiveScore, ObjectiveSetRecord, ObjectiveSpec, OptimizerError, OptimizerJob,
-    OptimizerJobKind, OptimizerJobStatus, OptimizerRunState, OptimizerStateMachine,
-    OptimizerTransition, OptimizerTransitionTrigger, ParetoComparisonRecord, PlanLinkInput,
-    PlanLinkRecord, PromptCandidatePayload, PromptProgram, PromptProgramSnapshotInput,
-    PromptProgramSnapshotRecord, RequestCache, ResolvedRunConfigInput, ResolvedRunConfigRecord,
-    Result, RolloutMaterializationIdentity, RunRegistry, RunRegistryEntry, RuntimeEffectInput,
+    DatasetSnapshotInput, DatasetSnapshotRecord, DiskBudget, EvaluationCacheRecord,
+    EvaluationCacheRecordInput, EventStreamRecord, EventWriter, EvidenceFrame, FailurePayload,
+    GepaBatchSamplerConfig, GepaCandidateSelectorConfig, GepaObjectiveAcceptanceConfig,
+    GepaPipelineMode, GepaRunResult, LeverBundle, LeverKind, LeverManifest,
+    ManagedContainerProcess, MaterializationRecord, MaterializationRecordInput, ObjectiveScore,
+    ObjectiveSetRecord, ObjectiveSpec, OptimizerError, OptimizerJob, OptimizerJobKind,
+    OptimizerJobStatus, OptimizerRunState, OptimizerStateMachine, OptimizerTransition,
+    OptimizerTransitionTrigger, ParetoComparisonRecord, PlanLinkInput, PlanLinkRecord,
+    PromptCandidatePayload, PromptProgram, PromptProgramSnapshotInput, PromptProgramSnapshotRecord,
+    RequestCache, ResolvedRunConfigInput, ResolvedRunConfigRecord, Result, RetryPolicy,
+    RolloutMaterializationIdentity, RunRegistry, RunRegistryEntry, RuntimeEffectInput,
     RuntimeEffectRecord, ScoreVectorRecord, SensorFrame, SensorScoreRecords, StopperStateInput,
     StopperStateRecord, SynthOptimizerConfig, UsageLedgerInput, UsageLedgerRecord, WorkspaceStore,
 };
@@ -39,8 +41,9 @@ pub mod service;
 
 use pipeline::{GepaAsyncPipelinedPlan, GepaPipelineRuntimePlan};
 use planner::{
-    GepaAsyncCandidatePartial, GepaAsyncLaneLease, GepaAsyncLaneWorkItem, GepaCursor,
-    GepaCursorPhase, GEPA_CURSOR_CHECKPOINT_KIND,
+    GepaAdaptiveRolloutConcurrencyAdjustment, GepaAsyncCandidatePartial, GepaAsyncLaneLease,
+    GepaAsyncLaneWorkItem, GepaCursor, GepaCursorPhase, GepaRolloutChunkPartial,
+    GEPA_CURSOR_CHECKPOINT_KIND,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -81,12 +84,16 @@ pub struct ProposerOutcome {
     pub cost_usd: f64,
     pub backend: String,
     pub workspace: Option<String>,
+    #[serde(default)]
+    pub evidence_warnings: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ProposedCandidate {
     #[serde(default)]
     pub payload: BTreeMap<String, String>,
+    #[serde(default)]
+    pub lever_bundle: Option<LeverBundle>,
     #[serde(default)]
     pub proposal_type: String,
     #[serde(default)]
@@ -105,6 +112,12 @@ impl ProposedCandidate {
     fn payload_map(&self) -> BTreeMap<String, String> {
         if !self.payload.is_empty() {
             return self.payload.clone();
+        }
+        if let Some(bundle) = &self.lever_bundle {
+            let payload = bundle.to_prompt_payload();
+            if !payload.is_empty() {
+                return payload;
+            }
         }
         self.extra
             .iter()
@@ -131,6 +144,9 @@ impl ProposedCandidate {
             "parent_candidate_ids".to_string(),
             json!(self.parent_candidate_ids),
         );
+        if let Some(bundle) = &self.lever_bundle {
+            metadata.insert("lever_bundle".to_string(), json!(bundle));
+        }
         metadata.insert("rationale".to_string(), json!(self.rationale));
         if !self.evidence.is_null() {
             metadata.insert("evidence".to_string(), self.evidence.clone());
@@ -197,6 +213,7 @@ struct ProposerCall<'a> {
 struct EvaluationCall<'a> {
     client: &'a ContainerClient,
     workspace: &'a WorkspaceStore,
+    paths: &'a ArtifactPaths,
     cache: &'a mut RequestCache,
     cache_namespace: &'a str,
     config: &'a SynthOptimizerConfig,
@@ -363,6 +380,8 @@ pub enum GepaAdvanceMode {
     RunLoop,
     ServiceTick,
 }
+
+const ASYNC_PIPELINE_NOOP_SLEEP: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug)]
 pub struct GepaAdvanceOutcome {
@@ -618,6 +637,144 @@ impl UsageTotals {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct RuntimeUsageSummary {
+    policy: RuntimeUsageBucket,
+    proposer: RuntimeUsageBucket,
+    candidates: BTreeMap<String, RuntimeUsageBucket>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct RuntimeUsageBucket {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+    calls: u64,
+    jobs: u64,
+    cost_usd: f64,
+    wall_seconds: f64,
+}
+
+impl RuntimeUsageBucket {
+    fn add_usage_totals(&mut self, usage: &UsageTotals) {
+        self.prompt_tokens += usage.prompt_tokens;
+        self.completion_tokens += usage.completion_tokens;
+        self.total_tokens += usage.total_tokens;
+    }
+
+    fn add_record(&mut self, fields: &Value) {
+        if self.model.is_none() {
+            self.model = fields
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+        let usage = fields.get("usage").unwrap_or(&Value::Null);
+        self.prompt_tokens += usage
+            .get("prompt_tokens")
+            .or_else(|| usage.get("input_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        self.completion_tokens += usage
+            .get("completion_tokens")
+            .or_else(|| usage.get("output_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        self.total_tokens += usage
+            .get("total_tokens")
+            .and_then(Value::as_u64)
+            .or_else(|| fields.get("total_tokens").and_then(Value::as_u64))
+            .unwrap_or(0);
+        self.cost_usd += fields
+            .get("cost_usd")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        self.wall_seconds += fields
+            .get("wall_seconds")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        self.jobs = self.jobs.saturating_add(1);
+    }
+
+    fn add_rollout_record(&mut self, fields: &Value) {
+        self.add_record(fields);
+        self.calls = self.calls.saturating_add(
+            fields
+                .get("rollout_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(1),
+        );
+    }
+
+    fn add_proposer_record(&mut self, fields: &Value) {
+        self.add_record(fields);
+        self.calls = self.calls.saturating_add(1);
+    }
+
+    fn merge_candidate_record(&mut self, fields: &Value) {
+        if self.model.is_none() {
+            self.model = fields
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+        self.prompt_tokens += field_u64(fields, "prompt_tokens");
+        self.completion_tokens += field_u64(fields, "completion_tokens");
+        self.total_tokens += field_u64(fields, "total_tokens");
+        self.calls = self.calls.saturating_add(field_u64(fields, "calls"));
+        self.jobs = self.jobs.saturating_add(field_u64(fields, "jobs"));
+        self.cost_usd += fields
+            .get("cost_usd")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        self.wall_seconds += fields
+            .get("wall_seconds")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+    }
+}
+
+fn runtime_usage_summary_from_events(records: &[EventStreamRecord]) -> RuntimeUsageSummary {
+    let mut summary = RuntimeUsageSummary::default();
+    for record in records {
+        if record.event_type != "runtime.job.completed" {
+            continue;
+        }
+        match record
+            .fields
+            .get("runtime_kind")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+        {
+            "proposer" => summary.proposer.add_proposer_record(&record.fields),
+            "rollout" | "rollout_batch" => {
+                summary.policy.add_rollout_record(&record.fields);
+                if let Some(candidate_usage) = record
+                    .fields
+                    .get("candidate_usage")
+                    .and_then(Value::as_object)
+                {
+                    for (candidate_id, fields) in candidate_usage {
+                        summary
+                            .candidates
+                            .entry(candidate_id.clone())
+                            .or_default()
+                            .merge_candidate_record(fields);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    summary
+}
+
+fn field_u64(value: &Value, key: &str) -> u64 {
+    value.get(key).and_then(Value::as_u64).unwrap_or(0)
+}
+
 pub fn execute_gepa_from_toml(path: impl AsRef<Path>) -> Result<GepaRunResult> {
     let config = SynthOptimizerConfig::from_toml_file(path)?;
     execute_gepa(config)
@@ -639,6 +796,13 @@ fn open_gepa_run_context(
     config: SynthOptimizerConfig,
     options: &GepaExecutionOptions,
 ) -> Result<GepaRunContext> {
+    // Soft-limit gate: refuse the new run if `output_dir` already holds
+    // more bytes than the configured soft floor. Fires before any
+    // workspace, paths, or registry write so the launcher exits cleanly
+    // with `synth_optimizer_disk_budget_exceeded` instead of partial-
+    // initializing an unusable run.
+    let disk_budget = DiskBudget::new(config.disk_budget.clone(), &config.run.output_dir)?;
+    disk_budget.require_below_soft()?;
     let paths = ArtifactPaths::new(&config.run.output_dir, &config.run.run_id);
     paths.create()?;
     let cache_path = config
@@ -665,11 +829,17 @@ fn open_gepa_run_context(
         cache_mode,
         &cache_namespace,
     ))?;
+    // Hard-limit gate: every emit checks the budget and refuses the
+    // write when usage is at or above the hard floor, so the jsonl
+    // never partial-appends under ENOSPC pressure. `with_disk_budget`
+    // is a no-op when the budget itself is disabled, so we always
+    // attach.
     let mut events = if options.cancellation.is_some() || is_resumed_run {
         EventWriter::append(&paths.event_feed_path)?
     } else {
         EventWriter::new(&paths.event_feed_path)?
-    };
+    }
+    .with_disk_budget(disk_budget.clone());
     let mut state_machine = OptimizerStateMachine::new(config.run.run_id.clone());
     transition_run(
         &workspace,
@@ -751,7 +921,31 @@ fn ensure_container_inputs(context: &mut GepaRunContext) -> Result<GepaContainer
             Ok(serde_json::to_value(program)?)
         },
     )?;
-    let program = PromptProgram::from_value(program_value)?;
+    let mut program = PromptProgram::from_value(program_value)?;
+    match cached_call(
+        &mut context.cache,
+        &format!("{}:container.task_info", context.cache_namespace),
+        &json!({"url": container_url, "route": "/task_info"}),
+        || client.task_info(),
+    ) {
+        Ok(task_info) => {
+            program
+                .metadata
+                .insert("task_info".to_string(), task_info.clone());
+            context.events.emit(
+                "container.task_info.loaded",
+                "Container task info loaded",
+                task_info,
+            )?;
+        }
+        Err(error) => {
+            context.events.emit(
+                "container.task_info.missing",
+                "Container task info route was unavailable; proposer will infer task from program and rollouts",
+                json!({"error": error.to_string()}),
+            )?;
+        }
+    }
     program.validate_for_gepa(
         &context.config.candidate.target_modules,
         &context.config.seed_candidate,
@@ -1327,7 +1521,7 @@ fn advance_gepa_sync_serial_once(
     }
     let resources = ensure_step_resources(context, state)?;
     if let Some(job_id) = state.cursor.pending_job_id.clone() {
-        return advance_pending_runtime_job(context, state, &resources, mode, &job_id);
+        return advance_pending_runtime_job(context, state, &resources, mode, &job_id, None);
     }
     match state.cursor.phase {
         GepaCursorPhase::Initializing => advance_initializing(context, state, &resources),
@@ -1400,32 +1594,73 @@ fn advance_gepa_async_pipelined_once(
         return terminalize_aborted_gepa_run(context, state, error, "GEPA run cancelled");
     }
 
+    if let Some(outcome) = terminalize_restored_unclaimable_async_job(context, state, mode)? {
+        return Ok(outcome);
+    }
+
     let resources = ensure_step_resources(context, state)?;
+    ensure_adaptive_rollout_concurrency_state(state, plan);
 
     // Old Phase-1 async cursors used the serial pending-job slot. Finish that
     // in-place before switching the cursor over to lane leases.
     if let Some(job_id) = state.cursor.pending_job_id.clone() {
-        let mut outcome = advance_pending_runtime_job(context, state, &resources, mode, &job_id)?;
+        let mut outcome =
+            advance_pending_runtime_job(context, state, &resources, mode, &job_id, Some(plan))?;
         outcome.message = format!("async-pipelined legacy lane: {}", outcome.message);
         return Ok(outcome);
     }
 
-    // The seed candidate is a hard dependency for parent selection. Keep it on
-    // the known-good serial path, then hand candidate generation to the durable
-    // lane scheduler.
-    if matches!(
-        state.cursor.phase,
-        GepaCursorPhase::Initializing | GepaCursorPhase::SeedFullTrain
-    ) {
+    if matches!(state.cursor.phase, GepaCursorPhase::Initializing) {
         let mut outcome = advance_gepa_sync_serial_once(context, state, mode, options)?;
         outcome.message = format!("async-pipelined seed: {}", outcome.message);
+        return Ok(outcome);
+    }
+
+    if matches!(state.cursor.phase, GepaCursorPhase::SeedFullTrain)
+        && state.active_evaluation.is_none()
+        && !state
+            .cursor
+            .pipeline_state
+            .candidate_partials
+            .contains_key("async:seed_full_train:generation_000")
+    {
+        let outcome = plan_async_seed_full_train(context, state, &resources, plan)?;
         return Ok(outcome);
     }
 
     if let Some(outcome) = consume_async_lane_work(context, state, &resources, plan)? {
         return Ok(outcome);
     }
-    if let Some(outcome) = schedule_async_lane_transition(context, state, &resources, mode, plan)? {
+    if let Some(mut outcome) =
+        schedule_async_lane_transition(context, state, &resources, mode, plan)?
+    {
+        let mut planned_count = 1usize;
+        while matches!(
+            outcome.action,
+            planner::GepaTickAction::PlanRuntimeJob { .. }
+        ) {
+            let before_rollout_leases = async_lane_lease_count(state, "rollout");
+            if before_rollout_leases >= adaptive_rollout_worker_limit(state, plan) {
+                break;
+            }
+            let Some(next_outcome) = schedule_async_rollout_job(context, state, &resources, plan)?
+            else {
+                break;
+            };
+            if !matches!(
+                next_outcome.action,
+                planner::GepaTickAction::PlanRuntimeJob { .. }
+            ) {
+                break;
+            }
+            planned_count += 1;
+            outcome = next_outcome;
+        }
+        if planned_count > 1 {
+            outcome.message = format!(
+                "async-pipelined: planned {planned_count} rollout jobs to fill lane capacity"
+            );
+        }
         return Ok(outcome);
     }
     if async_pipeline_has_no_lane_work(state)
@@ -1445,21 +1680,67 @@ fn advance_gepa_async_pipelined_once(
     }
 
     refresh_async_pipeline_cursor_state(context, state, plan);
-    persist_gepa_run_state(
-        context,
-        state,
-        &resources,
-        state.cursor.phase.clone(),
-        "waiting",
-        "async pipeline waiting for lane capacity or completions",
-        Map::new(),
-    )?;
     Ok(GepaAdvanceOutcome {
         action: planner::GepaTickAction::Noop,
         terminal: false,
         result: None,
         message: "async-pipelined: waiting for lane capacity or completions".to_string(),
     })
+}
+
+fn terminalize_restored_unclaimable_async_job(
+    context: &mut GepaRunContext,
+    state: &mut GepaRunState,
+    mode: GepaAdvanceMode,
+) -> Result<Option<GepaAdvanceOutcome>> {
+    if !matches!(mode, GepaAdvanceMode::RunLoop) {
+        return Ok(None);
+    }
+    let mut leases = state
+        .cursor
+        .pipeline_state
+        .lane_leases
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    leases.sort_by(|left, right| left.lease_id.cmp(&right.lease_id));
+    for lease in leases {
+        let Some(job_id) = lease.job_id.as_deref() else {
+            continue;
+        };
+        let job = context
+            .workspace
+            .optimizer_job(&context.config.run.run_id, job_id)?;
+        if !matches!(
+            job.status,
+            OptimizerJobStatus::Leased
+                | OptimizerJobStatus::Running
+                | OptimizerJobStatus::Annotating
+                | OptimizerJobStatus::Verifying
+        ) {
+            continue;
+        }
+        state.cursor.pipeline_state.lane_leases.clear();
+        state.cursor.pipeline_state.propose_queue.clear();
+        state.cursor.pipeline_state.rollout_queue.clear();
+        state.cursor.pipeline_state.evaluate_queue.clear();
+        state.cursor.pipeline_state.candidate_partials.clear();
+        let error = OptimizerError::Invariant(format!(
+            "restored async lane job {} is already {}; direct GEPA run-loop cannot complete a runtime job left running by a previous process (worker={:?}, lease_expires_at={:?})",
+            job.job_id,
+            job.status.as_str(),
+            job.worker_id,
+            job.lease_expires_at,
+        ));
+        return terminalize_aborted_gepa_run(
+            context,
+            state,
+            error,
+            "GEPA async runtime job was left running by a previous process",
+        )
+        .map(Some);
+    }
+    Ok(None)
 }
 
 fn plan_metadata(plan: &GepaAsyncPipelinedPlan) -> Value {
@@ -1482,16 +1763,7 @@ fn refresh_async_pipeline_cursor_state(
                 )
         })
         .count() as u64;
-    let in_flight_candidate_count = state
-        .candidates
-        .iter()
-        .filter(|candidate| {
-            matches!(
-                candidate.status.as_str(),
-                "registered" | "minibatch_evaluated" | "full_train_evaluated"
-            ) && candidate.heldout_reward.is_none()
-        })
-        .count();
+    let in_flight_candidate_count = async_pipeline_in_flight_candidate_count(state);
     state.cursor.pipeline_state.pool_version = pool_version;
     state.cursor.pipeline_state.in_flight_candidate_count = in_flight_candidate_count;
     state.cursor.pipeline_state.pending_job_ids = state
@@ -1512,6 +1784,8 @@ fn refresh_async_pipeline_cursor_state(
         "phase": state.cursor.phase.as_str(),
         "phase_terminal": state.cursor.phase.is_terminal(),
         "stopper_satisfied": async_pipeline_stopper_satisfied(context, state),
+        "rollout_chunks_folded": async_rollout_chunks_folded(state),
+        "retry_scheduled": async_pipeline_retry_scheduled(state),
         "pending_jobs_empty": state.cursor.pipeline_state.pending_job_ids.is_empty(),
         "pending_effects_empty": state.cursor.pipeline_state.pending_effect_ids.is_empty(),
         "leases_empty": state.cursor.pipeline_state.lane_leases.is_empty(),
@@ -1521,7 +1795,56 @@ fn refresh_async_pipeline_cursor_state(
         "proposal_queue_empty": state.proposal_queue.is_empty(),
         "active_evaluation_empty": state.active_evaluation.is_none(),
         "max_in_flight_candidates": plan.max_in_flight_candidates,
+        "adaptive_rollout_concurrency": adaptive_rollout_snapshot(state, plan),
     });
+}
+
+fn async_pipeline_in_flight_candidate_count(state: &GepaRunState) -> usize {
+    let mut candidate_ids = BTreeSet::new();
+    for partial in state.cursor.pipeline_state.candidate_partials.values() {
+        candidate_ids.extend(partial.candidate_ids.iter().cloned());
+    }
+    for item in state
+        .cursor
+        .pipeline_state
+        .rollout_queue
+        .iter()
+        .chain(state.cursor.pipeline_state.evaluate_queue.iter())
+    {
+        candidate_ids.extend(item.candidate_ids.iter().cloned());
+    }
+    for lease in state.cursor.pipeline_state.lane_leases.values() {
+        if let Some(ids) = lease
+            .metadata
+            .get("candidate_ids")
+            .and_then(Value::as_array)
+        {
+            candidate_ids.extend(ids.iter().filter_map(Value::as_str).map(str::to_string));
+        }
+    }
+    candidate_ids.len()
+}
+
+fn async_stage_work_pending(state: &GepaRunState, stages: &[&str]) -> bool {
+    state
+        .cursor
+        .pipeline_state
+        .candidate_partials
+        .values()
+        .any(|partial| stages.contains(&partial.stage.as_str()))
+        || state
+            .cursor
+            .pipeline_state
+            .rollout_queue
+            .iter()
+            .chain(state.cursor.pipeline_state.evaluate_queue.iter())
+            .any(|item| stages.contains(&item.stage.as_str()))
+        || state
+            .cursor
+            .pipeline_state
+            .lane_leases
+            .values()
+            .any(|lease| stages.contains(&lease.stage.as_str()))
 }
 
 fn consume_async_lane_work(
@@ -1589,19 +1912,88 @@ fn consume_async_lane_work(
                             .partial_id
                             .clone()
                             .unwrap_or_else(|| async_partial_id(&active.stage, active.generation));
-                        upsert_async_partial_from_active(
-                            state,
-                            &partial_id,
-                            "evaluate",
-                            lease.parent_pool_version,
+                        let chunk_id = lease
+                            .metadata
+                            .get("chunk_id")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                        let chunk_rows = lease
+                            .metadata
+                            .get("chunk_rows")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0);
+                        if let Some(chunk_id) =
+                            lease.metadata.get("chunk_id").and_then(Value::as_str)
+                        {
+                            if let Some(partial) = state
+                                .cursor
+                                .pipeline_state
+                                .candidate_partials
+                                .get_mut(&partial_id)
+                            {
+                                if let Some(chunk) = partial.rollout_chunks.get_mut(chunk_id) {
+                                    chunk.status = "folded".to_string();
+                                    chunk.folded = true;
+                                }
+                            }
+                        }
+                        let wall_seconds = lease
+                            .effect_id
+                            .as_ref()
+                            .and_then(|effect_id| {
+                                context
+                                    .workspace
+                                    .runtime_effect(&context.config.run.run_id, effect_id)
+                                    .ok()
+                            })
+                            .and_then(|effect| {
+                                effect.metadata.get("wall_seconds").and_then(Value::as_f64)
+                            })
+                            .unwrap_or(0.0);
+                        context.events.emit(
+                            "rollout.chunk.finished",
+                            "Rollout chunk finished",
+                            json!({
+                                "chunk_id": chunk_id,
+                                "job_id": job_id,
+                                "stage": active.stage,
+                                "rows": chunk_rows,
+                                "completed_rows": active_rollout_completed_rows(&active),
+                                "total_rows": active_rollout_total_rows(&active),
+                                "active_rollout_workers": async_lane_lease_count(state, "rollout").saturating_sub(1),
+                                "wall_seconds": wall_seconds,
+                                "rows_per_second": if wall_seconds > 0.0 { chunk_rows as f64 / wall_seconds } else { 0.0 },
+                            }),
                         )?;
-                        let item = async_work_item_from_active(
-                            &active,
-                            "evaluate",
-                            lease.parent_pool_version,
-                            Some(partial_id),
-                        )?;
-                        state.cursor.pipeline_state.evaluate_queue.push(item);
+                        if active_rollout_evaluation_complete(&active) {
+                            upsert_async_partial_from_active(
+                                state,
+                                &partial_id,
+                                "evaluate",
+                                lease.parent_pool_version,
+                            )?;
+                            let item = async_work_item_from_active(
+                                &active,
+                                "evaluate",
+                                lease.parent_pool_version,
+                                Some(partial_id),
+                            )?;
+                            state.cursor.pipeline_state.evaluate_queue.push(item);
+                        } else {
+                            upsert_async_partial_from_active(
+                                state,
+                                &partial_id,
+                                "rollout",
+                                lease.parent_pool_version,
+                            )?;
+                            let item = async_work_item_from_active(
+                                &active,
+                                "rollout",
+                                lease.parent_pool_version,
+                                Some(partial_id),
+                            )?;
+                            state.cursor.pipeline_state.rollout_queue.push(item);
+                        }
                     }
                     state.active_evaluation = None;
                 } else if let Some(partial_id) = lease.partial_id.as_ref() {
@@ -1681,6 +2073,9 @@ fn schedule_async_lane_transition(
     if let Some(outcome) = schedule_async_rollout_job(context, state, resources, plan)? {
         return Ok(Some(outcome));
     }
+    if async_stage_work_pending(state, &["seed_full_train"]) {
+        return Ok(None);
+    }
     if let Some(outcome) = schedule_async_candidate_minibatches(context, state, resources, plan)? {
         return Ok(Some(outcome));
     }
@@ -1688,6 +2083,88 @@ fn schedule_async_lane_transition(
         return Ok(Some(outcome));
     }
     Ok(None)
+}
+
+fn plan_async_seed_full_train(
+    context: &mut GepaRunContext,
+    state: &mut GepaRunState,
+    resources: &GepaStepResources,
+    plan: &GepaAsyncPipelinedPlan,
+) -> Result<GepaAdvanceOutcome> {
+    if state
+        .candidates
+        .first()
+        .and_then(|candidate| candidate.train_reward)
+        .is_some()
+    {
+        state.best_idx = Some(0);
+        let mut outcome =
+            move_to_generation_start(context, state, resources, "seed already evaluated")?;
+        outcome.message = format!("async-pipelined seed: {}", outcome.message);
+        return Ok(outcome);
+    }
+    let capacity =
+        remaining_train_rollout_capacity(&context.workspace, &context.config, state.rollout_count)?;
+    if capacity < resources.train_rows.len() {
+        return Err(rollout_budget_exceeded_error(
+            &context.config.run.run_id,
+            rollout_budget_limit_name(&context.config),
+            resources.train_rows.len(),
+            capacity,
+        ));
+    }
+    if let Some(breach) = next_rollout_budget_breach(&context.workspace, &context.config)? {
+        return Err(budget_exceeded_error(&context.config.run.run_id, &breach));
+    }
+    transition_to_rollout_running(
+        context,
+        "Seed candidate rollouts started",
+        json!({
+            "candidate_id": state.candidates[0].candidate_id,
+            "stage": "seed_full_train",
+            "row_count": resources.train_rows.len(),
+            "rollout_count": resources.train_rows.len(),
+        }),
+    )?;
+    state.active_evaluation = Some(new_rollout_evaluation(
+        "seed_full_train",
+        0,
+        &resources.train_rows,
+        state.cursor.generation,
+        state.cursor.proposal_index,
+        None,
+    )?);
+    let partial_id = async_partial_id("seed_full_train", state.cursor.generation);
+    upsert_async_partial_from_active(state, &partial_id, "rollout", 0)?;
+    let item = async_work_item_from_active(
+        &state.active_evaluation.clone().ok_or_else(|| {
+            OptimizerError::Invariant("seed active evaluation disappeared".to_string())
+        })?,
+        "rollout",
+        0,
+        Some(partial_id),
+    )?;
+    state.cursor.pipeline_state.rollout_queue.push(item);
+    state.active_evaluation = None;
+    refresh_async_pipeline_cursor_state(context, state, plan);
+    persist_gepa_run_state(
+        context,
+        state,
+        resources,
+        GepaCursorPhase::SeedFullTrain,
+        "planned",
+        "queued async seed full-train rollout work",
+        Map::new(),
+    )?;
+    Ok(GepaAdvanceOutcome {
+        action: planner::GepaTickAction::CheckpointRun {
+            run_id: context.config.run.run_id.clone(),
+            phase: "seed_full_train".to_string(),
+        },
+        terminal: false,
+        result: None,
+        message: "async-pipelined seed: queued seed full-train rollout work".to_string(),
+    })
 }
 
 fn execute_async_leased_runtime_job(
@@ -1718,11 +2195,19 @@ fn execute_async_leased_runtime_job(
         ) {
             continue;
         }
+        if matches!(job.status, OptimizerJobStatus::RetryScheduled)
+            && !context
+                .workspace
+                .optimizer_job_claimable(&context.config.run.run_id, &job_id)?
+        {
+            continue;
+        }
         restore_async_partial_as_active(state, lease.partial_id.as_deref())?;
         state.cursor.pending_job_id = Some(job_id.clone());
         state.cursor.pending_effect_id = lease.effect_id.clone();
         state.cursor.pending_reservation_ids = lease.reservation_ids.clone();
-        let mut outcome = advance_pending_runtime_job(context, state, resources, mode, &job_id)?;
+        let mut outcome =
+            advance_pending_runtime_job(context, state, resources, mode, &job_id, Some(plan))?;
         if let Some(active) = state.active_evaluation.as_ref() {
             let partial_id = lease
                 .partial_id
@@ -1769,14 +2254,36 @@ fn schedule_async_rollout_job(
     resources: &GepaStepResources,
     plan: &GepaAsyncPipelinedPlan,
 ) -> Result<Option<GepaAdvanceOutcome>> {
-    if async_lane_lease_count(state, "rollout") >= plan.rollout_workers {
+    if async_lane_lease_count(state, "rollout") >= adaptive_rollout_worker_limit(state, plan) {
         return Ok(None);
     }
-    let Some(item) = state.cursor.pipeline_state.rollout_queue.first().cloned() else {
-        return Ok(None);
+    let item = loop {
+        let Some(item) = state.cursor.pipeline_state.rollout_queue.first().cloned() else {
+            return Ok(None);
+        };
+        state.cursor.pipeline_state.rollout_queue.remove(0);
+        restore_async_partial_as_active(state, item.partial_id.as_deref())?;
+        if state.active_evaluation.is_some() {
+            break item;
+        }
+        if let Some(partial_id) = item.partial_id.as_ref() {
+            state
+                .cursor
+                .pipeline_state
+                .candidate_partials
+                .remove(partial_id);
+        }
+        context.events.emit(
+            "rollout.stale_skipped",
+            "Stale rollout work skipped",
+            json!({
+                "item_id": item.item_id,
+                "partial_id": item.partial_id,
+                "stage": item.stage,
+                "generation": item.generation,
+            }),
+        )?;
     };
-    state.cursor.pipeline_state.rollout_queue.remove(0);
-    restore_async_partial_as_active(state, item.partial_id.as_deref())?;
     let active = state.active_evaluation.as_ref().ok_or_else(|| {
         OptimizerError::Invariant("async rollout work item has no active partial".to_string())
     })?;
@@ -1805,6 +2312,18 @@ fn schedule_async_rollout_job(
         .clone()
         .unwrap_or_else(|| async_partial_id(&active.stage, active.generation));
     upsert_async_partial_from_active(state, &partial_id, "rollout", item.parent_pool_version)?;
+    let chunk_rows = rows_for_active_rollout_chunk(&context.config, resources, &active)?;
+    let pending_effect_id = state.cursor.pending_effect_id.clone();
+    let pending_reservation_ids = state.cursor.pending_reservation_ids.clone();
+    let chunk_id = record_async_rollout_chunk(
+        state,
+        &partial_id,
+        &active,
+        &chunk_rows,
+        &job_id,
+        pending_effect_id,
+        pending_reservation_ids,
+    )?;
     let lease = GepaAsyncLaneLease {
         lease_id: async_lease_id("rollout", &job_id),
         lane: "rollout".to_string(),
@@ -1816,17 +2335,38 @@ fn schedule_async_rollout_job(
         effect_id: state.cursor.pending_effect_id.clone(),
         reservation_ids: state.cursor.pending_reservation_ids.clone(),
         status: "pending".to_string(),
-        metadata: json!({"candidate_ids": candidate_ids_for_active(&active)}),
+        metadata: json!({
+            "candidate_ids": candidate_ids_for_active(&active),
+            "chunk_id": chunk_id.clone(),
+            "chunk_rows": chunk_rows.len(),
+            "proposal_index": active.proposal_index,
+        }),
     };
     state
         .cursor
         .pipeline_state
         .lane_leases
-        .insert(job_id, lease);
+        .insert(job_id.clone(), lease);
     state.cursor.pending_job_id = None;
     state.cursor.pending_effect_id = None;
     state.cursor.pending_reservation_ids.clear();
     state.active_evaluation = None;
+    context.events.emit(
+        "rollout.chunk.started",
+        "Rollout chunk started",
+        json!({
+            "chunk_id": chunk_id,
+            "job_id": job_id,
+            "stage": active.stage,
+            "rows": chunk_rows.len(),
+            "completed_rows": active_rollout_completed_rows(&active),
+            "total_rows": active_rollout_total_rows(&active),
+            "active_rollout_workers": async_lane_lease_count(state, "rollout"),
+            "configured_rollout_workers": adaptive_rollout_worker_limit(state, plan),
+            "static_rollout_workers": plan.rollout_workers,
+            "adaptive_rollout_concurrency": adaptive_rollout_snapshot(state, plan),
+        }),
+    )?;
     refresh_async_pipeline_cursor_state(context, state, plan);
     persist_gepa_run_state(
         context,
@@ -1850,6 +2390,12 @@ fn schedule_async_candidate_minibatches(
     if state.proposal_queue.is_empty()
         || state.cursor.pipeline_state.in_flight_candidate_count >= plan.max_in_flight_candidates
     {
+        return Ok(None);
+    }
+    if async_stage_work_pending(
+        state,
+        &["parent_minibatch_reference", "candidate_minibatch"],
+    ) {
         return Ok(None);
     }
     state.cursor.phase = GepaCursorPhase::ProposerWaiting;
@@ -1903,7 +2449,7 @@ fn schedule_async_proposer_job(
         || !state.proposal_queue.is_empty()
         || state.cursor.generation >= context.config.gepa.max_generations
         || state.cursor.pipeline_state.in_flight_candidate_count >= plan.max_in_flight_candidates
-        || state.rollout_count >= context.config.gepa.max_total_rollouts
+        || train_rollout_budget_reached(&context.config, state.rollout_count)
         || cost_budget_reached(&context.config, state.total_cost)
     {
         return Ok(None);
@@ -1935,11 +2481,14 @@ fn schedule_async_proposer_job(
                 "parent index {parent_idx} is outside candidate registry"
             ))
         })?;
-    let proposer_started_details = json!({
-        "generation": state.cursor.generation,
-        "parent_candidate_id": parent_id.clone(),
-        "parent_selection": parent_selection.metadata.clone(),
-    });
+    let proposer_started_details = proposer_started_details(
+        &context.config,
+        &state.candidates,
+        state.cursor.generation,
+        &parent_id,
+        parent_selection.metadata.clone(),
+        &context.paths.run_dir,
+    );
     if context.state_machine.state() == OptimizerRunState::Ready {
         transition_run(
             &context.workspace,
@@ -2094,6 +2643,13 @@ fn upsert_async_partial_from_active(
             "cannot persist async partial without active evaluation".to_string(),
         )
     })?;
+    let rollout_chunks = state
+        .cursor
+        .pipeline_state
+        .candidate_partials
+        .get(partial_id)
+        .map(|partial| partial.rollout_chunks.clone())
+        .unwrap_or_default();
     state.cursor.pipeline_state.candidate_partials.insert(
         partial_id.to_string(),
         GepaAsyncCandidatePartial {
@@ -2106,6 +2662,7 @@ fn upsert_async_partial_from_active(
             candidate_ids: candidate_ids_for_active(active),
             active_evaluation: Some(serde_json::to_value(active)?),
             proposal_queue: Value::Null,
+            rollout_chunks,
             metadata: json!({
                 "proposal_index": active.proposal_index,
                 "is_group": active.is_group(),
@@ -2205,6 +2762,200 @@ fn async_lane_lease_count(state: &GepaRunState, lane: &str) -> usize {
         .count()
 }
 
+fn ensure_adaptive_rollout_concurrency_state(
+    state: &mut GepaRunState,
+    plan: &GepaAsyncPipelinedPlan,
+) {
+    let adaptive = &plan.adaptive_rollout_concurrency;
+    let fallback = plan.rollout_workers.max(1);
+    if !adaptive.enabled {
+        state
+            .cursor
+            .pipeline_state
+            .adaptive_rollout_concurrency
+            .current_limit = fallback;
+        return;
+    }
+    let adaptive_state = &mut state.cursor.pipeline_state.adaptive_rollout_concurrency;
+    if !adaptive_state.initialized {
+        adaptive_state.initialized = true;
+        adaptive_state.current_limit = adaptive.initial.clamp(adaptive.min, adaptive.max);
+        adaptive_state.successes_since_adjustment = 0;
+    }
+}
+
+fn adaptive_rollout_worker_limit(state: &GepaRunState, plan: &GepaAsyncPipelinedPlan) -> usize {
+    if !plan.adaptive_rollout_concurrency.enabled {
+        return plan.rollout_workers.max(1);
+    }
+    state
+        .cursor
+        .pipeline_state
+        .adaptive_rollout_concurrency
+        .current_limit
+        .clamp(
+            plan.adaptive_rollout_concurrency.min,
+            plan.adaptive_rollout_concurrency.max,
+        )
+        .max(1)
+}
+
+fn adaptive_rollout_snapshot(state: &GepaRunState, plan: &GepaAsyncPipelinedPlan) -> Value {
+    let adaptive = &plan.adaptive_rollout_concurrency;
+    let adaptive_state = &state.cursor.pipeline_state.adaptive_rollout_concurrency;
+    json!({
+        "enabled": adaptive.enabled,
+        "current_limit": adaptive_rollout_worker_limit(state, plan),
+        "initial": adaptive.initial,
+        "min": adaptive.min,
+        "max": adaptive.max,
+        "increase_step": adaptive.increase_step,
+        "decrease_step": adaptive.decrease_step,
+        "increase_after_successes": adaptive.increase_after_successes,
+        "successes_since_adjustment": adaptive_state.successes_since_adjustment,
+        "completed_rollouts": adaptive_state.completed_rollouts,
+        "overload_count": adaptive_state.overload_count,
+        "last_adjustment": adaptive_state.last_adjustment,
+    })
+}
+
+fn runtime_rollout_success_count(outcome: &runtime::RuntimeEffectOutcome) -> usize {
+    match outcome {
+        runtime::RuntimeEffectOutcome::Rollout(_) => 1,
+        runtime::RuntimeEffectOutcome::RolloutBatch(outcomes) => outcomes.len(),
+        runtime::RuntimeEffectOutcome::Proposer(_) => 0,
+    }
+}
+
+fn record_adaptive_rollout_success(
+    context: &mut GepaRunContext,
+    state: &mut GepaRunState,
+    plan: &GepaAsyncPipelinedPlan,
+    rollout_count: usize,
+) -> Result<()> {
+    if rollout_count == 0 || !plan.adaptive_rollout_concurrency.enabled {
+        return Ok(());
+    }
+    ensure_adaptive_rollout_concurrency_state(state, plan);
+    let adaptive = &plan.adaptive_rollout_concurrency;
+    let adaptive_state = &mut state.cursor.pipeline_state.adaptive_rollout_concurrency;
+    adaptive_state.completed_rollouts = adaptive_state
+        .completed_rollouts
+        .saturating_add(rollout_count);
+    adaptive_state.successes_since_adjustment = adaptive_state
+        .successes_since_adjustment
+        .saturating_add(rollout_count);
+    if adaptive_state.successes_since_adjustment < adaptive.increase_after_successes {
+        return Ok(());
+    }
+    let old_limit = adaptive_state.current_limit;
+    let new_limit = old_limit
+        .saturating_add(adaptive.increase_step)
+        .clamp(adaptive.min, adaptive.max);
+    adaptive_state.successes_since_adjustment = 0;
+    if new_limit == old_limit {
+        return Ok(());
+    }
+    adaptive_state.current_limit = new_limit;
+    let adjustment = GepaAdaptiveRolloutConcurrencyAdjustment {
+        direction: "up".to_string(),
+        old_limit,
+        new_limit,
+        reason: format!(
+            "healthy_after_{}_rollout_successes",
+            adaptive.increase_after_successes
+        ),
+        completed_rollouts: adaptive_state.completed_rollouts,
+    };
+    adaptive_state.last_adjustment = Some(adjustment.clone());
+    adaptive_state.adjustments.push(adjustment.clone());
+    if adaptive_state.adjustments.len() > 32 {
+        adaptive_state.adjustments.remove(0);
+    }
+    context.events.emit(
+        "rollout.concurrency.adjusted",
+        "Adaptive rollout concurrency adjusted",
+        json!({
+            "direction": adjustment.direction,
+            "old_limit": adjustment.old_limit,
+            "new_limit": adjustment.new_limit,
+            "reason": adjustment.reason,
+            "completed_rollouts": adjustment.completed_rollouts,
+        }),
+    )?;
+    Ok(())
+}
+
+fn adaptive_error_is_overload(error_text: &str, plan: &GepaAsyncPipelinedPlan) -> bool {
+    let lowered = error_text.to_ascii_lowercase();
+    plan.adaptive_rollout_concurrency
+        .overload_status_codes
+        .iter()
+        .any(|status| lowered.contains(&status.to_string()))
+        || [
+            "rate limit",
+            "rate_limit",
+            "overload",
+            "overloaded",
+            "too many requests",
+            "temporarily unavailable",
+            "gateway timeout",
+            "timed out",
+            "timeout",
+        ]
+        .iter()
+        .any(|needle| lowered.contains(needle))
+}
+
+fn record_adaptive_rollout_overload(
+    context: &mut GepaRunContext,
+    state: &mut GepaRunState,
+    plan: &GepaAsyncPipelinedPlan,
+    error_text: &str,
+) -> Result<()> {
+    if !plan.adaptive_rollout_concurrency.enabled || !adaptive_error_is_overload(error_text, plan) {
+        return Ok(());
+    }
+    ensure_adaptive_rollout_concurrency_state(state, plan);
+    let adaptive = &plan.adaptive_rollout_concurrency;
+    let adaptive_state = &mut state.cursor.pipeline_state.adaptive_rollout_concurrency;
+    adaptive_state.overload_count = adaptive_state.overload_count.saturating_add(1);
+    adaptive_state.successes_since_adjustment = 0;
+    let old_limit = adaptive_state.current_limit;
+    let new_limit = old_limit
+        .saturating_sub(adaptive.decrease_step)
+        .clamp(adaptive.min, adaptive.max);
+    if new_limit == old_limit {
+        return Ok(());
+    }
+    adaptive_state.current_limit = new_limit;
+    let adjustment = GepaAdaptiveRolloutConcurrencyAdjustment {
+        direction: "down".to_string(),
+        old_limit,
+        new_limit,
+        reason: "provider_overload_or_timeout".to_string(),
+        completed_rollouts: adaptive_state.completed_rollouts,
+    };
+    adaptive_state.last_adjustment = Some(adjustment.clone());
+    adaptive_state.adjustments.push(adjustment.clone());
+    if adaptive_state.adjustments.len() > 32 {
+        adaptive_state.adjustments.remove(0);
+    }
+    context.events.emit(
+        "rollout.concurrency.adjusted",
+        "Adaptive rollout concurrency adjusted",
+        json!({
+            "direction": adjustment.direction,
+            "old_limit": adjustment.old_limit,
+            "new_limit": adjustment.new_limit,
+            "reason": adjustment.reason,
+            "completed_rollouts": adjustment.completed_rollouts,
+            "error": error_text.chars().take(240).collect::<String>(),
+        }),
+    )?;
+    Ok(())
+}
+
 fn async_pipeline_idle(state: &GepaRunState) -> bool {
     async_pipeline_has_no_lane_work(state)
         && state.proposal_queue.is_empty()
@@ -2218,14 +2969,226 @@ fn async_pipeline_has_no_lane_work(state: &GepaRunState) -> bool {
         && state.cursor.pipeline_state.evaluate_queue.is_empty()
 }
 
+fn async_rollout_chunks_folded(state: &GepaRunState) -> bool {
+    state
+        .cursor
+        .pipeline_state
+        .candidate_partials
+        .values()
+        .flat_map(|partial| partial.rollout_chunks.values())
+        .all(|chunk| chunk.folded || chunk.status == "folded")
+}
+
+fn async_pipeline_retry_scheduled(state: &GepaRunState) -> bool {
+    state
+        .cursor
+        .pipeline_state
+        .lane_leases
+        .values()
+        .any(|lease| lease.status == OptimizerJobStatus::RetryScheduled.as_str())
+}
+
 fn async_pipeline_stopper_satisfied(context: &GepaRunContext, state: &GepaRunState) -> bool {
     state.cursor.generation >= context.config.gepa.max_generations
-        || state.rollout_count >= context.config.gepa.max_total_rollouts
+        || train_rollout_budget_reached(&context.config, state.rollout_count)
         || cost_budget_reached(&context.config, state.total_cost)
 }
 
 fn async_partial_id(stage: &str, generation: usize) -> String {
     format!("async:{stage}:generation_{generation:03}")
+}
+
+fn async_rollout_chunk_size(config: &SynthOptimizerConfig) -> usize {
+    config
+        .gepa
+        .rollout_chunk_size
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| {
+            if config.gepa.pipeline.adaptive_rollout_concurrency.enabled {
+                config
+                    .gepa
+                    .pipeline
+                    .adaptive_rollout_concurrency
+                    .initial
+                    .clamp(1, 128)
+            } else {
+                config.gepa.pipeline.workers.rollout.clamp(1, 128)
+            }
+        })
+        .max(1)
+}
+
+fn rollout_rows_for_chunk<'a>(config: &SynthOptimizerConfig, rows: &'a [Value]) -> &'a [Value] {
+    if matches!(config.gepa.pipeline.mode, GepaPipelineMode::AsyncPipelined) {
+        let chunk_size = async_rollout_chunk_size(config).min(rows.len()).max(1);
+        &rows[..chunk_size]
+    } else {
+        rows
+    }
+}
+
+fn take_count_for_group_rollout_chunk(
+    config: &SynthOptimizerConfig,
+    remaining_len: usize,
+    remaining_budget: &mut Option<usize>,
+) -> usize {
+    if !matches!(config.gepa.pipeline.mode, GepaPipelineMode::AsyncPipelined) {
+        return remaining_len;
+    }
+    let Some(budget) = remaining_budget.as_mut() else {
+        return remaining_len;
+    };
+    let count = remaining_len.min(*budget);
+    *budget = budget.saturating_sub(count);
+    count
+}
+
+fn rows_for_active_rollout_chunk(
+    config: &SynthOptimizerConfig,
+    resources: &GepaStepResources,
+    active: &GepaActiveEvaluation,
+) -> Result<Vec<Value>> {
+    if active.is_group() {
+        let mut rows = Vec::new();
+        let mut remaining_budget = Some(async_rollout_chunk_size(config));
+        for candidate_eval in &active.candidate_evaluations {
+            let stage_rows = rows_for_rollout_stage(
+                config,
+                resources,
+                &active.stage,
+                candidate_eval.generation,
+                candidate_eval.proposal_index,
+            );
+            let remaining = stage_rows
+                .get(candidate_eval.next_row_index..)
+                .ok_or_else(|| {
+                    OptimizerError::Invariant(format!(
+                        "active evaluation stage {} row index {} is outside {} rows",
+                        active.stage,
+                        candidate_eval.next_row_index,
+                        stage_rows.len()
+                    ))
+                })?;
+            let take_count =
+                take_count_for_group_rollout_chunk(config, remaining.len(), &mut remaining_budget);
+            if take_count == 0 {
+                break;
+            }
+            rows.extend(remaining[..take_count].iter().cloned());
+        }
+        return Ok(rows);
+    }
+    let rows = rows_for_rollout_stage(
+        config,
+        resources,
+        &active.stage,
+        active.generation,
+        active.proposal_index,
+    );
+    let remaining = rows.get(active.next_row_index..).ok_or_else(|| {
+        OptimizerError::Invariant(format!(
+            "active evaluation stage {} row index {} is outside {} rows",
+            active.stage,
+            active.next_row_index,
+            rows.len()
+        ))
+    })?;
+    Ok(rollout_rows_for_chunk(config, remaining).to_vec())
+}
+
+fn row_ids_for_chunk(rows: &[Value]) -> Result<Vec<String>> {
+    rows.iter().map(row_example_id).collect()
+}
+
+fn async_rollout_chunk_id(active: &GepaActiveEvaluation, rows: &[Value]) -> Result<String> {
+    let first_row_index = if active.is_group() {
+        active
+            .candidate_evaluations
+            .iter()
+            .map(|candidate| candidate.next_row_index)
+            .min()
+            .unwrap_or(active.next_row_index)
+    } else {
+        active.next_row_index
+    };
+    let row_ids = row_ids_for_chunk(rows)?;
+    let candidate_ids = candidate_ids_for_active(active);
+    Ok(stable_gepa_id(
+        "gepa_chunk",
+        &[
+            &active.stage,
+            &active.generation.to_string(),
+            &active.proposal_index.to_string(),
+            &first_row_index.to_string(),
+            &candidate_ids.join(","),
+            &row_ids.join(","),
+        ],
+    ))
+}
+
+fn stable_gepa_id(prefix: &str, parts: &[&str]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(prefix.as_bytes());
+    for part in parts {
+        digest.update(b"\0");
+        digest.update(part.as_bytes());
+    }
+    let hex = format!("{:x}", digest.finalize());
+    format!("{prefix}_{}", &hex[..16])
+}
+
+fn record_async_rollout_chunk(
+    state: &mut GepaRunState,
+    partial_id: &str,
+    active: &GepaActiveEvaluation,
+    rows: &[Value],
+    job_id: &str,
+    effect_id: Option<String>,
+    reservation_ids: Vec<String>,
+) -> Result<String> {
+    let chunk_id = async_rollout_chunk_id(active, rows)?;
+    let first_row_index = if active.is_group() {
+        active
+            .candidate_evaluations
+            .iter()
+            .map(|candidate| candidate.next_row_index)
+            .min()
+            .unwrap_or(active.next_row_index)
+    } else {
+        active.next_row_index
+    };
+    let partial = state
+        .cursor
+        .pipeline_state
+        .candidate_partials
+        .get_mut(partial_id)
+        .ok_or_else(|| {
+            OptimizerError::Invariant(format!(
+                "async rollout partial {partial_id} missing while recording chunk"
+            ))
+        })?;
+    partial.rollout_chunks.insert(
+        chunk_id.clone(),
+        GepaRolloutChunkPartial {
+            chunk_id: chunk_id.clone(),
+            stage: active.stage.clone(),
+            generation: active.generation,
+            candidate_ids: candidate_ids_for_active(active),
+            row_ids: row_ids_for_chunk(rows)?,
+            first_row_index,
+            row_count: rows.len(),
+            job_id: Some(job_id.to_string()),
+            effect_id,
+            reservation_ids,
+            status: "leased".to_string(),
+            folded: false,
+            attempt: 0,
+            metadata: json!({
+                "chunk_size": rows.len(),
+            }),
+        },
+    );
+    Ok(chunk_id)
 }
 
 fn async_lease_id(lane: &str, job_id: &str) -> String {
@@ -2238,6 +3201,7 @@ fn advance_pending_runtime_job(
     resources: &GepaStepResources,
     _mode: GepaAdvanceMode,
     job_id: &str,
+    async_plan: Option<&GepaAsyncPipelinedPlan>,
 ) -> Result<GepaAdvanceOutcome> {
     let job = context
         .workspace
@@ -2256,10 +3220,40 @@ fn advance_pending_runtime_job(
             ) {
                 Ok(outcome) => outcome,
                 Err(error) => {
+                    if let Some(plan) = async_plan {
+                        if job.payload.get("lane").and_then(Value::as_str) == Some("rollout") {
+                            record_adaptive_rollout_overload(
+                                context,
+                                state,
+                                plan,
+                                &error.to_string(),
+                            )?;
+                        }
+                    }
                     if let Ok(updated_job) = context
                         .workspace
                         .optimizer_job(&context.config.run.run_id, job_id)
                     {
+                        if matches!(updated_job.status, OptimizerJobStatus::RetryScheduled) {
+                            persist_gepa_run_state(
+                                context,
+                                state,
+                                resources,
+                                state.cursor.phase.clone(),
+                                "retry_scheduled",
+                                "scheduled GEPA runtime job retry",
+                                Map::new(),
+                            )?;
+                            return Ok(GepaAdvanceOutcome {
+                                action: planner::GepaTickAction::Noop,
+                                terminal: false,
+                                result: None,
+                                message: format!(
+                                    "scheduled GEPA runtime job retry: {}",
+                                    updated_job.job_id
+                                ),
+                            });
+                        }
                         if updated_job.status.is_terminal() {
                             return consume_failed_runtime_job(
                                 context,
@@ -2279,6 +3273,10 @@ fn advance_pending_runtime_job(
             };
             let wall_seconds = runtime_started.elapsed().as_secs_f64();
             emit_runtime_job_completed_event(context, state, job_id, &job, &outcome, wall_seconds)?;
+            if let Some(plan) = async_plan {
+                let rollout_count = runtime_rollout_success_count(&outcome);
+                record_adaptive_rollout_success(context, state, plan, rollout_count)?;
+            }
             let stored = stored_runtime_outcome(&outcome)?;
             let mut updated_job = context
                 .workspace
@@ -2394,9 +3392,40 @@ fn emit_runtime_job_completed_event(
     if let Some(lane) = job.payload.get("lane").and_then(Value::as_str) {
         fields.insert("lane".to_string(), json!(lane));
     }
+    let adaptive = &context.config.gepa.pipeline.adaptive_rollout_concurrency;
+    let adaptive_state = &state.cursor.pipeline_state.adaptive_rollout_concurrency;
+    let configured_rollout_workers = if adaptive.enabled {
+        adaptive_state
+            .current_limit
+            .clamp(adaptive.min, adaptive.max)
+            .max(1)
+    } else {
+        context.config.gepa.pipeline.workers.rollout.max(1)
+    };
     fields.insert(
         "configured_rollout_workers".to_string(),
+        json!(configured_rollout_workers),
+    );
+    fields.insert(
+        "static_rollout_workers".to_string(),
         json!(context.config.gepa.pipeline.workers.rollout),
+    );
+    fields.insert(
+        "adaptive_rollout_concurrency".to_string(),
+        json!({
+            "enabled": adaptive.enabled,
+            "current_limit": configured_rollout_workers,
+            "initial": adaptive.initial,
+            "min": adaptive.min,
+            "max": adaptive.max,
+            "increase_step": adaptive.increase_step,
+            "decrease_step": adaptive.decrease_step,
+            "increase_after_successes": adaptive.increase_after_successes,
+            "successes_since_adjustment": adaptive_state.successes_since_adjustment,
+            "completed_rollouts": adaptive_state.completed_rollouts,
+            "overload_count": adaptive_state.overload_count,
+            "last_adjustment": adaptive_state.last_adjustment,
+        }),
     );
     fields.insert(
         "rollout_submission_mode".to_string(),
@@ -2412,6 +3441,7 @@ fn emit_runtime_job_completed_event(
     match outcome {
         runtime::RuntimeEffectOutcome::Proposer(outcome) => {
             fields.insert("runtime_kind".to_string(), json!("proposer"));
+            fields.insert("model".to_string(), json!(context.config.proposer.model));
             fields.insert("proposal_count".to_string(), json!(outcome.proposals.len()));
             fields.insert("backend".to_string(), json!(&outcome.backend));
             fields.insert("cache_hit".to_string(), json!(outcome.cache_hit));
@@ -2423,7 +3453,19 @@ fn emit_runtime_job_completed_event(
             );
         }
         runtime::RuntimeEffectOutcome::Rollout(outcome) => {
+            let mut candidate_usage = BTreeMap::<String, RuntimeUsageBucket>::new();
+            let mut bucket = RuntimeUsageBucket {
+                model: Some(context.config.policy.model.clone()),
+                ..Default::default()
+            };
+            bucket.add_usage_totals(&outcome.usage);
+            bucket.calls = 1;
+            bucket.jobs = 1;
+            bucket.cost_usd = outcome.cost_usd;
+            bucket.wall_seconds = outcome.dispatch_wall_seconds.unwrap_or(wall_seconds);
+            candidate_usage.insert(outcome.candidate_id.clone(), bucket);
             fields.insert("runtime_kind".to_string(), json!("rollout"));
+            fields.insert("model".to_string(), json!(&context.config.policy.model));
             fields.insert("stage".to_string(), json!(&outcome.stage));
             fields.insert("candidate_id".to_string(), json!(&outcome.candidate_id));
             fields.insert("example_id".to_string(), json!(&outcome.example_id));
@@ -2446,6 +3488,10 @@ fn emit_runtime_job_completed_event(
                 "total_tokens".to_string(),
                 json!(outcome.usage.total_tokens),
             );
+            fields.insert(
+                "candidate_usage".to_string(),
+                serde_json::to_value(candidate_usage)?,
+            );
             if let Some(dispatch_wall_seconds) = outcome.dispatch_wall_seconds {
                 fields.insert(
                     "uncached_dispatch_wall_seconds".to_string(),
@@ -2463,6 +3509,7 @@ fn emit_runtime_job_completed_event(
             let mut cost_usd = 0.0;
             let mut cache_hits = 0usize;
             let mut candidate_ids = BTreeSet::new();
+            let mut candidate_usage = BTreeMap::<String, RuntimeUsageBucket>::new();
             let mut stages = BTreeMap::<String, usize>::new();
             let mut dispatch_latencies = Vec::new();
             let mut max_chunk_index = None::<usize>;
@@ -2476,6 +3523,16 @@ fn emit_runtime_job_completed_event(
                     dispatch_latencies.push(dispatch_wall_seconds);
                 }
                 candidate_ids.insert(outcome.candidate_id.clone());
+                let bucket = candidate_usage
+                    .entry(outcome.candidate_id.clone())
+                    .or_default();
+                if bucket.model.is_none() {
+                    bucket.model = Some(context.config.policy.model.clone());
+                }
+                bucket.add_usage_totals(&outcome.usage);
+                bucket.calls = bucket.calls.saturating_add(1);
+                bucket.cost_usd += outcome.cost_usd;
+                bucket.wall_seconds += outcome.dispatch_wall_seconds.unwrap_or(0.0);
                 *stages.entry(outcome.stage.clone()).or_insert(0) += 1;
                 if let Some(chunk_index) = outcome.dispatch_chunk_index {
                     max_chunk_index =
@@ -2485,11 +3542,15 @@ fn emit_runtime_job_completed_event(
                     max_chunk_size = max_chunk_size.max(chunk_size);
                 }
             }
+            for bucket in candidate_usage.values_mut() {
+                bucket.jobs = bucket.jobs.saturating_add(1);
+            }
             let rollout_count = outcomes.len();
             dispatch_latencies.sort_by(|left, right| {
                 left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal)
             });
             fields.insert("runtime_kind".to_string(), json!("rollout_batch"));
+            fields.insert("model".to_string(), json!(&context.config.policy.model));
             fields.insert("rollout_count".to_string(), json!(rollout_count));
             fields.insert("candidate_count".to_string(), json!(candidate_ids.len()));
             fields.insert("candidate_ids".to_string(), json!(candidate_ids));
@@ -2513,6 +3574,10 @@ fn emit_runtime_job_completed_event(
             fields.insert("cost_usd".to_string(), json!(cost_usd));
             fields.insert("usage".to_string(), serde_json::to_value(&usage)?);
             fields.insert("total_tokens".to_string(), json!(usage.total_tokens));
+            fields.insert(
+                "candidate_usage".to_string(),
+                serde_json::to_value(candidate_usage)?,
+            );
             if !dispatch_latencies.is_empty() {
                 let estimated_serial_wall_seconds = dispatch_latencies.iter().sum::<f64>();
                 let effective_concurrency = if wall_seconds > 0.0 {
@@ -2830,11 +3895,15 @@ fn advance_rollout_stage(
                     "seed already evaluated",
                 );
             }
-            let capacity =
-                remaining_rollout_capacity(&context.workspace, &context.config.run.run_id)?;
+            let capacity = remaining_train_rollout_capacity(
+                &context.workspace,
+                &context.config,
+                state.rollout_count,
+            )?;
             if capacity < resources.train_rows.len() {
                 return Err(rollout_budget_exceeded_error(
                     &context.config.run.run_id,
+                    rollout_budget_limit_name(&context.config),
                     resources.train_rows.len(),
                     capacity,
                 ));
@@ -2845,7 +3914,12 @@ fn advance_rollout_stage(
             transition_to_rollout_running(
                 context,
                 "Seed candidate rollouts started",
-                json!({"candidate_id": state.candidates[0].candidate_id, "stage": "seed_full_train"}),
+                json!({
+                    "candidate_id": state.candidates[0].candidate_id,
+                    "stage": "seed_full_train",
+                    "row_count": resources.train_rows.len(),
+                    "rollout_count": resources.train_rows.len(),
+                }),
             )?;
             state.active_evaluation = Some(new_rollout_evaluation(
                 "seed_full_train",
@@ -2888,6 +3962,30 @@ fn active_rollout_evaluation_complete(active: &GepaActiveEvaluation) -> bool {
             .all(|candidate| candidate.next_row_index >= candidate.row_ids.len())
     } else {
         active.next_row_index >= active.row_ids.len()
+    }
+}
+
+fn active_rollout_completed_rows(active: &GepaActiveEvaluation) -> usize {
+    if active.is_group() {
+        active
+            .candidate_evaluations
+            .iter()
+            .map(|candidate| candidate.next_row_index.min(candidate.row_ids.len()))
+            .sum()
+    } else {
+        active.next_row_index.min(active.row_ids.len())
+    }
+}
+
+fn active_rollout_total_rows(active: &GepaActiveEvaluation) -> usize {
+    if active.is_group() {
+        active
+            .candidate_evaluations
+            .iter()
+            .map(|candidate| candidate.row_ids.len())
+            .sum()
+    } else {
+        active.row_ids.len()
     }
 }
 
@@ -3098,13 +4196,11 @@ fn plan_next_rollout_batch(
     if remaining_rows.is_empty() {
         return finalize_active_rollout_evaluation(context, state, resources);
     }
-    let queued = plan_rollout_runtime_batch_job(
-        context,
-        resources,
-        candidate,
-        remaining_rows,
-        &active.stage,
-    )?;
+    let chunk_rows = rollout_rows_for_chunk(&context.config, remaining_rows);
+    let chunk_id = async_rollout_chunk_id(active, chunk_rows)?;
+    let chunk_row_count = chunk_rows.len();
+    let queued =
+        plan_rollout_runtime_batch_job(context, resources, candidate, chunk_rows, &active.stage)?;
     let active = state.active_evaluation.as_mut().ok_or_else(|| {
         OptimizerError::Invariant(
             "active evaluation disappeared while planning rollout".to_string(),
@@ -3124,7 +4220,12 @@ fn plan_next_rollout_batch(
         state.cursor.phase.clone(),
         "planned",
         "planned rollout batch job",
-        Map::new(),
+        {
+            let mut metadata = Map::new();
+            metadata.insert("rollout_chunk_id".to_string(), json!(chunk_id));
+            metadata.insert("rollout_chunk_rows".to_string(), json!(chunk_row_count));
+            metadata
+        },
     )?;
     Ok(GepaAdvanceOutcome {
         action: planner::GepaTickAction::PlanRuntimeJob {
@@ -3147,6 +4248,7 @@ fn plan_next_rollout_group_batch(
     })?;
     let mut groups = Vec::new();
     let mut candidate_ids = Vec::new();
+    let mut remaining_budget = Some(async_rollout_chunk_size(&context.config));
     for candidate_eval in &active.candidate_evaluations {
         let candidate = state
             .candidates
@@ -3178,10 +4280,19 @@ fn plan_next_rollout_group_batch(
         if remaining_rows.is_empty() {
             continue;
         }
+        let take_count = take_count_for_group_rollout_chunk(
+            &context.config,
+            remaining_rows.len(),
+            &mut remaining_budget,
+        );
+        if take_count == 0 {
+            break;
+        }
+        let chunk_rows = remaining_rows[..take_count].to_vec();
         candidate_ids.push(candidate.candidate_id.clone());
         groups.push(RolloutBatchCandidate {
             candidate: candidate.clone(),
-            rows: remaining_rows,
+            rows: chunk_rows,
             stage: active.stage.clone(),
         });
     }
@@ -3226,6 +4337,14 @@ fn plan_next_rollout_group_batch(
     let mut metadata = Map::new();
     metadata.insert("stage".to_string(), json!(active.stage.clone()));
     metadata.insert("candidate_ids".to_string(), json!(candidate_ids));
+    metadata.insert(
+        "rollout_chunk_rows".to_string(),
+        json!(groups.iter().map(|group| group.rows.len()).sum::<usize>()),
+    );
+    metadata.insert(
+        "rollout_chunk_size".to_string(),
+        json!(async_rollout_chunk_size(&context.config)),
+    );
     persist_gepa_run_state(
         context,
         state,
@@ -3331,12 +4450,14 @@ fn plan_rollout_runtime_batch_job_for_candidates(
             let request = json!({
                 "submission_mode": rollout_submission_mode_for_request(&context.config),
                 "task_id": resources.rollout_task_id,
-                "seed": seed,
-                "candidate_id": group.candidate.candidate_id,
                 "candidate": overlay.candidate.to_value(),
                 "candidate_overlay": overlay,
                 "policy": context.config.policy,
                 "dataset_row": row,
+                "metadata": {
+                    "candidate_id": group.candidate.candidate_id,
+                    "seed": seed,
+                },
             });
             let mut cache_metadata = Map::new();
             cache_metadata.insert(
@@ -3580,6 +4701,14 @@ fn consume_proposer_outcome(
         cost_usd,
         backend: backend.clone(),
         workspace: workspace.clone(),
+        evidence_warnings: response
+            .get("evidence_warnings")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect(),
     };
     state.total_usage.merge(&usage);
     state.total_cost += cost_usd;
@@ -3603,6 +4732,10 @@ fn consume_proposer_outcome(
     metadata.insert("generation".to_string(), json!(active.generation));
     metadata.insert("proposal_count".to_string(), json!(proposals.len()));
     metadata.insert("backend".to_string(), Value::String(backend.clone()));
+    metadata.insert(
+        "warning_count".to_string(),
+        json!(outcome.evidence_warnings.len()),
+    );
     push_stopper_snapshot(
         &mut state.stopper_states,
         &mut state.stopper_sequence,
@@ -3626,6 +4759,8 @@ fn consume_proposer_outcome(
             "proposal_count": proposals.len(),
             "backend": backend,
             "workspace": workspace,
+            "warning_count": outcome.evidence_warnings.len(),
+            "warnings": outcome.evidence_warnings,
         }),
     )?;
     state.proposal_queue = proposals;
@@ -3891,6 +5026,11 @@ fn consume_rollout_outcome(
     let mut sensor_frame =
         SensorFrame::from_rollout_response(&candidate.candidate_id, row, &stage, &response)?;
     align_sensor_frame_objectives(&mut sensor_frame, &resources.objective_set, reward);
+    attach_rollout_trace_artifact(
+        &context.paths,
+        &context.config.run.run_id,
+        &mut sensor_frame,
+    )?;
     record_rollout_materialization_from_outcome(
         context,
         resources,
@@ -3999,6 +5139,11 @@ fn consume_group_rollout_outcome(
     let mut sensor_frame =
         SensorFrame::from_rollout_response(&candidate.candidate_id, row, &stage, &response)?;
     align_sensor_frame_objectives(&mut sensor_frame, &resources.objective_set, reward);
+    attach_rollout_trace_artifact(
+        &context.paths,
+        &context.config.run.run_id,
+        &mut sensor_frame,
+    )?;
     record_rollout_materialization_from_outcome(
         context,
         resources,
@@ -4047,20 +5192,18 @@ fn record_rollout_materialization_from_outcome(
     let request = json!({
         "submission_mode": rollout_submission_mode_for_request(&context.config),
         "task_id": resources.rollout_task_id,
-        "seed": seed,
-        "candidate_id": candidate.candidate_id,
         "candidate": overlay.candidate.to_value(),
         "candidate_overlay": overlay,
         "policy": context.config.policy,
         "dataset_row": row,
+        "metadata": {
+            "candidate_id": candidate.candidate_id,
+            "seed": seed,
+        },
     });
     let objective_scores = serde_json::to_value(&sensor_frame.objective_scores)?;
-    let materialization = RolloutMaterializationIdentity::prompt_overlay(
-        GEPA_ALGORITHM_ID,
-        &resources.program.program_id,
-        &candidate.lever_bundle.schema_version,
-        &resources.objective_set.objective_set_hash,
-    );
+    let materialization =
+        rollout_materialization_identity(&resources.program, candidate, &resources.objective_set);
     let candidate_payload_value = serde_json::to_value(&candidate.payload)?;
     let example_id = row_example_id(row)?;
     let mut materialization_metadata = Map::new();
@@ -4125,6 +5268,52 @@ fn record_rollout_materialization_from_outcome(
             metadata: Map::new(),
         }),
     )
+}
+
+fn attach_rollout_trace_artifact(
+    paths: &ArtifactPaths,
+    _run_id: &str,
+    sensor_frame: &mut SensorFrame,
+) -> Result<()> {
+    let Some(trace_payload) = sensor_frame.metadata.get("rollout_trace").cloned() else {
+        return Ok(());
+    };
+    let trace_dir = paths.run_dir.join("rollout_traces");
+    fs::create_dir_all(&trace_dir).map_err(|source| OptimizerError::io(&trace_dir, source))?;
+    let trace_path = trace_dir.join(format!("{}.json", sensor_frame.sensor_frame_id));
+    paths.write_json(&trace_path, &trace_payload)?;
+    let artifact = paths.artifact_ref(&trace_path, "rollout_trace_payload", "debug")?;
+    sensor_frame.artifact_refs.push(artifact);
+    Ok(())
+}
+
+fn rollout_materialization_identity(
+    program: &PromptProgram,
+    candidate: &CandidateRecord,
+    objective_set: &ObjectiveSetRecord,
+) -> RolloutMaterializationIdentity {
+    let lever_manifest = LeverManifest::from_prompt_program(program);
+    let has_non_prompt_lever = lever_manifest.levers.iter().any(|lever| {
+        !matches!(
+            lever.kind,
+            LeverKind::TextPrompt | LeverKind::SystemPrompt | LeverKind::UserPrompt
+        )
+    });
+    if has_non_prompt_lever {
+        RolloutMaterializationIdentity::lever_bundle(
+            GEPA_ALGORITHM_ID,
+            &program.program_id,
+            &candidate.lever_bundle.schema_version,
+            &objective_set.objective_set_hash,
+        )
+    } else {
+        RolloutMaterializationIdentity::prompt_overlay(
+            GEPA_ALGORITHM_ID,
+            &program.program_id,
+            &candidate.lever_bundle.schema_version,
+            &objective_set.objective_set_hash,
+        )
+    }
 }
 
 fn consume_failed_runtime_job(
@@ -4768,7 +5957,7 @@ fn finalize_seed_full_train(
             None,
             "seed_full_train",
             Some(&candidate_id),
-            Some(0),
+            Some(BTreeSet::new()),
         )?,
     )?;
     state.active_evaluation = None;
@@ -5022,7 +6211,7 @@ fn finalize_candidate_minibatch(
         );
     }
     let full_train_capacity =
-        remaining_rollout_capacity(&context.workspace, &context.config.run.run_id)?;
+        remaining_train_rollout_capacity(&context.workspace, &context.config, state.rollout_count)?;
     if full_train_capacity < resources.train_rows.len() {
         state.candidates[candidate_idx].status = "deferred_budget".to_string();
         decision.reason = "insufficient rollout budget for full-train evaluation".to_string();
@@ -5257,9 +6446,12 @@ fn finalize_candidate_minibatch_group(
             )?;
             continue;
         }
-        let full_train_capacity =
-            remaining_rollout_capacity(&context.workspace, &context.config.run.run_id)?
-                .saturating_sub(planned_full_train_rollouts);
+        let full_train_capacity = remaining_train_rollout_capacity(
+            &context.workspace,
+            &context.config,
+            state.rollout_count,
+        )?
+        .saturating_sub(planned_full_train_rollouts);
         if full_train_capacity < resources.train_rows.len()
             || next_rollout_budget_breach(&context.workspace, &context.config)?.is_some()
         {
@@ -5376,6 +6568,7 @@ fn finalize_candidate_full_train(
         OptimizerError::Invariant("candidate full-train missing candidate index".to_string())
     })?;
     let best_idx = state.best_idx.unwrap_or(0);
+    let previous_frontier_member_ids = frontier_member_ids(&frontier_members(&state.candidates));
     {
         let candidate = state.candidates.get_mut(candidate_idx).ok_or_else(|| {
             OptimizerError::Invariant(format!(
@@ -5502,7 +6695,6 @@ fn finalize_candidate_full_train(
         serde_json::to_value(&decision)?,
     )?;
     if accepted {
-        let previous_frontier_size = frontier_members(&state.candidates).len();
         state.best_idx = Some(candidate_idx);
         context.events.emit(
             "frontier.updated",
@@ -5514,7 +6706,7 @@ fn finalize_candidate_full_train(
                 Some(active.generation),
                 "candidate_accepted",
                 Some(&state.candidates[candidate_idx].candidate_id),
-                Some(previous_frontier_size),
+                Some(previous_frontier_member_ids),
             )?,
         )?;
     }
@@ -5538,6 +6730,8 @@ fn finalize_candidate_full_train_group(
     for (candidate_active, eval) in evaluations {
         let candidate_idx = candidate_active.candidate_index;
         let best_idx = state.best_idx.unwrap_or(0);
+        let previous_frontier_member_ids =
+            frontier_member_ids(&frontier_members(&state.candidates));
         {
             let candidate = state.candidates.get_mut(candidate_idx).ok_or_else(|| {
                 OptimizerError::Invariant(format!(
@@ -5670,7 +6864,6 @@ fn finalize_candidate_full_train_group(
             serde_json::to_value(&decision)?,
         )?;
         if accepted {
-            let previous_frontier_size = frontier_members(&state.candidates).len();
             state.best_idx = Some(candidate_idx);
             context.events.emit(
                 "frontier.updated",
@@ -5682,7 +6875,7 @@ fn finalize_candidate_full_train_group(
                     Some(candidate_active.generation),
                     "candidate_accepted",
                     Some(&state.candidates[candidate_idx].candidate_id),
-                    Some(previous_frontier_size),
+                    Some(previous_frontier_member_ids),
                 )?,
             )?;
         }
@@ -5705,7 +6898,7 @@ fn advance_generation_start(
     if state.cursor.generation >= context.config.gepa.max_generations {
         return move_to_pre_heldout(context, state, resources);
     }
-    if state.rollout_count >= context.config.gepa.max_total_rollouts
+    if train_rollout_budget_reached(&context.config, state.rollout_count)
         || cost_budget_reached(&context.config, state.total_cost)
     {
         return move_to_pre_heldout(context, state, resources);
@@ -5745,11 +6938,14 @@ fn advance_generation_start(
             OptimizerRunState::Proposing,
             OptimizerTransitionTrigger::ProposerStarted,
             "Proposer started",
-            json!({
-                "generation": state.cursor.generation,
-                "parent_candidate_id": parent_id,
-                "parent_selection": parent_selection.metadata.clone(),
-            }),
+            proposer_started_details(
+                &context.config,
+                &state.candidates,
+                state.cursor.generation,
+                &parent_id,
+                parent_selection.metadata.clone(),
+                &context.paths.run_dir,
+            ),
         )?;
     }
     let queued = plan_proposer_runtime_job(context, resources, parent_idx, state)?;
@@ -5833,6 +7029,18 @@ fn plan_proposer_runtime_job(
             &resources.reflection_rows,
             &resources.heldout_rows,
         ),
+        "workspace_root": context.paths.run_dir,
+        "run_artifact_dir": context.paths.run_dir,
+        "proposal_artifact_dir": workspace_dir,
+        "lever_manifest": LeverManifest::from_prompt_program(&resources.program),
+        "frontier_summary": proposer_frontier_summary(
+            &state.candidates,
+            &resources.train_rows,
+            state.best_idx,
+        )?,
+        "minibatch_failures": proposer_minibatch_failures(&state.candidates),
+        "rollout_trace_artifact_refs": proposer_rollout_trace_artifact_refs(&state.candidates),
+        "merge_evidence_artifacts": proposer_merge_evidence_artifacts(&context.paths)?,
         "target_modules": context.config.candidate.target_modules,
         "proposal_count": context.config.gepa.proposals_per_generation,
     });
@@ -5896,7 +7104,7 @@ fn advance_proposer_waiting(
     if state.cursor.proposal_index >= state.proposal_queue.len() {
         return complete_generation_boundary(context, state, resources);
     }
-    if state.rollout_count >= context.config.gepa.max_total_rollouts
+    if train_rollout_budget_reached(&context.config, state.rollout_count)
         || cost_budget_reached(&context.config, state.total_cost)
     {
         state.cursor.proposal_index = state.proposal_queue.len();
@@ -5904,7 +7112,7 @@ fn advance_proposer_waiting(
     }
     let parent_idx = current_proposal_parent_idx(state)?;
     let minibatch_capacity =
-        remaining_rollout_capacity(&context.workspace, &context.config.run.run_id)?;
+        remaining_train_rollout_capacity(&context.workspace, &context.config, state.rollout_count)?;
     let mut active_candidates = Vec::new();
     let mut planned_candidate_ids = BTreeSet::new();
     let mut planned_rollouts = 0usize;
@@ -5946,52 +7154,65 @@ fn advance_proposer_waiting(
             proposal_index += 1;
             continue;
         }
-        if let Some(existing_idx) = state
+        let candidate_idx = if let Some(existing_idx) = state
             .candidates
             .iter()
             .position(|candidate| candidate.candidate_id == candidate_id)
         {
-            context.events.emit(
-                "candidate.duplicate_skipped",
-                "Duplicate candidate skipped",
-                json!({"candidate_id": candidate_id, "generation": state.cursor.generation}),
+            let existing = &state.candidates[existing_idx];
+            if matches!(existing.status.as_str(), "registered")
+                && existing.minibatch_reward.is_none()
+                && existing.train_reward.is_none()
+            {
+                planned_candidate_ids.insert(candidate_id.clone());
+                existing_idx
+            } else {
+                context.events.emit(
+                    "candidate.duplicate_skipped",
+                    "Duplicate candidate skipped",
+                    json!({"candidate_id": candidate_id, "generation": state.cursor.generation}),
+                )?;
+                state.best_idx.get_or_insert(existing_idx);
+                proposal_index += 1;
+                continue;
+            }
+        } else {
+            planned_candidate_ids.insert(candidate_id.clone());
+            let proposal_type = proposal.proposal_type_or_default();
+            let proposal_parent_id = proposal_parent.candidate_id.clone();
+            let mut acceptance_metadata = Map::new();
+            acceptance_metadata.insert("proposal".to_string(), proposal.metadata_value());
+            let lever_bundle = proposal.lever_bundle.clone().unwrap_or_else(|| {
+                LeverBundle::from_prompt_payload(
+                    candidate_id.clone(),
+                    Some(proposal_parent_id.clone()),
+                    &payload,
+                )
+            });
+            let candidate = CandidateRecord {
+                lever_bundle,
+                candidate_id,
+                payload,
+                parent_id: Some(proposal_parent_id),
+                source: format!("reflector:{proposal_type}"),
+                status: "registered".to_string(),
+                minibatch_reward: None,
+                train_reward: None,
+                heldout_reward: None,
+                minibatch_scores: Vec::new(),
+                train_scores: Vec::new(),
+                sensor_frames: Vec::new(),
+                acceptance_score: Value::Null,
+                acceptance_metadata,
+            };
+            persist_candidate_snapshot(
+                &mut context.workspace,
+                &context.config.run.run_id,
+                &candidate,
             )?;
-            state.best_idx.get_or_insert(existing_idx);
-            proposal_index += 1;
-            continue;
-        }
-        planned_candidate_ids.insert(candidate_id.clone());
-        let proposal_type = proposal.proposal_type_or_default();
-        let proposal_parent_id = proposal_parent.candidate_id.clone();
-        let mut acceptance_metadata = Map::new();
-        acceptance_metadata.insert("proposal".to_string(), proposal.metadata_value());
-        let candidate = CandidateRecord {
-            lever_bundle: LeverBundle::from_prompt_payload(
-                candidate_id.clone(),
-                Some(proposal_parent_id.clone()),
-                &payload,
-            ),
-            candidate_id,
-            payload,
-            parent_id: Some(proposal_parent_id),
-            source: format!("reflector:{proposal_type}"),
-            status: "registered".to_string(),
-            minibatch_reward: None,
-            train_reward: None,
-            heldout_reward: None,
-            minibatch_scores: Vec::new(),
-            train_scores: Vec::new(),
-            sensor_frames: Vec::new(),
-            acceptance_score: Value::Null,
-            acceptance_metadata,
+            state.candidates.push(candidate);
+            state.candidates.len() - 1
         };
-        persist_candidate_snapshot(
-            &mut context.workspace,
-            &context.config.run.run_id,
-            &candidate,
-        )?;
-        state.candidates.push(candidate);
-        let candidate_idx = state.candidates.len() - 1;
         let minibatch_rows = minibatch_rows(
             &resources.minibatch_rows,
             &context.config.gepa.batch_sampler,
@@ -6017,14 +7238,16 @@ fn advance_proposer_waiting(
                 state.cursor.proposal_index = state.proposal_queue.len();
                 return complete_generation_boundary(context, state, resources);
             }
-            state.active_evaluation = Some(new_rollout_evaluation(
+            let mut parent_reference = new_rollout_evaluation(
                 "parent_minibatch_reference",
                 proposal_parent_idx,
                 &minibatch_rows,
                 state.cursor.generation,
                 proposal_index,
                 None,
-            )?);
+            )?;
+            parent_reference.candidate_id = Some(proposal_parent.candidate_id.clone());
+            state.active_evaluation = Some(parent_reference);
             persist_gepa_run_state(
                 context,
                 state,
@@ -6332,18 +7555,42 @@ fn advance_heldout(
         }
         return plan_next_rollout_batch(context, state, resources);
     }
-    let heldout_indices = heldout_candidate_indices(state);
+    let all_heldout_indices = heldout_candidate_indices(state);
+    let mut heldout_indices = all_heldout_indices.clone();
+    let evaluated_heldout_indices = all_heldout_indices
+        .iter()
+        .copied()
+        .filter(|idx| state.candidates[*idx].heldout_reward.is_some())
+        .collect::<Vec<_>>();
+    if !evaluated_heldout_indices.is_empty() {
+        heldout_indices = evaluated_heldout_indices;
+    }
     if heldout_indices.is_empty() || resources.heldout_rows.is_empty() {
         return move_to_finalizing(context, state, resources, "heldout evaluation skipped");
     }
-    let required_rollouts = heldout_indices
-        .len()
-        .saturating_mul(resources.heldout_rows.len());
     if state.heldout_candidate_index == 0 {
-        let available_rollouts =
-            remaining_rollout_capacity(&context.workspace, &context.config.run.run_id)?;
+        let available_rollouts = remaining_heldout_rollout_capacity(
+            &context.workspace,
+            &context.config,
+            &state.candidates,
+        )?;
         let budget_breach = next_rollout_budget_breach(&context.workspace, &context.config)?;
-        if available_rollouts < required_rollouts || budget_breach.is_some() {
+        if budget_breach.is_none() {
+            heldout_indices = budgeted_heldout_candidate_indices(
+                &state.candidates,
+                all_heldout_indices.clone(),
+                state.best_idx,
+                available_rollouts,
+                resources.heldout_rows.len(),
+            );
+        }
+        let required_rollouts = heldout_indices
+            .len()
+            .saturating_mul(resources.heldout_rows.len());
+        if heldout_indices.is_empty()
+            || available_rollouts < required_rollouts
+            || budget_breach.is_some()
+        {
             let best_idx = state.best_idx.unwrap_or(0);
             let mut metadata = Map::new();
             metadata.insert("stage".to_string(), Value::String("heldout".to_string()));
@@ -6374,6 +7621,19 @@ fn advance_heldout(
                 }),
             )?;
             return move_to_finalizing(context, state, resources, "heldout skipped due to limits");
+        }
+        let total_heldout_candidates = all_heldout_indices.len();
+        if heldout_indices.len() < total_heldout_candidates {
+            context.events.emit(
+                "heldout.partial",
+                "Heldout limited to budgeted candidate subset",
+                json!({
+                    "candidate_count": heldout_indices.len(),
+                    "total_candidate_count": total_heldout_candidates,
+                    "available_rollouts": available_rollouts,
+                    "required_rollouts": required_rollouts,
+                }),
+            )?;
         }
         transition_to_rollout_running(
             context,
@@ -6456,6 +7716,49 @@ fn heldout_candidate_indices(state: &GepaRunState) -> Vec<usize> {
         }
     }
     indices
+}
+
+fn budgeted_heldout_candidate_indices(
+    candidates: &[CandidateRecord],
+    indices: Vec<usize>,
+    best_idx: Option<usize>,
+    available_rollouts: usize,
+    heldout_row_count: usize,
+) -> Vec<usize> {
+    if heldout_row_count == 0 || indices.is_empty() {
+        return indices;
+    }
+    let max_candidates = available_rollouts / heldout_row_count;
+    if max_candidates >= indices.len() {
+        return indices;
+    }
+    if max_candidates == 0 {
+        return Vec::new();
+    }
+    let mut selected = Vec::new();
+    let push_index = |idx: usize, selected: &mut Vec<usize>| {
+        if indices.contains(&idx) && !selected.contains(&idx) && selected.len() < max_candidates {
+            selected.push(idx);
+        }
+    };
+    if let Some(best_idx) = best_idx {
+        push_index(best_idx, &mut selected);
+    }
+    push_index(0, &mut selected);
+    let mut by_train = indices.clone();
+    by_train.sort_by(|left, right| {
+        let left_reward = candidates[*left].train_reward.unwrap_or(f64::NEG_INFINITY);
+        let right_reward = candidates[*right].train_reward.unwrap_or(f64::NEG_INFINITY);
+        right_reward.total_cmp(&left_reward).then_with(|| {
+            candidates[*left]
+                .candidate_id
+                .cmp(&candidates[*right].candidate_id)
+        })
+    });
+    for idx in by_train {
+        push_index(idx, &mut selected);
+    }
+    selected
 }
 
 fn finalize_heldout_candidate(
@@ -6752,13 +8055,18 @@ fn finalize_completed_gepa_run(
             "state_transition_count": context.state_machine.history.len(),
         }),
     )?;
+    let runtime_summary =
+        serde_json::to_value(runtime_usage_summary_from_events(context.events.records()))?;
     context.events.emit(
         "gepa.run.finished",
         "GEPA run finished",
         json!({
             "best_candidate_id": state.candidates[best_idx].candidate_id,
             "cost_usd": state.total_cost,
+            "heldout_reward": heldout_best_reward,
+            "heldout_skipped": heldout_skipped,
             "rollout_count": state.rollout_count,
+            "runtime_summary": runtime_summary,
             "usage": usage_value,
             "state": context.state_machine.state().as_str(),
         }),
@@ -6912,6 +8220,9 @@ pub fn execute_gepa_with_options(
                 &state.cursor,
                 &outcome,
             ));
+        }
+        if matches!(outcome.action, planner::GepaTickAction::Noop) {
+            thread::sleep(ASYNC_PIPELINE_NOOP_SLEEP);
         }
     }
 }
@@ -7247,10 +8558,12 @@ fn execute_gepa_monolithic_with_options(
         })
         .unwrap_or(0);
     if candidates[0].train_reward.is_none() {
-        let seed_rollout_capacity = remaining_rollout_capacity(&workspace, &config.run.run_id)?;
+        let seed_rollout_capacity =
+            remaining_train_rollout_capacity(&workspace, &config, rollout_count)?;
         if seed_rollout_capacity < train_rows.len() {
             let error = rollout_budget_exceeded_error(
                 &config.run.run_id,
+                rollout_budget_limit_name(&config),
                 train_rows.len(),
                 seed_rollout_capacity,
             );
@@ -7333,6 +8646,7 @@ fn execute_gepa_monolithic_with_options(
         let seed_eval = match evaluate_candidate(EvaluationCall {
             client: &client,
             workspace: &workspace,
+            paths: &paths,
             cache: &mut cache,
             cache_namespace: &cache_namespace,
             config: &config,
@@ -7470,7 +8784,7 @@ fn execute_gepa_monolithic_with_options(
                 None,
                 "seed_full_train",
                 Some(&candidates[0].candidate_id),
-                Some(0),
+                Some(BTreeSet::new()),
             )?,
         )?;
         transition_run(
@@ -7534,7 +8848,7 @@ fn execute_gepa_monolithic_with_options(
 
     for generation in generation_start..config.gepa.max_generations {
         check_cancelled(options.cancellation.as_ref())?;
-        if rollout_count >= config.gepa.max_total_rollouts {
+        if train_rollout_budget_reached(&config, rollout_count) {
             let mut metadata = Map::new();
             metadata.insert(
                 "stage".to_string(),
@@ -7610,6 +8924,24 @@ fn execute_gepa_monolithic_with_options(
             Some(best_idx),
         )?;
         let parent = candidates[parent_selection.candidate_index].clone();
+        let proposer_rollout_row_count = candidates
+            .iter()
+            .map(|candidate| {
+                candidate.minibatch_scores.len()
+                    + candidate.train_scores.len()
+                    + candidate.sensor_frames.len()
+            })
+            .sum::<usize>();
+        let proposer_loss_count = candidates
+            .iter()
+            .flat_map(|candidate| candidate.sensor_frames.iter())
+            .filter(|frame| frame.reward < 1.0)
+            .count();
+        let proposer_win_count = candidates
+            .iter()
+            .flat_map(|candidate| candidate.sensor_frames.iter())
+            .filter(|frame| frame.reward >= 1.0)
+            .count();
         transition_run(
             &workspace,
             &mut events,
@@ -7619,7 +8951,20 @@ fn execute_gepa_monolithic_with_options(
             "Proposer started",
             json!({
                 "generation": generation,
+                "backend": config.proposer.backend,
+                "model": config.proposer.model,
+                "proposal_count": config.gepa.proposals_per_generation,
                 "parent_candidate_id": parent.candidate_id,
+                "frontier_size": frontier_members(&candidates).len(),
+                "candidate_count": candidates.len(),
+                "rollout_row_count": proposer_rollout_row_count,
+                "loss_count": proposer_loss_count,
+                "win_count": proposer_win_count,
+                "workspace": paths.run_dir
+                    .join("proposer_workspaces")
+                    .join(format!("generation_{:03}", generation))
+                    .display()
+                    .to_string(),
                 "parent_selection": parent_selection.metadata,
             }),
         )?;
@@ -7690,6 +9035,10 @@ fn execute_gepa_monolithic_with_options(
             "backend".to_string(),
             Value::String(proposer_outcome.backend.clone()),
         );
+        metadata.insert(
+            "warning_count".to_string(),
+            json!(proposer_outcome.evidence_warnings.len()),
+        );
         push_stopper_snapshot(
             &mut stopper_states,
             &mut stopper_sequence,
@@ -7713,6 +9062,8 @@ fn execute_gepa_monolithic_with_options(
                 "proposal_count": proposer_outcome.proposals.len(),
                 "backend": proposer_outcome.backend,
                 "workspace": proposer_outcome.workspace,
+                "warning_count": proposer_outcome.evidence_warnings.len(),
+                "warnings": proposer_outcome.evidence_warnings,
             }),
         )?;
         if proposer_outcome.proposals.is_empty() {
@@ -7742,7 +9093,7 @@ fn execute_gepa_monolithic_with_options(
 
         for (proposal_index, proposal) in proposer_outcome.proposals.into_iter().enumerate() {
             check_cancelled(options.cancellation.as_ref())?;
-            if rollout_count >= config.gepa.max_total_rollouts {
+            if train_rollout_budget_reached(&config, rollout_count) {
                 let mut metadata = Map::new();
                 metadata.insert(
                     "stage".to_string(),
@@ -7825,7 +9176,7 @@ fn execute_gepa_monolithic_with_options(
             .is_none()
             {
                 let parent_reference_capacity =
-                    remaining_rollout_capacity(&workspace, &config.run.run_id)?;
+                    remaining_train_rollout_capacity(&workspace, &config, rollout_count)?;
                 if parent_reference_capacity < minibatch_rows.len() {
                     let mut metadata = Map::new();
                     metadata.insert(
@@ -7874,6 +9225,7 @@ fn execute_gepa_monolithic_with_options(
                 let parent_reference_eval = evaluate_candidate(EvaluationCall {
                     client: &client,
                     workspace: &workspace,
+                    paths: &paths,
                     cache: &mut cache,
                     cache_namespace: &cache_namespace,
                     config: &config,
@@ -7963,7 +9315,7 @@ fn execute_gepa_monolithic_with_options(
             };
             persist_candidate_snapshot(&mut workspace, &config.run.run_id, &candidate)?;
             let minibatch_rollout_capacity =
-                remaining_rollout_capacity(&workspace, &config.run.run_id)?;
+                remaining_train_rollout_capacity(&workspace, &config, rollout_count)?;
             if minibatch_rollout_capacity < minibatch_rows.len() {
                 candidate.status = "deferred_budget".to_string();
                 let mut metadata = Map::new();
@@ -8066,6 +9418,7 @@ fn execute_gepa_monolithic_with_options(
             let eval = match evaluate_candidate(EvaluationCall {
                 client: &client,
                 workspace: &workspace,
+                paths: &paths,
                 cache: &mut cache,
                 cache_namespace: &cache_namespace,
                 config: &config,
@@ -8228,7 +9581,7 @@ fn execute_gepa_monolithic_with_options(
                 continue;
             }
             let full_train_rollout_budget =
-                remaining_rollout_capacity(&workspace, &config.run.run_id)?;
+                remaining_train_rollout_capacity(&workspace, &config, rollout_count)?;
             if full_train_rollout_budget < train_rows.len() {
                 candidate.status = "deferred_budget".to_string();
                 decision.reason =
@@ -8352,6 +9705,7 @@ fn execute_gepa_monolithic_with_options(
             let train_eval = match evaluate_candidate(EvaluationCall {
                 client: &client,
                 workspace: &workspace,
+                paths: &paths,
                 cache: &mut cache,
                 cache_namespace: &cache_namespace,
                 config: &config,
@@ -8506,7 +9860,7 @@ fn execute_gepa_monolithic_with_options(
                 serde_json::to_value(&decision)?,
             )?;
             persist_candidate_snapshot(&mut workspace, &config.run.run_id, &candidate)?;
-            let previous_frontier_size = frontier_members(&candidates).len();
+            let previous_frontier_member_ids = frontier_member_ids(&frontier_members(&candidates));
             candidates.push(candidate);
             if accepted {
                 best_idx = candidates.len() - 1;
@@ -8521,7 +9875,7 @@ fn execute_gepa_monolithic_with_options(
                         Some(generation),
                         "candidate_accepted",
                         Some(&changed_candidate_id),
-                        Some(previous_frontier_size),
+                        Some(previous_frontier_member_ids),
                     )?,
                 )?;
             }
@@ -8717,7 +10071,8 @@ fn execute_gepa_monolithic_with_options(
     let mut heldout_rollout_delta = 0usize;
     let mut heldout_cost_delta = 0.0;
     let heldout_required_rollouts = heldout_indices.len().saturating_mul(heldout_rows.len());
-    let heldout_available_rollouts = remaining_rollout_capacity(&workspace, &config.run.run_id)?;
+    let heldout_available_rollouts =
+        remaining_heldout_rollout_capacity(&workspace, &config, &candidates)?;
     let heldout_budget_breach = next_rollout_budget_breach(&workspace, &config)?;
     let heldout_skipped =
         heldout_available_rollouts < heldout_required_rollouts || heldout_budget_breach.is_some();
@@ -8798,6 +10153,7 @@ fn execute_gepa_monolithic_with_options(
             let heldout_eval = match evaluate_candidate(EvaluationCall {
                 client: &client,
                 workspace: &workspace,
+                paths: &paths,
                 cache: &mut cache,
                 cache_namespace: &cache_namespace,
                 config: &config,
@@ -9010,13 +10366,18 @@ fn execute_gepa_monolithic_with_options(
             "state_transition_count": state_machine.history.len(),
         }),
     )?;
+    let runtime_summary =
+        serde_json::to_value(runtime_usage_summary_from_events(events.records()))?;
     events.emit(
         "gepa.run.finished",
         "GEPA run finished",
         json!({
             "best_candidate_id": candidates[best_idx].candidate_id,
             "cost_usd": total_cost,
+            "heldout_reward": heldout_best_reward,
+            "heldout_skipped": heldout_skipped,
             "rollout_count": rollout_count,
+            "runtime_summary": runtime_summary,
             "usage": usage_value,
             "state": state_machine.state().as_str(),
         }),
@@ -10087,6 +11448,128 @@ fn seed_pool_rows_value(
     })
 }
 
+fn proposer_frontier_summary(
+    candidates: &[CandidateRecord],
+    train_rows: &[Value],
+    best_idx: Option<usize>,
+) -> Result<Value> {
+    Ok(json!({
+        "schema_version": "gepa_frontier_summary.v1",
+        "frontier": frontier_members(candidates),
+        "snapshot": frontier_snapshot_value(
+            candidates,
+            train_rows,
+            best_idx,
+            None,
+            "proposer_request",
+            None,
+            None,
+        )?,
+    }))
+}
+
+fn proposer_started_details(
+    config: &SynthOptimizerConfig,
+    candidates: &[CandidateRecord],
+    generation: usize,
+    parent_candidate_id: &str,
+    parent_selection: Value,
+    run_dir: &Path,
+) -> Value {
+    let rollout_row_count = candidates
+        .iter()
+        .map(|candidate| {
+            candidate.minibatch_scores.len()
+                + candidate.train_scores.len()
+                + candidate.sensor_frames.len()
+        })
+        .sum::<usize>();
+    let loss_count = candidates
+        .iter()
+        .flat_map(|candidate| candidate.sensor_frames.iter())
+        .filter(|frame| frame.reward < 1.0)
+        .count();
+    let win_count = candidates
+        .iter()
+        .flat_map(|candidate| candidate.sensor_frames.iter())
+        .filter(|frame| frame.reward >= 1.0)
+        .count();
+    json!({
+        "generation": generation,
+        "backend": config.proposer.backend,
+        "model": config.proposer.model,
+        "proposal_count": config.gepa.proposals_per_generation,
+        "parent_candidate_id": parent_candidate_id,
+        "frontier_size": frontier_members(candidates).len(),
+        "candidate_count": candidates.len(),
+        "rollout_row_count": rollout_row_count,
+        "loss_count": loss_count,
+        "win_count": win_count,
+        "workspace": run_dir
+            .join("proposer_workspaces")
+            .join(format!("generation_{generation:03}"))
+            .display()
+            .to_string(),
+        "parent_selection": parent_selection,
+    })
+}
+
+fn proposer_minibatch_failures(candidates: &[CandidateRecord]) -> Value {
+    Value::Array(
+        candidates
+            .iter()
+            .filter(|candidate| {
+                candidate.minibatch_reward.is_some()
+                    && candidate.train_reward.is_none()
+                    && !matches!(
+                        candidate.status.as_str(),
+                        "accepted" | "full_train_evaluated" | "candidate_full_train"
+                    )
+            })
+            .map(|candidate| {
+                json!({
+                    "candidate_id": candidate.candidate_id,
+                    "parent_id": candidate.parent_id,
+                    "status": candidate.status,
+                    "minibatch_reward": candidate.minibatch_reward,
+                    "acceptance": candidate.acceptance_metadata,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn proposer_rollout_trace_artifact_refs(candidates: &[CandidateRecord]) -> Value {
+    let refs = candidates
+        .iter()
+        .flat_map(|candidate| candidate.sensor_frames.iter())
+        .flat_map(|frame| frame.artifact_refs.iter())
+        .filter(|artifact| artifact.kind == "rollout_trace_payload")
+        .map(|artifact| serde_json::to_value(artifact).unwrap_or(Value::Null))
+        .collect::<Vec<_>>();
+    Value::Array(refs)
+}
+
+fn proposer_merge_evidence_artifacts(paths: &ArtifactPaths) -> Result<Value> {
+    let artifacts = [
+        (&paths.frontier_path, "frontier"),
+        (&paths.candidate_registry_path, "candidate_registry"),
+        (&paths.normalized_event_feed_path, "events_normalized_jsonl"),
+        (&paths.workspace_db_path, "workspace_sqlite"),
+    ];
+    let mut refs = Vec::new();
+    for (path, kind) in artifacts {
+        if path.exists() {
+            refs.push(serde_json::to_value(paths.artifact_ref(
+                path,
+                kind,
+                "run_evidence",
+            )?)?);
+        }
+    }
+    Ok(Value::Array(refs))
+}
+
 fn rollout_task_id(program: &PromptProgram) -> String {
     program
         .metadata
@@ -10124,6 +11607,13 @@ fn frontier_members(candidates: &[CandidateRecord]) -> Vec<FrontierMember> {
         .collect::<Vec<_>>();
     frontier.sort_by(|left, right| left.candidate_id.cmp(&right.candidate_id));
     frontier
+}
+
+fn frontier_member_ids(frontier: &[FrontierMember]) -> BTreeSet<String> {
+    frontier
+        .iter()
+        .map(|member| member.candidate_id.clone())
+        .collect()
 }
 
 fn select_proposer_parent_candidate(
@@ -10168,13 +11658,27 @@ fn select_proposer_parent_candidate(
             }),
         });
     }
-    let mut members = pareto_front.win_counts.keys().copied().collect::<Vec<_>>();
+    let search_visible = candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, candidate)| candidate.train_reward.map(|_| idx))
+        .collect::<Vec<_>>();
+    let mut members = pareto_front
+        .win_counts
+        .keys()
+        .copied()
+        .filter(|idx| search_visible.contains(idx))
+        .collect::<Vec<_>>();
     members.sort_by(|left, right| {
         candidates[*left]
             .candidate_id
             .cmp(&candidates[*right].candidate_id)
     });
-    let all_members = (0..candidates.len()).collect::<Vec<_>>();
+    let all_members = if search_visible.is_empty() {
+        vec![fallback_idx]
+    } else {
+        search_visible
+    };
     let (selected_idx, weights, reason) = match strategy.as_str() {
         "uniform_pareto" => {
             let weights = members.iter().map(|idx| (*idx, 1usize)).collect::<Vec<_>>();
@@ -10731,9 +12235,25 @@ fn frontier_snapshot_value(
     generation: Option<usize>,
     reason: &str,
     changed_candidate_id: Option<&str>,
-    previous_frontier_size: Option<usize>,
+    previous_frontier_member_ids: Option<BTreeSet<String>>,
 ) -> Result<Value> {
     let frontier = frontier_members(candidates);
+    let current_frontier_member_ids = frontier_member_ids(&frontier);
+    let previous_frontier_size = previous_frontier_member_ids.as_ref().map(BTreeSet::len);
+    let (frontier_added_candidate_ids, frontier_removed_candidate_ids): (Vec<String>, Vec<String>) =
+        match previous_frontier_member_ids.as_ref() {
+            Some(previous) => (
+                current_frontier_member_ids
+                    .difference(previous)
+                    .cloned()
+                    .collect(),
+                previous
+                    .difference(&current_frontier_member_ids)
+                    .cloned()
+                    .collect(),
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
     let train_seeds = train_rows.iter().map(row_seed).collect::<BTreeSet<_>>();
     let train_example_ids = train_rows
         .iter()
@@ -10743,6 +12263,20 @@ fn frontier_snapshot_value(
     let best_scores = best_candidate
         .map(|candidate| scores_by_example(&candidate.train_scores))
         .unwrap_or_default();
+    let best_solved_examples = best_candidate
+        .map(|candidate| solved_examples(&candidate.train_scores))
+        .unwrap_or_default();
+    let best_seed_count = best_candidate
+        .map(|candidate| {
+            candidate
+                .train_scores
+                .iter()
+                .filter(|score| score_is_solved(score.reward))
+                .map(|score| score.seed)
+                .collect::<BTreeSet<_>>()
+                .len()
+        })
+        .unwrap_or(0);
 
     let mut covered_frontier_seeds = BTreeSet::new();
     let mut covered_frontier_examples = BTreeSet::new();
@@ -10754,30 +12288,37 @@ fn frontier_snapshot_value(
         else {
             continue;
         };
-        let seed_set = candidate
+        let evaluated_seed_set = candidate
             .train_scores
             .iter()
             .map(|score| score.seed)
             .collect::<BTreeSet<_>>();
+        let solved_seed_set = candidate_solved_seeds(&candidate.train_scores);
         let example_scores = scores_by_example(&candidate.train_scores);
+        let solved_example_scores = solved_examples(&candidate.train_scores);
         let covered_seeds = train_seeds
             .iter()
             .copied()
-            .filter(|seed| seed_set.contains(seed))
+            .filter(|seed| solved_seed_set.contains(seed))
             .collect::<Vec<_>>();
         let missing_seeds = train_seeds
             .iter()
             .copied()
-            .filter(|seed| !seed_set.contains(seed))
+            .filter(|seed| !solved_seed_set.contains(seed))
             .collect::<Vec<_>>();
         let covered_examples = train_example_ids
             .iter()
-            .filter(|example_id| example_scores.contains_key(*example_id))
+            .filter(|example_id| solved_example_scores.contains_key(*example_id))
             .cloned()
             .collect::<Vec<_>>();
         let missing_examples = train_example_ids
             .iter()
-            .filter(|example_id| !example_scores.contains_key(*example_id))
+            .filter(|example_id| !solved_example_scores.contains_key(*example_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let evaluated_examples = train_example_ids
+            .iter()
+            .filter(|example_id| example_scores.contains_key(*example_id))
             .cloned()
             .collect::<Vec<_>>();
         covered_frontier_seeds.extend(covered_seeds.iter().copied());
@@ -10817,6 +12358,9 @@ fn frontier_snapshot_value(
             "missing_example_count": missing_examples.len(),
             "covered_examples": covered_examples,
             "missing_examples": missing_examples,
+            "evaluated_seed_count": evaluated_seed_set.len(),
+            "evaluated_example_count": evaluated_examples.len(),
+            "coverage_semantics": "solved_reward_positive",
             "wins_vs_best": wins_vs_best,
             "losses_vs_best": losses_vs_best,
             "ties_vs_best": ties_vs_best,
@@ -10839,12 +12383,22 @@ fn frontier_snapshot_value(
         "frontier_size": frontier.len(),
         "previous_frontier_size": previous_frontier_size,
         "frontier_size_delta": previous_frontier_size.map(|previous| frontier.len() as i64 - previous as i64),
+        "frontier_added_count": frontier_added_candidate_ids.len(),
+        "frontier_removed_count": frontier_removed_candidate_ids.len(),
+        "frontier_added_candidate_ids": frontier_added_candidate_ids,
+        "frontier_removed_candidate_ids": frontier_removed_candidate_ids,
         "train_row_count": train_rows.len(),
         "train_seed_count": train_seeds.len(),
         "train_seeds": train_seeds.iter().copied().collect::<Vec<_>>(),
         "covered_train_seed_count": covered_frontier_seeds.len(),
+        "covered_train_seed_percent": coverage_percent(covered_frontier_seeds.len(), train_seeds.len()),
         "covered_train_seeds": covered_frontier_seeds.iter().copied().collect::<Vec<_>>(),
         "covered_train_example_count": covered_frontier_examples.len(),
+        "covered_train_example_percent": coverage_percent(covered_frontier_examples.len(), train_example_ids.len()),
+        "best_candidate_seed_coverage_percent": coverage_percent(best_seed_count, train_seeds.len()),
+        "best_candidate_example_count": best_solved_examples.len(),
+        "best_candidate_example_coverage_percent": coverage_percent(best_solved_examples.len(), train_example_ids.len()),
+        "coverage_semantics": "solved_reward_positive",
         "frontier": frontier,
         "members": member_rows,
         "coverage": {
@@ -10852,9 +12406,44 @@ fn frontier_snapshot_value(
             "train_seed_count": train_seeds.len(),
             "train_example_count": train_example_ids.len(),
             "covered_train_seed_count": covered_frontier_seeds.len(),
+            "covered_train_seed_percent": coverage_percent(covered_frontier_seeds.len(), train_seeds.len()),
+            "best_candidate_seed_count": best_seed_count,
+            "best_candidate_seed_coverage_percent": coverage_percent(best_seed_count, train_seeds.len()),
+            "best_candidate_example_count": best_solved_examples.len(),
+            "best_candidate_example_coverage_percent": coverage_percent(best_solved_examples.len(), train_example_ids.len()),
             "covered_train_example_count": covered_frontier_examples.len(),
+            "covered_train_example_percent": coverage_percent(covered_frontier_examples.len(), train_example_ids.len()),
+            "coverage_semantics": "solved_reward_positive",
         },
     }))
+}
+
+fn score_is_solved(reward: f64) -> bool {
+    reward > 0.0
+}
+
+fn candidate_solved_seeds(scores: &[RolloutScore]) -> BTreeSet<i64> {
+    scores
+        .iter()
+        .filter(|score| score_is_solved(score.reward))
+        .map(|score| score.seed)
+        .collect()
+}
+
+fn solved_examples(scores: &[RolloutScore]) -> BTreeMap<String, f64> {
+    scores
+        .iter()
+        .filter(|score| score_is_solved(score.reward))
+        .map(|score| (score.example_id.clone(), score.reward))
+        .collect()
+}
+
+fn coverage_percent(covered: usize, total: usize) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        (covered as f64 / total as f64) * 100.0
+    }
 }
 
 fn select_best_train_candidate(
@@ -11035,6 +12624,7 @@ fn score_chart_value(
         .get(seed_idx)
         .and_then(|candidate| candidate.heldout_reward);
     let mut rows = Vec::new();
+    let mut candidate_prompt_diffs = Vec::new();
     let mut train_values = Vec::new();
     let mut heldout_values = Vec::new();
     for (idx, candidate) in candidates.iter().enumerate() {
@@ -11060,15 +12650,68 @@ fn score_chart_value(
             "is_seed": idx == seed_idx,
             "is_best": idx == best_idx,
         }));
+        if idx != seed_idx {
+            let diff = prompt_payload_diff(candidates.get(seed_idx), Some(candidate));
+            if !diff.is_empty() {
+                candidate_prompt_diffs.push(json!({
+                    "index": idx,
+                    "candidate_id": candidate.candidate_id.clone(),
+                    "source": candidate.source.clone(),
+                    "status": candidate.status.clone(),
+                    "train_reward": train_reward,
+                    "heldout_reward": heldout_reward,
+                    "diff": diff,
+                }));
+            }
+        }
     }
     json!({
         "chart_path": chart_path.display().to_string(),
         "seed_candidate_id": seed_candidate_id,
         "best_candidate_id": best_candidate_id,
+        "baseline_to_best_diff": prompt_payload_diff(
+            candidates.get(seed_idx),
+            candidates.get(best_idx),
+        ),
+        "candidate_prompt_diffs": candidate_prompt_diffs,
         "train_values": train_values,
         "heldout_values": heldout_values,
         "candidates": rows,
     })
+}
+
+fn prompt_payload_diff(
+    baseline: Option<&CandidateRecord>,
+    best: Option<&CandidateRecord>,
+) -> Vec<Value> {
+    let Some(baseline) = baseline else {
+        return Vec::new();
+    };
+    let Some(best) = best else {
+        return Vec::new();
+    };
+    if baseline.candidate_id == best.candidate_id {
+        return Vec::new();
+    }
+    let keys = baseline
+        .payload
+        .keys()
+        .chain(best.payload.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    keys.into_iter()
+        .filter_map(|module| {
+            let before = baseline.payload.get(&module).cloned().unwrap_or_default();
+            let after = best.payload.get(&module).cloned().unwrap_or_default();
+            (before != after).then(|| {
+                json!({
+                    "module": module,
+                    "before": before,
+                    "after": after,
+                })
+            })
+        })
+        .collect()
 }
 
 fn render_score_chart_svg(run_id: &str, chart: &Value) -> String {
@@ -11324,13 +12967,21 @@ fn cost_budget_reached(config: &SynthOptimizerConfig, cost_usd: f64) -> bool {
     config.gepa.max_cost_usd > 0.0 && cost_usd >= config.gepa.max_cost_usd
 }
 
+fn train_rollout_budget_reached(config: &SynthOptimizerConfig, rollout_count: usize) -> bool {
+    rollout_count >= config.gepa.train_rollout_limit()
+}
+
 fn budget_status(
     config: &SynthOptimizerConfig,
     rollout_count: usize,
     cost_usd: f64,
 ) -> &'static str {
-    if rollout_count >= config.gepa.max_total_rollouts {
-        "rollout_budget_reached"
+    if train_rollout_budget_reached(config, rollout_count) {
+        if config.gepa.split_rollout_budgets_enabled() {
+            "train_rollout_budget_reached"
+        } else {
+            "rollout_budget_reached"
+        }
     } else if cost_budget_reached(config, cost_usd) {
         "cost_budget_reached"
     } else {
@@ -11344,6 +12995,47 @@ fn remaining_rollout_capacity(workspace: &WorkspaceStore, run_id: &str) -> Resul
         .remaining_rollouts()
         .map(u64_to_usize_saturating)
         .unwrap_or(usize::MAX))
+}
+
+fn remaining_train_rollout_capacity(
+    workspace: &WorkspaceStore,
+    config: &SynthOptimizerConfig,
+    rollout_count: usize,
+) -> Result<usize> {
+    Ok(
+        remaining_rollout_capacity(workspace, &config.run.run_id)?.min(
+            config
+                .gepa
+                .train_rollout_limit()
+                .saturating_sub(rollout_count),
+        ),
+    )
+}
+
+fn heldout_rollout_count(candidates: &[CandidateRecord]) -> usize {
+    candidates
+        .iter()
+        .flat_map(|candidate| candidate.sensor_frames.iter())
+        .filter(|frame| frame.evaluation_stage == "heldout")
+        .count()
+}
+
+fn remaining_heldout_rollout_capacity(
+    workspace: &WorkspaceStore,
+    config: &SynthOptimizerConfig,
+    candidates: &[CandidateRecord],
+) -> Result<usize> {
+    let global_remaining = remaining_rollout_capacity(workspace, &config.run.run_id)?;
+    if config.gepa.split_rollout_budgets_enabled() {
+        Ok(global_remaining.min(
+            config
+                .gepa
+                .heldout_rollout_limit()
+                .saturating_sub(heldout_rollout_count(candidates)),
+        ))
+    } else {
+        Ok(global_remaining)
+    }
 }
 
 fn next_rollout_budget_breach(
@@ -11361,14 +13053,23 @@ fn next_rollout_budget_breach(
 
 fn rollout_budget_exceeded_error(
     run_id: &str,
+    limit: &str,
     requested: usize,
     available: usize,
 ) -> OptimizerError {
     OptimizerError::BudgetExceeded {
         run_id: run_id.to_string(),
-        limit: "max_total_rollouts".to_string(),
+        limit: limit.to_string(),
         requested: requested.to_string(),
         available: available.to_string(),
+    }
+}
+
+fn rollout_budget_limit_name(config: &SynthOptimizerConfig) -> &'static str {
+    if config.gepa.split_rollout_budgets_enabled() {
+        "max_train_rollouts"
+    } else {
+        "max_total_rollouts"
     }
 }
 
@@ -11391,7 +13092,7 @@ fn push_stopper_snapshot(
         candidate_id: snapshot.candidate_id,
         evaluation_stage: snapshot.evaluation_stage,
         rollout_count: snapshot.rollout_count as u64,
-        max_total_rollouts: config.gepa.max_total_rollouts as u64,
+        max_total_rollouts: config.gepa.effective_max_total_rollouts() as u64,
         cost_usd: snapshot.cost_usd,
         max_cost_usd: config.gepa.max_cost_usd,
         metadata: snapshot.metadata,
@@ -11511,7 +13212,9 @@ fn checkpoint_snapshot_value(state: CheckpointSnapshotState<'_>) -> Value {
         "rollout_count": state.rollout_count,
         "usage": state.total_usage,
         "cost_usd": state.total_cost,
-        "max_total_rollouts": state.config.gepa.max_total_rollouts,
+        "max_total_rollouts": state.config.gepa.effective_max_total_rollouts(),
+        "max_train_rollouts": state.config.gepa.train_rollout_limit(),
+        "max_heldout_rollouts": state.config.gepa.heldout_rollout_limit(),
         "max_cost_usd": state.config.gepa.max_cost_usd,
     })
 }
@@ -11536,6 +13239,14 @@ fn proposer_usage_record(
     metadata.insert(
         "backend".to_string(),
         Value::String(outcome.backend.clone()),
+    );
+    metadata.insert(
+        "warning_count".to_string(),
+        json!(outcome.evidence_warnings.len()),
+    );
+    metadata.insert(
+        "warnings".to_string(),
+        json!(outcome.evidence_warnings.clone()),
     );
     if let Some(workspace) = &outcome.workspace {
         metadata.insert("workspace".to_string(), Value::String(workspace.clone()));
@@ -11838,6 +13549,17 @@ fn record_runtime_effect_job(
     let mut job = OptimizerJob::new(input.job_id, input.run_id, input.kind);
     job.status = input.status;
     job.candidate_id = input.candidate_id.map(str::to_string);
+    if matches!(job.kind, OptimizerJobKind::Rollout) {
+        job.retry_policy = RetryPolicy {
+            max_attempts: 3,
+            backoff_seconds: 2,
+            retryable_failure_types: vec![
+                "synth_optimizer_http_error".to_string(),
+                "synth_optimizer_container_error".to_string(),
+                "synth_optimizer_failed".to_string(),
+            ],
+        };
+    }
     job.attempt = if matches!(job.status, OptimizerJobStatus::Pending) {
         input.effect.attempt.saturating_sub(1)
     } else {
@@ -12240,13 +13962,10 @@ fn evaluate_candidate(call: EvaluationCall<'_>) -> Result<CandidateEvaluation> {
             &response,
         )?;
         align_sensor_frame_objectives(&mut sensor_frame, call.objective_set, reward);
+        attach_rollout_trace_artifact(call.paths, &call.config.run.run_id, &mut sensor_frame)?;
         let objective_scores = serde_json::to_value(&sensor_frame.objective_scores)?;
-        let materialization = RolloutMaterializationIdentity::prompt_overlay(
-            GEPA_ALGORITHM_ID,
-            &call.program.program_id,
-            &call.candidate.lever_bundle.schema_version,
-            &call.objective_set.objective_set_hash,
-        );
+        let materialization =
+            rollout_materialization_identity(call.program, call.candidate, call.objective_set);
         let candidate_payload_value = serde_json::to_value(&call.candidate.payload)?;
         let platform_cache_key = Some(rollout_call.cache_key.clone());
         let mut materialization_metadata = Map::new();
@@ -12351,6 +14070,23 @@ fn propose_candidates(call: ProposerCall<'_>) -> Result<ProposerOutcome> {
         "candidates": call.candidates,
         "program": call.program,
         "seed_pool_rows": call.seed_pool_rows,
+        "workspace_root": call.paths.run_dir,
+        "run_artifact_dir": call.paths.run_dir,
+        "proposal_artifact_dir": workspace_dir,
+        "lever_manifest": LeverManifest::from_prompt_program(call.program),
+        "frontier_summary": proposer_frontier_summary(
+            call.candidates,
+            &call.seed_pool_rows
+                .get("pareto_eval")
+                .and_then(|value| value.get("rows"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            None,
+        )?,
+        "minibatch_failures": proposer_minibatch_failures(call.candidates),
+        "rollout_trace_artifact_refs": proposer_rollout_trace_artifact_refs(call.candidates),
+        "merge_evidence_artifacts": proposer_merge_evidence_artifacts(call.paths)?,
         "target_modules": call.config.candidate.target_modules,
         "proposal_count": call.config.gepa.proposals_per_generation,
     });
@@ -12432,6 +14168,7 @@ fn propose_candidates(call: ProposerCall<'_>) -> Result<ProposerOutcome> {
         cost_usd: proposer_runtime_outcome.cost_usd,
         backend: proposer_runtime_outcome.backend,
         workspace: proposer_runtime_outcome.workspace,
+        evidence_warnings: proposer_runtime_outcome.evidence_warnings,
     })
 }
 
@@ -12456,53 +14193,13 @@ fn run_proposer(
                 workspace_dir,
             })
         }
-        "deterministic_public" => Ok(deterministic_proposals(config, parent, generation)),
+        "local_process_json" => Err(OptimizerError::Config(
+            "unsupported proposer.backend \"local_process_json\"; GEPA proposer work must use codex_app_server workspace-backed proposing".to_string(),
+        )),
         backend => Err(OptimizerError::Config(format!(
-            "unsupported proposer.backend {backend:?}"
+            "unsupported proposer.backend {backend:?}; expected codex_app_server"
         ))),
     }
-}
-
-fn deterministic_proposals(
-    config: &SynthOptimizerConfig,
-    parent: &CandidateRecord,
-    generation: usize,
-) -> Value {
-    let mut proposals = Vec::new();
-    for index in 0..config.gepa.proposals_per_generation {
-        let mut candidate = parent.payload.clone();
-        let target = config
-            .candidate
-            .target_modules
-            .get(index % config.candidate.target_modules.len())
-            .cloned()
-            .unwrap_or_else(|| "prompt".to_string());
-        let base = candidate.get(&target).cloned().unwrap_or_default();
-        let variant_instruction = if index % 2 == 0 {
-            "Follow the container program contract exactly, preserve the expected output format, and make task decisions from evidence in the rollout row."
-        } else {
-            "Improve robustness on ambiguous examples by naming the relevant evidence, avoiding unsupported assumptions, and keeping the response within the declared mutable prompt behavior."
-        };
-        candidate.insert(
-            target,
-            format!(
-                "{}\n\n{} GEPA variant {}.{}.",
-                base.trim(),
-                variant_instruction,
-                generation + 1,
-                index + 1
-            ),
-        );
-        proposals.push(json!({
-            "candidate": candidate,
-            "rationale": "deterministic public fallback proposal"
-        }));
-    }
-    json!({
-        "proposals": proposals,
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-        "backend": "deterministic_public"
-    })
 }
 
 fn cached_call(

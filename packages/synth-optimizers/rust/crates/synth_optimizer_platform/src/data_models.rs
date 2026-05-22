@@ -163,6 +163,22 @@ impl RolloutMaterializationIdentity {
             objective_set_hash: objective_set_hash.to_string(),
         }
     }
+
+    pub fn lever_bundle(
+        algorithm_id: &str,
+        program_id: &str,
+        lever_version: &str,
+        objective_set_hash: &str,
+    ) -> Self {
+        Self {
+            evaluator_id: "container.reward_info".to_string(),
+            algorithm_id: algorithm_id.to_string(),
+            materializer_id: format!("lever_bundle:{program_id}"),
+            lever_version: lever_version.to_string(),
+            sensor_version: "sensor_frame.v1".to_string(),
+            objective_set_hash: objective_set_hash.to_string(),
+        }
+    }
 }
 
 impl EvaluationCacheIdentity {

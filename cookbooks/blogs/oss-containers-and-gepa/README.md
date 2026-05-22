@@ -9,15 +9,17 @@ goes live with the launch).
 ## What this folder contains
 
 Every chart in the post has a matching subfolder. Each subfolder has its
-own README, configs, run commands, and released run artifacts so the
+own README, configs, run commands, and tracked source evidence so the
 chart can be regenerated end-to-end against the public container
-contract.
+contract. Large local rerun outputs live under ignored `runs/`
+directories; Chart A tracks the launch evidence compactly in
+`chart-a-head-to-head/figures/source_evidence.json`.
 
 ## Charts
 
 | Folder | What the chart shows |
 |---|---|
-| [chart-a-head-to-head/](./chart-a-head-to-head/) | Compute-parity head-to-head: Synth GEPA vs gepa-ai on the four reference cookbooks. The anchor table for the post. |
+| [chart-a-head-to-head/](./chart-a-head-to-head/) | Head-to-head: Synth GEPA vs gepa-ai on the three public launch cookbooks. Code Review stays runner-OSS/container-private. |
 | [chart-b-prompt-diff/](./chart-b-prompt-diff/) | Qualitative side-by-side of best candidate prompts from both implementations on Banking77, TBLite, and Crafter. |
 | [chart-c-use-case-coverage/](./chart-c-use-case-coverage/) | Honest capability matrix: what each implementation can target today (incl. `optimize_anything` gap). |
 | [chart-d-proposer-scaling/](./chart-d-proposer-scaling/) | Does optimizer quality ride the proposer-model curve? Sweep across `gpt-5` → `gpt-5.5`. |
@@ -101,8 +103,10 @@ including the rows where the container stays internal.
 
 ## Compute-parity ground rules
 
-Every "vs gepa-ai" chart in this folder runs both implementations under
-the same conditions:
+Every "vs gepa-ai" chart in this folder documents the matched conditions
+it uses. Chart A matches the public HTTP container boundary for every row;
+Banking77 is the broad fixed-budget parity case, while TBLite and Crafter
+are smoke-scale public splits. Other sweep charts should pin:
 
 - Same `max_total_rollouts` budget per run.
 - Same proposer model (default: `gpt-5.4-mini`, unless the chart is

@@ -395,8 +395,9 @@ Primary one-process-per-tick TBLite run:
 - Root: `/tmp/synth-gepa-restart-1779320201`
 - Run: `tblite_restart_1779320201`
 - Driver: `workspace submit`, then 57 separate `gepa tick --db` invocations.
-- Environment: `SYNTH_OPTIMIZERS_PROPOSER_BACKEND=deterministic_public` plus
-  unique run id, output dir, cache path, and cache namespace under `/tmp`.
+- Environment: legacy deterministic proposer fallback plus unique run id, output
+  dir, cache path, and cache namespace under `/tmp`. That fallback is now
+  unsupported; new acceptance runs should use `codex_app_server`.
 - Actions advanced one transition per tick through claim, start, setup, plan,
   execute, consume, checkpoint, and terminalize.
 - Final service status: `{completed: 1}`.
@@ -498,9 +499,10 @@ the compatibility alias `SYNTH_OPTIMIZERS_MAX_CONCURRENT_ROLLOUTS`.
 
 - Banking77 root: `/tmp/synth-gepa-banking77-parallel-smoke-20260520-213522`
 - Banking77 run: `banking77_parallel_smoke_20260520_213522`
-- Driver: `workspace submit`, then `gepa run-next --db` with
-  `SYNTH_OPTIMIZERS_PROPOSER_BACKEND=deterministic_public` and
-  `SYNTH_OPTIMIZERS_MAX_CONCURRENT_ROLLOUTS=16`.
+- Driver: `workspace submit`, then `gepa run-next --db` with the legacy
+  deterministic proposer fallback and `SYNTH_OPTIMIZERS_MAX_CONCURRENT_ROLLOUTS=16`.
+  That fallback is now unsupported; new acceptance runs should use
+  `codex_app_server`.
 - Wall time: `real 90.68s`; final service status `{completed: 1}`; latest
   cursor `completed`; manifest exists.
 - Workspace DB evidence: two candidate-minibatch `rollout_batch` jobs, each

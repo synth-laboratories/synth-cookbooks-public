@@ -28,7 +28,7 @@ pub struct ConfiguredGepaRunLimits {
 impl ConfiguredGepaRunLimits {
     pub fn from_config(config: &SynthOptimizerConfig) -> Self {
         Self {
-            max_total_rollouts: Some(config.gepa.max_total_rollouts as u64),
+            max_total_rollouts: Some(config.gepa.effective_max_total_rollouts() as u64),
             max_cost_usd: gepa_cost_limit_usd(&config.gepa),
             max_time_seconds: config.gepa.max_time_seconds,
             max_prompt_tokens: config.gepa.max_prompt_tokens,

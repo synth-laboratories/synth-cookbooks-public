@@ -7,9 +7,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use synth_optimizer_platform::{
-    BudgetReservationRecord, ContainerClient, GepaPipelineMode, OptimizerError, OptimizerJob,
-    OptimizerJobStatus, PromptProgram, RequestCache, Result, RolloutResponse, RuntimeEffectInput,
-    RuntimeEffectRecord, SynthOptimizerConfig, WorkspaceStore,
+    BudgetReservationRecord, ContainerClient, FailurePayload, GepaPipelineMode, OptimizerError,
+    OptimizerJob, OptimizerJobKind, OptimizerJobStatus, PromptProgram, RequestCache, Result,
+    RolloutResponse, RuntimeEffectInput, RuntimeEffectRecord, SynthOptimizerConfig, WorkspaceStore,
 };
 
 use crate::{
@@ -258,6 +258,7 @@ pub struct RuntimeProposerOutcome {
     pub cost_usd: f64,
     pub backend: String,
     pub workspace: Option<String>,
+    pub evidence_warnings: Vec<String>,
     pub cache_key: String,
     pub cache_hit: bool,
 }
@@ -383,6 +384,11 @@ impl<'a> GepaRuntimeExecutor<'a> {
         let outcome = match self.execute_dispatch(dispatch) {
             Ok(outcome) => outcome,
             Err(error) => {
+                if let Some(retry) =
+                    self.schedule_rollout_retry_if_allowed(&running_job, &lease_id, &error)?
+                {
+                    return Err(retry);
+                }
                 return crate::fail_runtime_effect_and_return(
                     self.workspace,
                     &running_effect,
@@ -434,6 +440,45 @@ impl<'a> GepaRuntimeExecutor<'a> {
         )?;
         ensure_job_lease(self.workspace, run_id, &claimed.job_id, &lease_id)?;
         Ok(outcome)
+    }
+
+    fn schedule_rollout_retry_if_allowed(
+        &self,
+        job: &OptimizerJob,
+        lease_id: &str,
+        error: &OptimizerError,
+    ) -> Result<Option<OptimizerError>> {
+        if !matches!(
+            self.config.gepa.pipeline.mode,
+            GepaPipelineMode::AsyncPipelined
+        ) || !matches!(job.kind, OptimizerJobKind::Rollout)
+            || !is_retryable_rollout_runtime_error(error)
+            || job.attempt >= job.retry_policy.max_attempts
+        {
+            return Ok(None);
+        }
+        let failure = FailurePayload::from_optimizer_error(error);
+        let backoff_seconds = job
+            .retry_policy
+            .backoff_seconds
+            .saturating_mul(1_u64 << job.attempt.saturating_sub(1).min(8));
+        let Some(updated) = self.workspace.schedule_optimizer_job_retry(
+            &job.run_id,
+            &job.job_id,
+            lease_id,
+            backoff_seconds.max(1),
+            &failure,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(OptimizerError::Failed(format!(
+            "retryable rollout runtime failure scheduled for retry job_id={} attempt={}/{} next_retry_at={}",
+            updated.job_id,
+            updated.attempt.saturating_add(1),
+            updated.retry_policy.max_attempts,
+            updated.next_retry_at.unwrap_or_else(|| "now".to_string())
+        ))))
     }
 
     fn execute_dispatch(
@@ -549,6 +594,14 @@ impl<'a> GepaRuntimeExecutor<'a> {
             .get("workspace")
             .and_then(Value::as_str)
             .map(str::to_string);
+        let evidence_warnings = response
+            .get("evidence_warnings")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect();
         Ok(RuntimeEffectOutcome::Proposer(Box::new(
             RuntimeProposerOutcome {
                 response,
@@ -557,6 +610,7 @@ impl<'a> GepaRuntimeExecutor<'a> {
                 cost_usd,
                 backend,
                 workspace,
+                evidence_warnings,
                 cache_key: call.cache_key,
                 cache_hit: call.cache_hit,
             },
@@ -807,6 +861,13 @@ fn dispatch_rollout_with_retries(
 
 fn is_retryable_rollout_dispatch_error(error: &OptimizerError) -> bool {
     matches!(error, OptimizerError::Http(_))
+}
+
+fn is_retryable_rollout_runtime_error(error: &OptimizerError) -> bool {
+    matches!(
+        error,
+        OptimizerError::Http(_) | OptimizerError::Container(_) | OptimizerError::Failed(_)
+    )
 }
 
 fn dispatch_async_rollout(
@@ -1143,6 +1204,13 @@ fn proposed_candidates(response: &Value) -> Vec<ProposedCandidate> {
             .or_else(|| item.get("proposed_payload"))
             .cloned()
             .unwrap_or_else(|| item.clone());
+        let lever_bundle = item
+            .get("lever_bundle")
+            .or_else(|| candidate.get("lever_bundle"))
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .unwrap_or(None);
         let Some(map) = candidate.as_object() else {
             continue;
         };
@@ -1163,6 +1231,7 @@ fn proposed_candidates(response: &Value) -> Vec<ProposedCandidate> {
                             | "proposal_type"
                             | "parent_candidate_ids"
                             | "rationale"
+                            | "lever_bundle"
                             | "evidence"
                     ) {
                         metadata.insert(key.clone(), value.clone());
@@ -1171,6 +1240,7 @@ fn proposed_candidates(response: &Value) -> Vec<ProposedCandidate> {
             }
             out.push(ProposedCandidate {
                 payload,
+                lever_bundle,
                 proposal_type,
                 parent_candidate_ids,
                 rationale,

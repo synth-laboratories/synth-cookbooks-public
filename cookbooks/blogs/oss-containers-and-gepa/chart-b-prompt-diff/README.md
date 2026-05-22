@@ -51,9 +51,9 @@ python extract_prompts.py      # Pulls best_candidate.json from upstream runs
 
 ## Status
 
-- [ ] Source runs picked for all 3 cookbooks.
-- [ ] `extract_prompts.py` writes `prompts/*/synth_gepa_best.txt` and
+- [x] Source runs picked for all 3 cookbooks.
+- [x] `extract_prompts.py` writes `prompts/*/synth_gepa_best.txt` and
       `prompts/*/gepa_ai_best.txt`.
-- [ ] `diff.md` written for each pair with 1-2 sentence summary of what
+- [x] `diff.md` written for each pair with 1-2 sentence summary of what
       each implementation's proposer consistently does differently.
-- [ ] Section in the blog MDX renders the pairs.
+- [x] Blog MDX cites the extracted prompt-diff source files and summarizes the pairwise pattern.

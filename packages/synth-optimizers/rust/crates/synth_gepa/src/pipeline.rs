@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use synth_optimizer_platform::{
-    GepaPipelineConfig, GepaPipelineMode, GepaStalenessPolicy, OptimizerError, Result,
-    SynthOptimizerConfig,
+    GepaAdaptiveRolloutConcurrencyConfig, GepaPipelineConfig, GepaPipelineMode,
+    GepaStalenessPolicy, OptimizerError, Result, SynthOptimizerConfig,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -22,6 +22,7 @@ impl GepaPipelineRuntimePlan {
                 Ok(Self::AsyncPipelined(GepaAsyncPipelinedPlan::from_config(
                     &config.gepa.pipeline,
                     &config.gepa.rollout_submission_mode,
+                    config.gepa.rollout_chunk_size,
                 )?))
             }
         }
@@ -50,6 +51,8 @@ impl GepaPipelineRuntimePlan {
                     "evaluate": plan.evaluate_workers,
                 },
                 "max_in_flight_candidates": plan.max_in_flight_candidates,
+                "rollout_chunk_size": plan.rollout_chunk_size,
+                "adaptive_rollout_concurrency": plan.adaptive_rollout_concurrency,
                 "lanes": plan.lanes(),
             }),
         }
@@ -69,10 +72,16 @@ pub struct GepaAsyncPipelinedPlan {
     pub rollout_workers: usize,
     pub evaluate_workers: usize,
     pub max_in_flight_candidates: usize,
+    pub rollout_chunk_size: usize,
+    pub adaptive_rollout_concurrency: GepaAdaptiveRolloutConcurrencyConfig,
 }
 
 impl GepaAsyncPipelinedPlan {
-    fn from_config(config: &GepaPipelineConfig, rollout_transport: &str) -> Result<Self> {
+    fn from_config(
+        config: &GepaPipelineConfig,
+        rollout_transport: &str,
+        rollout_chunk_size: Option<usize>,
+    ) -> Result<Self> {
         if !matches!(config.staleness_policy, GepaStalenessPolicy::Full) {
             return Err(OptimizerError::Config(format!(
                 "gepa.pipeline.staleness_policy = {:?} is reserved for a later async-pipelined phase; use full for the first runtime slice",
@@ -86,6 +95,14 @@ impl GepaAsyncPipelinedPlan {
             rollout_workers: config.workers.rollout,
             evaluate_workers: config.workers.evaluate,
             max_in_flight_candidates: config.max_in_flight_candidates,
+            adaptive_rollout_concurrency: config.adaptive_rollout_concurrency.clone(),
+            rollout_chunk_size: rollout_chunk_size.unwrap_or_else(|| {
+                if config.adaptive_rollout_concurrency.enabled {
+                    config.adaptive_rollout_concurrency.initial.clamp(1, 128)
+                } else {
+                    config.workers.rollout.clamp(1, 128)
+                }
+            }),
         })
     }
 

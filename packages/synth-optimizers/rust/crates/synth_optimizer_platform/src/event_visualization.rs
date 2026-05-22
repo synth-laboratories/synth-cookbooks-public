@@ -1,4 +1,5 @@
 use std::io::{self, Write};
+use std::sync::{Mutex, OnceLock};
 use std::{env, fmt::Write as _};
 
 use serde_json::Value;
@@ -15,25 +16,42 @@ pub(crate) fn terminal_events_enabled() -> bool {
         .unwrap_or(false)
 }
 
-fn frontier_detail_enabled() -> bool {
+fn terminal_detail_enabled(topic: &str) -> bool {
     env::var("SYNTH_OPTIMIZERS_TERMINAL_DETAIL")
         .ok()
         .map(|value| {
             value
                 .split(',')
                 .map(|item| item.trim().to_ascii_lowercase())
-                .any(|item| matches!(item.as_str(), "1" | "true" | "frontier" | "debug"))
+                .any(|item| matches!(item.as_str(), "1" | "true" | "debug") || item == topic)
         })
         .unwrap_or(false)
 }
 
 pub(crate) fn render_terminal_event(event_type: &str, message: &str, fields: &Value) {
-    let Some(line) = terminal_line_for_event(event_type, message, fields) else {
+    let lines = terminal_lines_for_event(event_type, message, fields);
+    if lines.is_empty() {
         return;
-    };
+    }
     let mut stdout = io::stdout().lock();
-    let _ = writeln!(stdout, "{line}");
+    for line in lines {
+        let _ = writeln!(stdout, "{line}");
+    }
     let _ = stdout.flush();
+}
+
+fn terminal_lines_for_event(event_type: &str, message: &str, fields: &Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(summary) = maybe_rollout_section_summary_before_event(event_type, fields) {
+        lines.push(summary);
+    }
+    if let Some(line) = terminal_line_for_event(event_type, message, fields) {
+        lines.push(line);
+    }
+    if let Some(summary) = maybe_rollout_section_summary_after_event(event_type) {
+        lines.push(summary);
+    }
+    lines
 }
 
 pub(crate) fn terminal_line_for_event(
@@ -72,11 +90,17 @@ pub(crate) fn terminal_line_for_event(
         "optimizer.state.transitioned" => terminal_state_transition_line(message, fields),
         "proposer.started" => Some(terminal_proposer_started_line(fields)),
         "proposer.completed" => Some(format!(
-            "  generation {} proposer finished backend={} candidates={}",
+            "  generation {} proposer finished backend={} wall={} candidates={} warnings={}",
             field_usize(fields, "generation").unwrap_or(0),
             field_str(fields, "backend").unwrap_or("unknown"),
-            field_usize(fields, "proposal_count").unwrap_or(0)
+            field_f64(fields, "wall_seconds")
+                .map(fmt_seconds)
+                .unwrap_or_else(|| "-".to_string()),
+            field_usize(fields, "proposal_count").unwrap_or(0),
+            field_usize(fields, "warning_count").unwrap_or(0)
         )),
+        "rollout.chunk.started" => Some(terminal_rollout_progress_line(fields, false)),
+        "rollout.chunk.finished" => Some(terminal_rollout_progress_line(fields, true)),
         "candidate.duplicate_skipped" => Some(format!(
             "  generation {} duplicate skipped {}",
             field_usize(fields, "generation").unwrap_or(0),
@@ -119,8 +143,22 @@ pub(crate) fn terminal_line_for_event(
             fmt_score(field_f64(fields, "train_reward")),
             fmt_score(field_f64(fields, "heldout_reward"))
         )),
+        "heldout.skipped" => Some(format!(
+            "  heldout skipped: required={} available={} best={}",
+            field_usize(fields, "required_rollouts").unwrap_or(0),
+            field_usize(fields, "available_rollouts").unwrap_or(0),
+            short_id(field_str(fields, "best_candidate_id").unwrap_or("unknown"))
+        )),
         "runtime.job.completed" => Some(terminal_runtime_job_completed_line(fields)),
         "runtime.throughput.warning" => Some(terminal_runtime_throughput_warning_line(fields)),
+        "rollout.concurrency.adjusted" => Some(format!(
+            "  adaptive rollout concurrency {} old={} new={} completed={} reason={}",
+            field_str(fields, "direction").unwrap_or("-"),
+            field_usize(fields, "old_limit").unwrap_or(0),
+            field_usize(fields, "new_limit").unwrap_or(0),
+            field_usize(fields, "completed_rollouts").unwrap_or(0),
+            field_str(fields, "reason").unwrap_or("-")
+        )),
         "score_chart.written" => Some(terminal_score_chart_line(fields)),
         "workspace.persisted" => None,
         "gepa.run.finished" => Some(terminal_finished_line(fields)),
@@ -237,7 +275,103 @@ fn terminal_score_chart_line(fields: &Value) -> String {
     if !heldout_is_tied {
         append_score_scatter(&mut out, rows, seed_id, best_id);
     }
+    append_baseline_to_best_diff(&mut out, fields);
+    append_candidate_prompt_diffs(&mut out, fields);
     out
+}
+
+fn append_baseline_to_best_diff(out: &mut String, fields: &Value) {
+    let diffs = fields
+        .get("baseline_to_best_diff")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let _ = writeln!(out, "\n      baseline -> best diff");
+    if diffs.is_empty() {
+        let seed_id = field_str(fields, "seed_candidate_id").unwrap_or("-");
+        let best_id = field_str(fields, "best_candidate_id").unwrap_or("-");
+        let reason = if seed_id == best_id {
+            "best is still the seed"
+        } else {
+            "best prompt payload matches the seed"
+        };
+        let _ = writeln!(out, "      none ({reason})");
+        return;
+    }
+    for diff in diffs {
+        let module = field_str(diff, "module").unwrap_or("module");
+        let before = field_str(diff, "before").unwrap_or("");
+        let after = field_str(diff, "after").unwrap_or("");
+        let _ = writeln!(out, "      {module}");
+        let _ = writeln!(out, "        - {}", truncate_inline(before, 180));
+        let _ = writeln!(out, "        + {}", truncate_inline(after, 180));
+    }
+}
+
+fn append_candidate_prompt_diffs(out: &mut String, fields: &Value) {
+    let diffs = fields
+        .get("candidate_prompt_diffs")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let _ = writeln!(out, "\n      candidate prompt diffs");
+    if diffs.is_empty() {
+        let _ = writeln!(out, "      none");
+        return;
+    }
+    let mut ranked = diffs.iter().collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        field_f64(right, "train_reward")
+            .unwrap_or(f64::NEG_INFINITY)
+            .partial_cmp(&field_f64(left, "train_reward").unwrap_or(f64::NEG_INFINITY))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                field_f64(right, "heldout_reward")
+                    .unwrap_or(f64::NEG_INFINITY)
+                    .partial_cmp(&field_f64(left, "heldout_reward").unwrap_or(f64::NEG_INFINITY))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+    let max_candidates = 6usize;
+    let max_modules = 3usize;
+    for candidate in ranked.iter().take(max_candidates) {
+        let candidate_id = field_str(candidate, "candidate_id").unwrap_or("unknown");
+        let _ = writeln!(
+            out,
+            "      {} train={} heldout={} status={}",
+            short_id(candidate_id),
+            fmt_score(field_f64(candidate, "train_reward")),
+            fmt_score(field_f64(candidate, "heldout_reward")),
+            field_str(candidate, "status").unwrap_or("-")
+        );
+        let module_diffs = candidate
+            .get("diff")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        for diff in module_diffs.iter().take(max_modules) {
+            let module = field_str(diff, "module").unwrap_or("module");
+            let before = field_str(diff, "before").unwrap_or("");
+            let after = field_str(diff, "after").unwrap_or("");
+            let _ = writeln!(out, "        {module}");
+            let _ = writeln!(out, "          - {}", truncate_inline(before, 180));
+            let _ = writeln!(out, "          + {}", truncate_inline(after, 180));
+        }
+        if module_diffs.len() > max_modules {
+            let _ = writeln!(
+                out,
+                "        ... {} more modules",
+                module_diffs.len() - max_modules
+            );
+        }
+    }
+    if ranked.len() > max_candidates {
+        let _ = writeln!(
+            out,
+            "      ... {} more candidates",
+            ranked.len() - max_candidates
+        );
+    }
 }
 
 fn terminal_frontier_update_line(fields: &Value) -> String {
@@ -248,9 +382,7 @@ fn terminal_frontier_update_line(fields: &Value) -> String {
     let changed = field_str(fields, "changed_candidate_id")
         .map(short_id)
         .unwrap_or_else(|| "unknown".to_string());
-    let delta = field_i64(fields, "frontier_size_delta")
-        .map(format_signed)
-        .unwrap_or_default();
+    let delta = frontier_churn(fields);
     let mut out = format!(
         "  frontier {}+{} size={}{} best={} train={} coverage=train {} frontier_seeds={} best_seeds={} {}",
         generation,
@@ -266,6 +398,19 @@ fn terminal_frontier_update_line(fields: &Value) -> String {
     );
     append_frontier_detail(&mut out, fields, &summary);
     out
+}
+
+fn frontier_churn(fields: &Value) -> String {
+    let delta = field_i64(fields, "frontier_size_delta");
+    let added = field_usize(fields, "frontier_added_count");
+    let removed = field_usize(fields, "frontier_removed_count");
+    match (added, removed, delta) {
+        (Some(added), Some(removed), Some(delta)) if added > 0 || removed > 0 => {
+            format!(" (+{added}/-{removed} net {delta:+})")
+        }
+        (_, _, Some(delta)) => format_signed(delta),
+        _ => String::new(),
+    }
 }
 
 fn terminal_frontier_snapshot_line(fields: &Value) -> String {
@@ -342,7 +487,7 @@ fn frontier_summary(fields: &Value) -> FrontierSummary {
 }
 
 fn append_frontier_detail(out: &mut String, fields: &Value, summary: &FrontierSummary) {
-    if !frontier_detail_enabled() {
+    if !terminal_detail_enabled("frontier") {
         return;
     }
 
@@ -391,6 +536,9 @@ fn terminal_state_transition_line(message: &str, fields: &Value) -> Option<Strin
         "Proposer started" | "Async proposer started" => {
             Some(terminal_proposer_started_line(details))
         }
+        "Seed candidate rollouts started" if rollouts_started => Some(
+            terminal_candidate_rollouts_started_line(details, "seed-full-train"),
+        ),
         "Candidate minibatch rollouts started" if rollouts_started => Some(
             terminal_candidate_rollouts_started_line(details, "minibatch"),
         ),
@@ -422,10 +570,109 @@ fn terminal_proposer_started_line(fields: &Value) -> String {
         "\n  generation {} proposer started",
         field_usize(fields, "generation").unwrap_or(0)
     );
+    if let Some(backend) = field_str(fields, "backend") {
+        let _ = write!(line, " backend={backend}");
+    }
+    if let Some(model) = field_str(fields, "model") {
+        let _ = write!(line, " model={model}");
+    }
+    if let Some(proposal_count) = field_usize(fields, "proposal_count") {
+        let _ = write!(line, " target={proposal_count}");
+    }
     if let Some(parent_id) = field_str(fields, "parent_candidate_id") {
         let _ = write!(line, " parent={}", short_id(parent_id));
     }
+    if let Some(frontier_size) = field_usize(fields, "frontier_size") {
+        let _ = write!(line, " frontier={frontier_size}");
+    }
+    if let Some(candidate_count) = field_usize(fields, "candidate_count") {
+        let _ = write!(line, " candidates={candidate_count}");
+    }
+    if let Some(rollout_count) = field_usize(fields, "rollout_row_count") {
+        let _ = write!(line, " rollouts={rollout_count}");
+    }
+    if let Some(loss_count) = field_usize(fields, "loss_count") {
+        let _ = write!(line, " losses={loss_count}");
+    }
+    if let Some(win_count) = field_usize(fields, "win_count") {
+        let _ = write!(line, " wins={win_count}");
+    }
+    if let Some(workspace) = field_str(fields, "workspace") {
+        let _ = write!(line, " workspace={workspace}");
+    }
     line
+}
+
+fn terminal_rollout_chunk_started_line(fields: &Value) -> String {
+    format!(
+        "  rollout chunk started stage={} rows={} active={}/{} chunk={}",
+        field_str(fields, "stage").unwrap_or("-"),
+        field_usize(fields, "rows").unwrap_or(0),
+        field_usize(fields, "active_rollout_workers").unwrap_or(0),
+        field_usize(fields, "configured_rollout_workers").unwrap_or(0),
+        short_id(field_str(fields, "chunk_id").unwrap_or("-"))
+    )
+}
+
+fn terminal_rollout_chunk_finished_line(fields: &Value) -> String {
+    format!(
+        "  rollout chunk finished stage={} rows={} active={} wall={} rows/s={} chunk={}",
+        field_str(fields, "stage").unwrap_or("-"),
+        field_usize(fields, "rows").unwrap_or(0),
+        field_usize(fields, "active_rollout_workers").unwrap_or(0),
+        fmt_seconds(field_f64(fields, "wall_seconds").unwrap_or(0.0)),
+        fmt_rate(field_f64(fields, "rows_per_second").unwrap_or(0.0)),
+        short_id(field_str(fields, "chunk_id").unwrap_or("-"))
+    )
+}
+
+fn terminal_rollout_progress_line(fields: &Value, finished: bool) -> String {
+    if terminal_detail_enabled("rollout") {
+        if finished {
+            return terminal_rollout_chunk_finished_line(fields);
+        }
+        return terminal_rollout_chunk_started_line(fields);
+    }
+    let total = field_usize(fields, "total_rows").unwrap_or(0);
+    let done = field_usize(fields, "completed_rows")
+        .unwrap_or(0)
+        .min(total);
+    let width = 20usize;
+    let filled = if total > 0 {
+        (done.saturating_mul(width) + total / 2) / total
+    } else {
+        0
+    }
+    .min(width);
+    let bar = format!("{}{}", "#".repeat(filled), ".".repeat(width - filled));
+    let percent = if total > 0 {
+        100.0 * done as f64 / total as f64
+    } else {
+        0.0
+    };
+    let rate = field_f64(fields, "rows_per_second").unwrap_or(0.0);
+    let eta = if finished && rate > 0.0 && total > done {
+        fmt_seconds((total - done) as f64 / rate)
+    } else {
+        "-".to_string()
+    };
+    let state = if finished { "done" } else { "run" };
+    format!(
+        "  rollout {:<20} [{}] {:>3}/{:<3} {:>5.1}% active={} rate={}/s eta={} {}",
+        field_str(fields, "stage").unwrap_or("-"),
+        bar,
+        done,
+        total,
+        percent,
+        field_usize(fields, "active_rollout_workers").unwrap_or(0),
+        if rate > 0.0 {
+            fmt_rate(rate)
+        } else {
+            "-".to_string()
+        },
+        eta,
+        state,
+    )
 }
 
 fn terminal_candidate_rollouts_started_line(details: &Value, label: &str) -> String {
@@ -469,24 +716,41 @@ fn terminal_runtime_job_completed_line(fields: &Value) -> String {
             let rollout_count = field_usize(fields, "rollout_count").unwrap_or(0);
             let cache_hits = field_usize(fields, "cache_hits").unwrap_or(0);
             let cache_misses = field_usize(fields, "cache_misses").unwrap_or(0);
-            let avg = field_f64(fields, "avg_wall_seconds_per_rollout")
-                .map(fmt_seconds)
-                .unwrap_or_else(|| "-".to_string());
-            let diagnostics = runtime_rollout_diagnostics_suffix(fields);
-            format!(
-                "  rollout runtime stage={} mode={} workers={} candidates={} rollouts={} cache={}/{} wall={} avg={} tokens={}{}",
-                field_str(fields, "stage").unwrap_or("mixed"),
-                field_str(fields, "rollout_submission_mode").unwrap_or("-"),
-                field_usize(fields, "configured_rollout_workers").unwrap_or(0),
-                field_usize(fields, "candidate_count").unwrap_or(1),
-                rollout_count,
-                cache_hits,
-                cache_hits + cache_misses,
-                fmt_seconds(field_f64(fields, "wall_seconds").unwrap_or(0.0)),
-                avg,
-                fmt_tokens_millions(field_u64(fields, "total_tokens").unwrap_or(0)),
-                diagnostics,
-            )
+            if terminal_detail_enabled("rollout") {
+                let avg = field_f64(fields, "avg_wall_seconds_per_rollout")
+                    .map(fmt_seconds)
+                    .unwrap_or_else(|| "-".to_string());
+                let diagnostics = runtime_rollout_diagnostics_suffix(fields);
+                format!(
+                    "  rollout runtime stage={} mode={} workers={} candidates={} rollouts={} cache={}/{} wall={} avg={} tokens={}{}",
+                    field_str(fields, "stage").unwrap_or("mixed"),
+                    field_str(fields, "rollout_submission_mode").unwrap_or("-"),
+                    field_usize(fields, "configured_rollout_workers").unwrap_or(0),
+                    field_usize(fields, "candidate_count").unwrap_or(1),
+                    rollout_count,
+                    cache_hits,
+                    cache_hits + cache_misses,
+                    fmt_seconds(field_f64(fields, "wall_seconds").unwrap_or(0.0)),
+                    avg,
+                    fmt_tokens_millions(field_u64(fields, "total_tokens").unwrap_or(0)),
+                    diagnostics,
+                )
+            } else {
+                let diagnostics = field_f64(fields, "estimated_effective_concurrency")
+                    .map(|value| format!(" eff={value:.1}x"))
+                    .unwrap_or_default();
+                format!(
+                    "  rollout {} rows={} candidates={} cache={}/{} wall={} tokens={}{}",
+                    field_str(fields, "stage").unwrap_or("mixed"),
+                    rollout_count,
+                    field_usize(fields, "candidate_count").unwrap_or(1),
+                    cache_hits,
+                    cache_hits + cache_misses,
+                    fmt_seconds(field_f64(fields, "wall_seconds").unwrap_or(0.0)),
+                    fmt_tokens_millions(field_u64(fields, "total_tokens").unwrap_or(0)),
+                    diagnostics,
+                )
+            }
         }
         _ => format!(
             "  runtime job completed kind={} wall={}",
@@ -512,6 +776,136 @@ fn terminal_runtime_throughput_warning_line(fields: &Value) -> String {
     )
 }
 
+#[derive(Clone, Debug, Default)]
+struct RolloutSectionSummary {
+    stage: String,
+    rollouts: u64,
+    cache_hits: u64,
+    cache_misses: u64,
+    wall_seconds: f64,
+    total_tokens: u64,
+    jobs: u64,
+}
+
+impl RolloutSectionSummary {
+    fn add(&mut self, fields: &Value) {
+        self.rollouts = self
+            .rollouts
+            .saturating_add(field_u64(fields, "rollout_count").unwrap_or(0));
+        self.cache_hits = self
+            .cache_hits
+            .saturating_add(field_u64(fields, "cache_hits").unwrap_or(0));
+        self.cache_misses = self
+            .cache_misses
+            .saturating_add(field_u64(fields, "cache_misses").unwrap_or(0));
+        self.wall_seconds += field_f64(fields, "wall_seconds").unwrap_or(0.0);
+        self.total_tokens = self
+            .total_tokens
+            .saturating_add(field_u64(fields, "total_tokens").unwrap_or(0));
+        self.jobs = self.jobs.saturating_add(1);
+    }
+
+    fn line(&self) -> String {
+        let throughput = if self.wall_seconds > 0.0 {
+            self.rollouts as f64 / self.wall_seconds
+        } else {
+            0.0
+        };
+        format!(
+            "  rollout section done stage={} rollouts={} wall={} throughput={}/s cache={}/{} tokens={} jobs={}",
+            self.stage,
+            self.rollouts,
+            fmt_seconds(self.wall_seconds),
+            fmt_rate(throughput),
+            self.cache_hits,
+            self.cache_hits.saturating_add(self.cache_misses),
+            fmt_tokens_millions(self.total_tokens),
+            self.jobs,
+        )
+    }
+}
+
+static ROLLOUT_SECTION_SUMMARY: OnceLock<Mutex<Option<RolloutSectionSummary>>> = OnceLock::new();
+
+fn rollout_section_summary_state() -> &'static Mutex<Option<RolloutSectionSummary>> {
+    ROLLOUT_SECTION_SUMMARY.get_or_init(|| Mutex::new(None))
+}
+
+fn maybe_rollout_section_summary_before_event(event_type: &str, fields: &Value) -> Option<String> {
+    let mut guard = rollout_section_summary_state().lock().ok()?;
+    if event_type == "runtime.job.completed" && rollout_runtime_event(fields) {
+        let stage = field_str(fields, "stage").unwrap_or("mixed").to_string();
+        if guard
+            .as_ref()
+            .map(|summary| summary.stage.as_str() != stage.as_str())
+            .unwrap_or(false)
+        {
+            let line = guard.take().map(|summary| summary.line());
+            *guard = Some(RolloutSectionSummary {
+                stage,
+                ..Default::default()
+            });
+            if let Some(summary) = guard.as_mut() {
+                summary.add(fields);
+            }
+            return line;
+        }
+        if guard.is_none() {
+            *guard = Some(RolloutSectionSummary {
+                stage,
+                ..Default::default()
+            });
+        }
+        if let Some(summary) = guard.as_mut() {
+            summary.add(fields);
+        }
+        return None;
+    }
+    if rollout_section_boundary_event(event_type) {
+        return guard.take().map(|summary| summary.line());
+    }
+    None
+}
+
+fn maybe_rollout_section_summary_after_event(event_type: &str) -> Option<String> {
+    if event_type == "gepa.run.finished" {
+        return rollout_section_summary_state()
+            .lock()
+            .ok()?
+            .take()
+            .map(|summary| summary.line());
+    }
+    None
+}
+
+fn rollout_runtime_event(fields: &Value) -> bool {
+    matches!(
+        field_str(fields, "runtime_kind"),
+        Some("rollout" | "rollout_batch")
+    )
+}
+
+fn rollout_section_boundary_event(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        "candidate.evaluated"
+            | "candidate.minibatch_evaluated"
+            | "candidate.full_train_evaluated"
+            | "candidate.accepted"
+            | "candidate.rejected"
+            | "candidate.deferred"
+            | "frontier.updated"
+            | "frontier.snapshot"
+            | "heldout.completed"
+            | "heldout.skipped"
+            | "proposer.started"
+            | "proposer.completed"
+            | "score_chart.written"
+            | "gepa.run.finished"
+            | "gepa.stop"
+    )
+}
+
 fn runtime_rollout_diagnostics_suffix(fields: &Value) -> String {
     let Some(effective_concurrency) = field_f64(fields, "estimated_effective_concurrency") else {
         return String::new();
@@ -530,14 +924,92 @@ fn runtime_rollout_diagnostics_suffix(fields: &Value) -> String {
 
 fn terminal_finished_line(fields: &Value) -> String {
     let usage = fields.get("usage").unwrap_or(&Value::Null);
-    format!(
-        "{} best={} rollouts={} cost=${:.4} tokens={}",
+    let heldout = if field_bool(fields, "heldout_skipped").unwrap_or(false) {
+        " heldout=skipped".to_string()
+    } else {
+        field_f64(fields, "heldout_reward")
+            .map(|score| format!(" heldout={}", fmt_score(Some(score))))
+            .unwrap_or_default()
+    };
+    let mut line = format!(
+        "{} best={} rollouts={}{} cost=${:.4} tokens={}",
         bold("done"),
         short_id(field_str(fields, "best_candidate_id").unwrap_or("unknown")),
         field_usize(fields, "rollout_count").unwrap_or(0),
+        heldout,
         field_f64(fields, "cost_usd").unwrap_or(0.0),
         fmt_tokens_millions(field_u64(usage, "total_tokens").unwrap_or(0))
-    )
+    );
+    if let Some(summary) = fields.get("runtime_summary") {
+        append_runtime_summary_line(&mut line, "policy", summary.get("policy"));
+        append_runtime_summary_line(&mut line, "proposer", summary.get("proposer"));
+        append_candidate_runtime_summary_lines(&mut line, summary.get("candidates"));
+    }
+    line
+}
+
+fn append_runtime_summary_line(out: &mut String, label: &str, bucket: Option<&Value>) {
+    let Some(bucket) = bucket else {
+        return;
+    };
+    let tokens = field_u64(bucket, "total_tokens").unwrap_or(0);
+    let calls = field_u64(bucket, "calls").unwrap_or(0);
+    let jobs = field_u64(bucket, "jobs").unwrap_or(0);
+    let cost = field_f64(bucket, "cost_usd").unwrap_or(0.0);
+    let wall = field_f64(bucket, "wall_seconds").unwrap_or(0.0);
+    let model = field_str(bucket, "model")
+        .map(|model| format!(" model={model}"))
+        .unwrap_or_default();
+    let throughput = if wall > 0.0 && calls > 0 {
+        format!(" throughput={:.2}/s", calls as f64 / wall)
+    } else {
+        String::new()
+    };
+    let _ = write!(
+        out,
+        "\n  usage {label}:{model} tokens={} cost=${cost:.4} time={} calls={calls} jobs={jobs}{throughput}",
+        fmt_tokens_millions(tokens),
+        fmt_seconds(wall)
+    );
+}
+
+fn append_candidate_runtime_summary_lines(out: &mut String, candidates: Option<&Value>) {
+    let Some(candidates) = candidates.and_then(Value::as_object) else {
+        return;
+    };
+    if candidates.is_empty() {
+        return;
+    }
+    let mut rows = candidates.iter().collect::<Vec<_>>();
+    rows.sort_by(|(left_id, left), (right_id, right)| {
+        field_u64(right, "calls")
+            .unwrap_or(0)
+            .cmp(&field_u64(left, "calls").unwrap_or(0))
+            .then_with(|| {
+                field_u64(right, "total_tokens")
+                    .unwrap_or(0)
+                    .cmp(&field_u64(left, "total_tokens").unwrap_or(0))
+            })
+            .then_with(|| left_id.cmp(right_id))
+    });
+    let max_rows = 12usize;
+    let _ = write!(out, "\n  usage candidates:");
+    for (candidate_id, bucket) in rows.iter().take(max_rows) {
+        let tokens = field_u64(bucket, "total_tokens").unwrap_or(0);
+        let calls = field_u64(bucket, "calls").unwrap_or(0);
+        let cost = field_f64(bucket, "cost_usd").unwrap_or(0.0);
+        let wall = field_f64(bucket, "wall_seconds").unwrap_or(0.0);
+        let _ = write!(
+            out,
+            "\n    {} tokens={} cost=${cost:.4} time={} rollouts={calls}",
+            short_id(candidate_id),
+            fmt_tokens_millions(tokens),
+            fmt_seconds(wall)
+        );
+    }
+    if rows.len() > max_rows {
+        let _ = write!(out, "\n    ... {} more candidates", rows.len() - max_rows);
+    }
 }
 
 fn fmt_tokens_millions(tokens: u64) -> String {
@@ -831,6 +1303,13 @@ fn truncate(value: &str, max_chars: usize) -> String {
         .collect::<String>();
     out.push_str("...");
     out
+}
+
+fn truncate_inline(value: &str, max_chars: usize) -> String {
+    truncate(
+        &value.split_whitespace().collect::<Vec<_>>().join(" "),
+        max_chars,
+    )
 }
 
 fn bold(value: &str) -> String {

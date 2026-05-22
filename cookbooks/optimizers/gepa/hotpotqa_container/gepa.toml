@@ -1,0 +1,89 @@
+[run]
+run_id = "hotpotqa_gepa_public"
+output_dir = "../runs"
+seed = 0
+
+[container]
+url = "http://127.0.0.1:8769"
+command = [
+  "/usr/bin/env",
+  "HOTPOTQA_POLICY_MODEL=qwen/qwen-2.5-7b-instruct",
+  "HOTPOTQA_POLICY_BASE_URL=https://openrouter.ai/api/v1",
+  "HOTPOTQA_POLICY_API_KEY_ENV=OPENROUTER_API_KEY",
+  "HOTPOTQA_POLICY_TIMEOUT_SECONDS=20",
+  "HOTPOTQA_ROLLOUT_TIMEOUT_SECONDS=25",
+  "HOTPOTQA_POLICY_CONCURRENCY=120",
+  "HOTPOTQA_POLICY_RETRIES=1",
+  "HOTPOTQA_POLICY_MAX_TOKENS=32",
+  "uv", "run", "--project", "hotpotqa_container",
+  "python", "hotpotqa_container/synth_service_app.py",
+  "--host", "127.0.0.1", "--port", "8769",
+]
+cwd = ".."
+startup_timeout_seconds = 120
+
+[dataset]
+train_split = "train"
+heldout_split = "validation"
+train_seeds = [
+  0, 1, 2, 3, 4, 5, 6, 7,
+]
+heldout_seeds = [
+  1000, 1001, 1002, 1003,
+]
+
+[candidate]
+target_modules = ["stage1_system"]
+
+[seed_candidate]
+stage1_system = "You are a HotpotQA answer extractor. Read the question first to determine the requested answer type, then use the passages to find the entity, date, number, title, yes/no answer, or short phrase directly supported by the evidence. Connect facts across passages when needed. Return only the shortest answer string that fully answers the question, preserving the passage surface form for names, titles, dates, numbers, and quoted phrases. Do not return a related entity, category, alias, explanation, citation, or reasoning."
+
+[policy]
+provider = "openrouter"
+model = "qwen/qwen-2.5-7b-instruct"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+
+[proposer]
+backend = "codex_app_server"
+execution_mode = "local_process"
+timeout_seconds = 900
+model = "gpt-5.4-nano"
+reasoning_effort = "medium"
+auth_mode = "api_key"
+copy_host_auth = false
+api_key_env = "OPENAI_API_KEY"
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+
+[gepa]
+max_generations = 1
+proposals_per_generation = 2
+minibatch_size = 8
+max_total_rollouts = 120
+max_train_rollouts = 80
+max_heldout_rollouts = 40
+max_cost_usd = 0.0
+
+[cache]
+mode = "readwrite"
+path = "../runs/hotpotqa_gepa_public_cache.sqlite"
+namespace = "hotpotqa_gepa_public"
+
+[gepa.pipeline]
+mode = "async_pipelined"
+max_in_flight_candidates = 2
+
+[gepa.pipeline.workers]
+propose = 1
+rollout = 20
+evaluate = 1
+
+[gepa.pipeline.adaptive_rollout_concurrency]
+enabled = true
+initial = 50
+min = 1
+max = 120
+increase_step = 10
+decrease_step = 10
+increase_after_successes = 40

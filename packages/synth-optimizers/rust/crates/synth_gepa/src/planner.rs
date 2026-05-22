@@ -189,7 +189,41 @@ pub struct GepaAsyncPipelineCursorState {
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub candidate_partials: BTreeMap<String, GepaAsyncCandidatePartial>,
     #[serde(default)]
+    pub adaptive_rollout_concurrency: GepaAdaptiveRolloutConcurrencyState,
+    #[serde(default)]
     pub terminal_readiness: Value,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct GepaAdaptiveRolloutConcurrencyState {
+    #[serde(default)]
+    pub initialized: bool,
+    #[serde(default)]
+    pub current_limit: usize,
+    #[serde(default)]
+    pub successes_since_adjustment: usize,
+    #[serde(default)]
+    pub completed_rollouts: usize,
+    #[serde(default)]
+    pub overload_count: usize,
+    #[serde(default)]
+    pub last_adjustment: Option<GepaAdaptiveRolloutConcurrencyAdjustment>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub adjustments: Vec<GepaAdaptiveRolloutConcurrencyAdjustment>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct GepaAdaptiveRolloutConcurrencyAdjustment {
+    #[serde(default)]
+    pub direction: String,
+    #[serde(default)]
+    pub old_limit: usize,
+    #[serde(default)]
+    pub new_limit: usize,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub completed_rollouts: usize,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -277,6 +311,41 @@ pub struct GepaAsyncCandidatePartial {
     pub active_evaluation: Option<Value>,
     #[serde(default)]
     pub proposal_queue: Value,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub rollout_chunks: BTreeMap<String, GepaRolloutChunkPartial>,
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GepaRolloutChunkPartial {
+    #[serde(default)]
+    pub chunk_id: String,
+    #[serde(default)]
+    pub stage: String,
+    #[serde(default)]
+    pub generation: usize,
+    #[serde(default)]
+    pub candidate_ids: Vec<String>,
+    #[serde(default)]
+    pub row_ids: Vec<String>,
+    #[serde(default)]
+    pub first_row_index: usize,
+    #[serde(default)]
+    pub row_count: usize,
+    #[serde(default)]
+    pub job_id: Option<String>,
+    #[serde(default)]
+    pub effect_id: Option<String>,
+    #[serde(default)]
+    pub reservation_ids: Vec<String>,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub folded: bool,
+    #[serde(default)]
+    pub attempt: u32,
     #[serde(default)]
     pub metadata: Value,
 }

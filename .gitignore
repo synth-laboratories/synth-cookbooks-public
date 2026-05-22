@@ -11,6 +11,18 @@ runs/
 *.db-shm
 *.db-wal
 
+# GEPA generated local run configs and caches. Canonical `gepa.toml` files and
+# `run_profiles/*.toml` stay trackable for easy local testing.
+cookbooks/optimizers/gepa/*_container/gepa.*_[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].toml
+cookbooks/optimizers/gepa/*_container/gepa.*_.toml
+cookbooks/optimizers/gepa/*_container/gepa.short.*.toml
+cookbooks/optimizers/gepa/*_container/gepa.user*.toml
+cookbooks/optimizers/gepa/*_container/gepa.user*_rerun*.toml
+cookbooks/optimizers/gepa/*_container/gepa.*_cache.sqlite
+cookbooks/optimizers/gepa/*_container/.codex_home/
+cookbooks/optimizers/gepa/*_container/.codex_api_key_home/
+/gepa.toml
+
 # Python bytecode, environments, caches, and package artifacts
 __pycache__/
 *.py[cod]
