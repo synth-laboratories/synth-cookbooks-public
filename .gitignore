@@ -1,0 +1,41 @@
+# Runtime and evaluation outputs
+.out/
+**/.out/
+run_artifacts/
+**/run_artifacts/
+runs/
+**/runs/
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# Python bytecode, environments, caches, and package artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.ty/
+dist/
+build/
+target/
+**/target/
+*.so
+*.egg-info/
+*.whl
+*.tar.gz
+
+# Node and frontend artifacts
+node_modules/
+.next/
+out/
+
+# Local environment and OS/editor state
+.env
+.env.*
+!.env.example
+.DS_Store

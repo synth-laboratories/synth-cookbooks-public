@@ -1,0 +1,314 @@
+{
+  "chart": "compute_parity_head_to_head",
+  "generated_from": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head",
+  "caveat": "All three public cookbook rows use the same HTTP container boundary for gepa-ai and Synth GEPA. Banking77 is the broadest comparison; TBLite and Crafter are small public smoke-scale parity splits.",
+  "source_note": "Compact tracked snapshot of ignored raw runs used to build Chart A.",
+  "evidence": [
+    {
+      "task": "banking77",
+      "stack": "gepa-ai",
+      "source": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/gepa_ai_via_container/banking77_20260521_011836/summary.json",
+        "sha256": "29476499ab17c5472f999cf78c98021ebd97a1972dd6f74ccc8423e210441e5a",
+        "bytes": 1170
+      },
+      "seed_val_score": 0.88,
+      "best_val_score": 0.88,
+      "best_idx": 0,
+      "rollout_calls": 2402,
+      "reflection_calls": 25,
+      "wall_clock_s": 463.53,
+      "total_usd": 0.135835,
+      "tokens": {
+        "rollout_prompt_tokens": 1274034,
+        "rollout_completion_tokens": 10420,
+        "reflection_prompt_tokens": 13412,
+        "reflection_completion_tokens": 7307
+      },
+      "best_candidate": {
+        "system_prompt": "Classify the customer banking query into exactly one Banking77 intent. Return the answer only with the best single label."
+      }
+    },
+    {
+      "task": "banking77",
+      "stack": "Synth GEPA",
+      "source": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/banking77_parity_synth_gepa/result_manifest.json",
+        "sha256": "beac219ee1f7d487770a9346da2cb75158ebd3aa81f2ce05838c500ce6fff4fc",
+        "bytes": 533632
+      },
+      "best_candidate": {
+        "candidate_id": "gepa_2ec8e0e53a78",
+        "source": "generation_3",
+        "train_reward": 0.9166666666666666,
+        "heldout_reward": 0.885,
+        "minibatch_reward": 0.9375,
+        "status": "rejected_full_train",
+        "payload": {
+          "stage2_system": "Classify the customer banking query into exactly one Banking77 intent label. Output only the single best label, using the exact label name. Focus on the main request, ignore irrelevant details, and choose the most specific matching intent."
+        }
+      },
+      "usage": {
+        "rollout_calls": 2272,
+        "proposer_calls": 8,
+        "prompt_tokens": 1261646,
+        "completion_tokens": 12994,
+        "total_tokens": 1274640
+      },
+      "artifact_refs": [
+        {
+          "kind": "best_candidate",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/banking77_parity_synth_gepa/best_candidate.json",
+          "sha256": "5f34f640d12965c1398fa31bcf2673e2ba80e2fccb83699dae197ea6f18d6463",
+          "bytes": 470499
+        },
+        {
+          "kind": "candidate_registry",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/banking77_parity_synth_gepa/candidate_registry.json",
+          "sha256": "b184766d340ae1c4cdfcd66a9009f3d5115d3160982c56e42b2c2ccaae7681fc",
+          "bytes": 4780857
+        },
+        {
+          "kind": "frontier",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/banking77_parity_synth_gepa/frontier.json",
+          "sha256": "1ff399a2f065f53bd56aa99b608dbadabaaf3d76ff47924e5c402a7dd79d022c",
+          "bytes": 351
+        },
+        {
+          "kind": "score_chart_svg",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/banking77_parity_synth_gepa/score_chart.svg",
+          "sha256": "e210528d4d250b1fe70ed86a38f4dd09be11202fc2819bbfbb4f04dc37ff14d2",
+          "bytes": 5802
+        },
+        {
+          "kind": "events_jsonl",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/banking77_parity_synth_gepa/events.jsonl",
+          "sha256": "760e0d7d5c05c18b0da4893e72db1363844247973a128c4f5d282ac5163df57e",
+          "bytes": 101551
+        },
+        {
+          "kind": "events_normalized_jsonl",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/banking77_parity_synth_gepa/events.normalized.jsonl",
+          "sha256": "81be3efd3ae52798fb8a601ac450d5219878f7a5b842dbb210c0ae2994432227",
+          "bytes": 88054
+        },
+        {
+          "kind": "cache_profile",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/banking77_parity_synth_gepa/cache_profile.json",
+          "sha256": "b0197b7cbd2d815440d02e8707eaba75a0d5bb4f026e6e65b210dbb9403471fa",
+          "bytes": 329
+        },
+        {
+          "kind": "run_registry_jsonl",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/run_registry.jsonl",
+          "sha256": "ed12330a32f7766e24c7aa349a2b24da43314301c2f4ae815b869fc43f9b72f1",
+          "bytes": 6411
+        }
+      ]
+    },
+    {
+      "task": "tblite",
+      "stack": "gepa-ai",
+      "source": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/gepa_ai_via_container/tblite_20260522_014223/summary.json",
+        "sha256": "809b9e36e91994e4531e21e9d50d467c227b5166766bb9df4acc9c76526951e6",
+        "bytes": 1192
+      },
+      "seed_val_score": 1.0,
+      "best_val_score": 1.0,
+      "best_idx": 0,
+      "rollout_calls": 17,
+      "reflection_calls": 0,
+      "wall_clock_s": 25.34,
+      "total_usd": 0.00075,
+      "tokens": {
+        "rollout_prompt_tokens": 2534,
+        "rollout_completion_tokens": 1242,
+        "reflection_prompt_tokens": 0,
+        "reflection_completion_tokens": 0
+      },
+      "best_candidate": {
+        "starting_prompt": "You are a Python coding agent. Implement the requested function so that all of its hidden tests pass. Output ONLY the function source code, no markdown fences, no surrounding prose, no example usage. Match the function signature exactly. Handle edge cases. Use the standard library."
+      }
+    },
+    {
+      "task": "tblite",
+      "stack": "Synth GEPA",
+      "source": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/tblite_parity_synth_gepa/result_manifest.json",
+        "sha256": "5928c890f3ffeeeab27b7362ad5f3b111e4959995badfdb7c540ca723a60e044",
+        "bytes": 66180
+      },
+      "best_candidate": {
+        "candidate_id": "gepa_05c38a291174",
+        "source": "seed",
+        "train_reward": 1.0,
+        "heldout_reward": 1.0,
+        "minibatch_reward": null,
+        "status": "full_train_evaluated",
+        "payload": {
+          "starting_prompt": "You are a Python coding agent. Implement the requested function so that all of its hidden tests pass. Output ONLY the function source code, no markdown fences, no surrounding prose, no example usage. Match the function signature exactly. Handle edge cases. Use the standard library."
+        }
+      },
+      "usage": {
+        "rollout_calls": 8,
+        "proposer_calls": 1,
+        "prompt_tokens": 1610,
+        "completion_tokens": 619,
+        "total_tokens": 2229
+      },
+      "artifact_refs": [
+        {
+          "kind": "best_candidate",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/tblite_parity_synth_gepa/best_candidate.json",
+          "sha256": "6be98f647dfd3c87cda2bc21fcf003dcff37547697805b84842bd044bd2e4181",
+          "bytes": 50301
+        },
+        {
+          "kind": "candidate_registry",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/tblite_parity_synth_gepa/candidate_registry.json",
+          "sha256": "14638f0e44fa33fbe072c8e9ffff8203b5b7ff17c0b236c7ed7debadbdf9a743",
+          "bytes": 95458
+        },
+        {
+          "kind": "frontier",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/tblite_parity_synth_gepa/frontier.json",
+          "sha256": "0f81f94495d9e767c5b0665830e621c1aebaa48c2e3d235c19004d6137f8aa9b",
+          "bytes": 149
+        },
+        {
+          "kind": "score_chart_svg",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/tblite_parity_synth_gepa/score_chart.svg",
+          "sha256": "0a9d810b345ebdca003e78490a52b7257d8553cdcbdc066ec6028ee91d29fd4d",
+          "bytes": 3002
+        },
+        {
+          "kind": "events_jsonl",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/tblite_parity_synth_gepa/events.jsonl",
+          "sha256": "fd4444eebcaae9c239fd955785fc041cc7fde20e805bd58728b7cb54d4db7917",
+          "bytes": 23654
+        },
+        {
+          "kind": "events_normalized_jsonl",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/tblite_parity_synth_gepa/events.normalized.jsonl",
+          "sha256": "684c1cdf58e9ca6fd5937c81d608d58d3147cb7a0a41f5270c083b8dc36cc722",
+          "bytes": 19793
+        },
+        {
+          "kind": "cache_profile",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/tblite_parity_synth_gepa/cache_profile.json",
+          "sha256": "dbf92dc302a72da43d0a47b9262bcf6e4a37849f81aacb1bd8b8ec652e72c9a7",
+          "bytes": 326
+        },
+        {
+          "kind": "run_registry_jsonl",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/run_registry.jsonl",
+          "sha256": "f3965af7d2f308d6dc0ebda9f40da4eb72c333ac24144e24780099d5efa42e7a",
+          "bytes": 10593
+        }
+      ]
+    },
+    {
+      "task": "crafter",
+      "stack": "gepa-ai",
+      "source": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/gepa_ai_via_container/crafter_20260522_014303/summary.json",
+        "sha256": "a819804b03c1fce2264e28748056f125dfa9181c2d78cb9c43e6c0fe1decbf73",
+        "bytes": 2783
+      },
+      "seed_val_score": 1.0,
+      "best_val_score": 2.0,
+      "best_idx": 1,
+      "rollout_calls": 11,
+      "reflection_calls": 1,
+      "wall_clock_s": 186.15,
+      "total_usd": 0.003791,
+      "tokens": {
+        "rollout_prompt_tokens": 28877,
+        "rollout_completion_tokens": 1657,
+        "reflection_prompt_tokens": 939,
+        "reflection_completion_tokens": 367
+      },
+      "best_candidate": {
+        "react_system_prompt": "You are controlling a Crafter survival agent in a resource-gathering and crafting environment. Your observations include player stats, inventory, and a local map with objects like wood, stone, coal, iron, and possibly lava or craftable structures. Your goal is to efficiently gather essential resources, craft tools, and build structures, following the priorities:\n\n1. Collect wood whenever available.\n2. Place a crafting table when possible.\n3. Use the crafting table to craft tools necessary for advancing (e.g., pickaxes).\n4. Collect stone, coal, and iron after establishing basic toolset.\n5. Avoid lava and dangerous hazards at all costs.\n\nYour responses must consist solely of a single <tool_call> block with the following format:\n<tool_call>{\"name\":\"crafter_interact\",\"arguments\":{\"actions_list\":[...]}}</tool_call>\n\nYou may choose 1-5 actions per turn, prioritizing actions that lead to resource collection and construction. Use movement commands like \"move_left\", \"move_right\", \"move_up\", \"move_down\" to navigate toward resources or placement spots. Use \"do\" when interacting with objects (e.g., to pick up resources, craft items, or place blocks). \n\nStrategy notes:\n- Approach resources cautiously, avoiding lava or other hazards.\n- Attempt to position near resources before executing \"do\" actions.\n- Focus on gathering wood first, then use it to craft a crafting table or tools.\n- After establishing tools, focus on mining stone, coal, and iron.\n- Place structures like tables in accessible, safe locations to facilitate crafting.\n- Carefully plan movement to maximize resource collection while minimizing unnecessary risk or movement.\n\nRemember: Respond only with the <tool_call> block, no additional commentary. Use your observations to plan a sequence of actions aligned with these priorities."
+      }
+    },
+    {
+      "task": "crafter",
+      "stack": "Synth GEPA",
+      "source": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/crafter_parity_synth_gepa/result_manifest.json",
+        "sha256": "3d36b8b2df35d7e34dd543983bfaa1a1e68738f0426f9bbd54e2048ab1a8fcc4",
+        "bytes": 96476
+      },
+      "best_candidate": {
+        "candidate_id": "gepa_d6f62fa19daf",
+        "source": "reflector:frontier_variation",
+        "train_reward": 1.0,
+        "heldout_reward": 2.0,
+        "minibatch_reward": 1.5,
+        "status": "accepted",
+        "payload": {
+          "react_system_prompt": "You are controlling a Crafter survival agent. Each turn you see a compact text observation (player stats, inventory, local map). Respond ONLY with a single <tool_call> block of the form: <tool_call>{\"name\":\"crafter_interact\",\"arguments\":{\"actions_list\":[\"move_right\",\"do\"]}}</tool_call>. Use 1-5 valid actions per call. Valid actions: noop, move_left, move_right, move_up, move_down, do, sleep, place_stone, place_table, place_furnace, place_plant, make_wood_pickaxe, make_stone_pickaxe, make_iron_pickaxe, make_wood_sword, make_stone_sword, make_iron_sword. \n\nKeep the exact one-tool-call output format above. Add explicit recovery rules from observed failure: if no interaction is available in the observation, move to inspect options; if an interactable target is visible (wood/stone/coal/iron/table), use `do` to interact, not movement-only. If a previous step was a move and no achievement changed, prefer `do` in the next action list, not another movement-only loop. If wood is available and placeable conditions are met, prefer place_table; if tools are craftable and resources allow crafting, prefer make_wood_pickaxe then higher tools, before collecting stone/coal/iron. Avoid lava and keep `do` present when state can progress through action.\n\nUse concise decision rules in this style:\n- nearby_interactable_resource (wood/stone/coal/iron/tree) means [do], not [move_left, move_right, move_up, move_down]\n- resource_reachable_after_move means [do], not [move_left, move_right, move_up, move_down]\n- first_progressive_turn_after_stall means [do], not [move_left, move_down]*\n- table_craft_or_place_opportunity means [place_table], not [move_left, move_right, move_up, move_down]"
+        }
+      },
+      "usage": {
+        "rollout_calls": 8,
+        "proposer_calls": 1,
+        "prompt_tokens": 48195,
+        "completion_tokens": 1746,
+        "total_tokens": 49941
+      },
+      "artifact_refs": [
+        {
+          "kind": "best_candidate",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/crafter_parity_synth_gepa/best_candidate.json",
+          "sha256": "806a80e254e4c1969cdab632335577d8cd64efaa5819ae09413e855ac9c72d00",
+          "bytes": 78973
+        },
+        {
+          "kind": "candidate_registry",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/crafter_parity_synth_gepa/candidate_registry.json",
+          "sha256": "348054e9d4d61bab0ec7585c735fc1d4e03a9ed50830ffe2f370724c04e9ac1e",
+          "bytes": 117377
+        },
+        {
+          "kind": "frontier",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/crafter_parity_synth_gepa/frontier.json",
+          "sha256": "cd90090676c1ae613d173dc933b9447e798c0b9ec3f3f5be6eefd80bbf092906",
+          "bytes": 334
+        },
+        {
+          "kind": "score_chart_svg",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/crafter_parity_synth_gepa/score_chart.svg",
+          "sha256": "123eb0511c8e04860f4ed628efa705c3bdaea78be9fae5663c38cb687cf88460",
+          "bytes": 3350
+        },
+        {
+          "kind": "events_jsonl",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/crafter_parity_synth_gepa/events.jsonl",
+          "sha256": "0cd141c93ecadc86c6c2710d9d19a792051e283830239698cdede0067e76396e",
+          "bytes": 34683
+        },
+        {
+          "kind": "events_normalized_jsonl",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/crafter_parity_synth_gepa/events.normalized.jsonl",
+          "sha256": "f882af4033f11b81b2f0d399fb0039fc136537a1de2f92376562b5daa316442a",
+          "bytes": 30250
+        },
+        {
+          "kind": "cache_profile",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/crafter_parity_synth_gepa/cache_profile.json",
+          "sha256": "1c649de1755bf8aeae4e58529cd481d5b2ff9ff61c7b8a4674346ddde794476b",
+          "bytes": 327
+        },
+        {
+          "kind": "run_registry_jsonl",
+          "path": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/run_registry.jsonl",
+          "sha256": "907a2ceeca9a04e03f1d259393acac5aeeb0724bd33023e042b8cc365fea6360",
+          "bytes": 14798
+        }
+      ]
+    }
+  ]
+}
