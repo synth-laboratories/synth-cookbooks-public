@@ -1,0 +1,55 @@
+[profile]
+name = "default"
+description = "Moderate Crafter GEPA run over fresh deterministic Craftax episode seeds."
+
+[base]
+config = "gepa.toml"
+run_id = "crafter_gepa_public"
+
+[policy]
+provider = "openai"
+model = "gpt-4.1-nano"
+api_key_env = "OPENAI_API_KEY"
+
+[proposer]
+model = "gpt-5.4-nano"
+auth_mode = "api_key"
+api_key_env = "OPENAI_API_KEY"
+copy_host_auth = false
+
+[task]
+max_turns = 20
+min_batch = 1
+max_batch = 5
+
+[dataset]
+train_size = 8
+heldout_size = 8
+train_seed_start = "random"
+heldout_seed_start = "random"
+
+[pipeline]
+max_generations = 1
+proposals_per_generation = 3
+minibatch_size = 4
+max_in_flight_candidates = 3
+rollout_workers = 8
+rollout_chunk_size = "auto"
+
+[pipeline.adaptive_rollout_concurrency]
+enabled = true
+initial = 8
+min = 1
+max = 24
+increase_step = 4
+decrease_step = 4
+increase_after_successes = 20
+
+[budgets]
+train_rollouts = 80
+heldout_rollouts = 16
+
+[timeouts]
+container_http_seconds = 120
+rollout_async_seconds = 180
+rollout_http_retries = 0
