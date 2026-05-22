@@ -32,7 +32,7 @@ import uuid
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 
 try:
     from synth_containers import GEPA_OPTIMIZER_CONTRACT_VERSION
@@ -296,13 +296,64 @@ async def task_info() -> dict[str, Any]:
         "task": {
             "task_id": TASK_ID,
             "name": "Crafter ReAct policy",
-            "description": "Optimize a ReAct system prompt for a Craftax survival agent.",
+            "description": (
+                "Optimize a ReAct system prompt for an OpenAI-controlled Craftax survival agent. "
+                "Each rollout is a live environment episode with tool-call actions."
+            ),
+            "objective": "Maximize total episode reward and achievements unlocked before the turn cap.",
+            "domain": "survival crafting game control with inventory, local map observations, and batched actions",
         },
         "dataset": {
             "dataset_id": DATASET_ID,
             "visible_splits": ["train", "test"],
             "default_split": "train",
             "row_count": len(ROWS),
+            "seed_semantics": (
+                "Rows are generated from requested episode seeds. The same seed is deterministic "
+                "for the Craftax text environment implementation."
+            ),
+        },
+        "prompt_program": {
+            "mutable_modules": ["react_system_prompt"],
+            "candidate_field": "react_system_prompt",
+            "output_contract": (
+                "Every policy call must return one <tool_call> block for crafter_interact "
+                "with an actions_list of valid action names."
+            ),
+        },
+        "environment": {
+            "valid_actions": VALID_ACTIONS,
+            "tool_name": REACT_TOOL_NAME,
+            "min_actions_per_call": MIN_BATCH,
+            "max_actions_per_call": MAX_BATCH,
+        },
+        "evaluation": {
+            "primary_metric": "outcome_reward",
+            "success_status": "succeeded when total reward is positive",
+            "rollout_trace_contains": ["episode_complete", "actions_taken", "achievements"],
+        },
+        "proposal_guidance": {
+            "premises": [
+                "The agent sees compact player stats, inventory, and a local map each turn.",
+                "The agent acts through batched low-level Craftax actions, not free-form text.",
+                "Early reward usually comes from collecting resources and unlocking crafting progression.",
+            ],
+            "constraints": [
+                "Do not output prose, JSON alone, or markdown; the response must be a single tool_call block.",
+                "Do not invent action names outside the valid action list.",
+                "Keep the prompt concise enough to run every turn.",
+            ],
+            "high_leverage_heuristics": [
+                "Prioritize wood collection, table placement, wood pickaxe crafting, stone collection, furnace placement, then advanced tools.",
+                "Avoid lava and repeated no-op loops.",
+                "Use 1-5 action batches that combine movement with do/craft/place actions when the local map supports it.",
+                "Include recovery rules for hunger, health, blocked movement, and missing prerequisite materials.",
+            ],
+            "anti_patterns": [
+                "Generic survival-game advice with no valid action vocabulary.",
+                "Long deliberation instructions that do not change the emitted actions.",
+                "Rules that ignore inventory prerequisites or action batching limits.",
+            ],
         },
         "metadata": {
             "policy_model": POLICY_MODEL,
@@ -372,8 +423,8 @@ async def dataset_rows(request: Request) -> dict[str, Any]:
 
 @app.post("/rollout")
 @app.post("/rollouts")
-async def rollout(request: Request) -> dict[str, Any]:
-    payload = await request.json()
+def rollout(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
+    payload = payload or {}
     row = payload.get("dataset_row") if isinstance(payload.get("dataset_row"), dict) else None
     if not row:
         row = _row_for_seed(
@@ -442,7 +493,13 @@ def _row_for_seed(*, split: str, seed: int) -> dict[str, Any]:
     if not rows:
         rows = list(ROWS)
     match = next((row for row in rows if int(row["seed"]) == int(seed)), None)
-    row = match or rows[int(seed) % len(rows)]
+    if match:
+        return dict(match)
+    row = {
+        "seed": int(seed),
+        "split": normalized_split,
+        "example_id": f"ep_{normalized_split}_{int(seed)}",
+    }
     return dict(row)
 
 

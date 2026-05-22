@@ -8,11 +8,17 @@ Skills shape used by Codex, Claude, and the backend SMR skill catalog:
 
 ```text
 skills/
-  miprov2/
+  gepa/
     SKILL.md
   containers/
     SKILL.md
 ```
+
+Current skills:
+
+- `containers/` - build, upgrade, or debug public task containers using the
+  `synth-containers` contract.
+- `gepa/` - run, configure, debug, and adapt public Rust GEPA cookbooks.
 
 Use these skills as copyable, public cookbook assets. For native Codex
 auto-discovery inside a checkout, copy or symlink the desired skill folder into
@@ -29,4 +35,3 @@ auto-discovery inside a checkout, copy or symlink the desired skill folder into
   secrets, private traces, or unredacted local logs.
 - Prefer instructions first. Add `scripts/` only when deterministic helper code
   is worth the extra surface area.
-

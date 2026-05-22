@@ -21,6 +21,7 @@ const CONTAINER_SENSOR_ADAPTER_ID: &str = "synth.container_sensor_frame_adapter"
 const CONTAINER_SENSOR_ADAPTER_VERSION: &str = "v1";
 const GEPA_ADAPTER_SOURCE: &str = "https://gepa-ai.github.io/gepa/guides/adapters/";
 const GEPA_ALGORITHM_ID: &str = "synth_gepa.v1";
+const GEPA_WORKSPACE_PROPOSAL_SCHEMA_VERSION: &str = "gepa_workspace_proposal_v3";
 const PROMPTING_BEST_PRACTICES: &str = include_str!("prompting_best_practices.md");
 
 pub(crate) struct CodexProposerInput<'a> {
@@ -140,7 +141,7 @@ fn materialize_workspace(input: &CodexProposerInput<'_>) -> Result<()> {
     write_json(
         &proposal_dir.join("manifest.json"),
         &json!({
-            "schema_version": "gepa_workspace_proposal_v3",
+            "schema_version": GEPA_WORKSPACE_PROPOSAL_SCHEMA_VERSION,
             "critique": "",
             "evidence": {
                 "reviewed_files": [],
@@ -2965,7 +2966,7 @@ fn read_manifest(workspace_dir: &Path) -> Result<Value> {
         )));
     }
     match serde_json::from_str(&text) {
-        Ok(value) => Ok(value),
+        Ok(value) => normalize_manifest_contract(value, &path),
         Err(original_error) => {
             let repaired = join_adjacent_json_strings(&text);
             if repaired == text {
@@ -2973,9 +2974,32 @@ fn read_manifest(workspace_dir: &Path) -> Result<Value> {
             }
             let value = serde_json::from_str(&repaired).map_err(|_| original_error)?;
             write_text(&path, &repaired)?;
-            Ok(value)
+            normalize_manifest_contract(value, &path)
         }
     }
+}
+
+fn normalize_manifest_contract(mut manifest: Value, path: &Path) -> Result<Value> {
+    let Some(object) = manifest.as_object_mut() else {
+        return Ok(manifest);
+    };
+    let schema_version = object
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    let has_proposals = object
+        .get("proposals")
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty());
+    if schema_version.is_empty() && has_proposals {
+        object.insert(
+            "schema_version".to_string(),
+            Value::String(GEPA_WORKSPACE_PROPOSAL_SCHEMA_VERSION.to_string()),
+        );
+        write_json(path, &manifest)?;
+    }
+    Ok(manifest)
 }
 
 fn join_adjacent_json_strings(input: &str) -> String {
@@ -3031,9 +3055,9 @@ fn validate_manifest_contract(manifest: &Value) -> Result<()> {
         .get("schema_version")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if schema_version != "gepa_workspace_proposal_v3" {
+    if schema_version != GEPA_WORKSPACE_PROPOSAL_SCHEMA_VERSION {
         return Err(OptimizerError::Proposer(format!(
-            "codex app-server proposer manifest schema_version={schema_version:?}; expected gepa_workspace_proposal_v3"
+            "codex app-server proposer manifest schema_version={schema_version:?}; expected {GEPA_WORKSPACE_PROPOSAL_SCHEMA_VERSION}"
         )));
     }
     let evidence = manifest

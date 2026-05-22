@@ -29,7 +29,7 @@ import uuid
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 
 try:
     from synth_containers import GEPA_OPTIMIZER_CONTRACT_VERSION
@@ -289,13 +289,55 @@ async def task_info() -> dict[str, Any]:
         "task": {
             "task_id": TASK_ID,
             "name": f"MiniGrid policy ({ENV_ID})",
-            "description": "Optimize a system prompt for a gymnasium MiniGrid agent.",
+            "description": (
+                "Optimize a system prompt for an OpenAI-controlled MiniGrid agent. "
+                "Each rollout is a live gymnasium episode, not a fixture replay."
+            ),
+            "objective": "Maximize solved episodes and total environment reward before the step cap.",
+            "domain": "partially observable gridworld control with text observations and discrete actions",
         },
         "dataset": {
             "dataset_id": DATASET_ID,
             "visible_splits": ["train", "test"],
             "default_split": "train",
             "row_count": len(ROWS),
+            "seed_semantics": (
+                "Rows are generated from requested episode seeds. The same seed is deterministic "
+                "for a given MiniGrid env id."
+            ),
+        },
+        "prompt_program": {
+            "mutable_modules": ["system_prompt"],
+            "candidate_field": "system_prompt",
+            "output_contract": "Every policy call must return strict JSON: {\"action\": \"<admissible action>\"}.",
+        },
+        "evaluation": {
+            "primary_metric": "outcome_reward",
+            "success_status": "succeeded when the episode reaches the mission goal",
+            "rollout_trace_contains": ["episode_complete", "actions_taken", "n_steps", "solved"],
+        },
+        "proposal_guidance": {
+            "premises": [
+                "The agent receives mission, position, direction, carried object, visible objects, and admissible actions each turn.",
+                "MiniGrid tasks often require short action plans: orient, move, pick up keys, toggle doors, then reach the goal.",
+                "Invalid JSON or invalid action names waste the step budget and usually fail the episode.",
+            ],
+            "constraints": [
+                "Do not ask for chain-of-thought or verbose plans in the final response.",
+                "Do not introduce actions outside the seven MiniGrid action names.",
+                "Keep the system prompt operational and compact enough to run on every step.",
+            ],
+            "high_leverage_heuristics": [
+                "Prioritize mission progress over exploration once the goal object or door is visible.",
+                "Use explicit door/key rules: pick up matching keys, face doors before toggle, avoid repeated no-op toggles.",
+                "Add recovery behavior for blocked forward moves and loops.",
+                "Make JSON compliance non-negotiable.",
+            ],
+            "anti_patterns": [
+                "Generic assistant persona text.",
+                "Long reflective reasoning instructions that increase latency without changing actions.",
+                "Rules that ignore admissible actions or the current facing direction.",
+            ],
         },
         "metadata": {
             "policy_model": POLICY_MODEL,
@@ -362,8 +404,8 @@ async def dataset_rows(request: Request) -> dict[str, Any]:
 
 @app.post("/rollout")
 @app.post("/rollouts")
-async def rollout(request: Request) -> dict[str, Any]:
-    payload = await request.json()
+def rollout(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
+    payload = payload or {}
     row = payload.get("dataset_row") if isinstance(payload.get("dataset_row"), dict) else None
     if not row:
         row = _row_for_seed(
@@ -432,7 +474,13 @@ def _row_for_seed(*, split: str, seed: int) -> dict[str, Any]:
     if not rows:
         rows = list(ROWS)
     match = next((row for row in rows if int(row["seed"]) == int(seed)), None)
-    row = match or rows[int(seed) % len(rows)]
+    if match:
+        return dict(match)
+    row = {
+        "seed": int(seed),
+        "split": normalized_split,
+        "example_id": f"ep_{normalized_split}_{int(seed)}",
+    }
     return dict(row)
 
 

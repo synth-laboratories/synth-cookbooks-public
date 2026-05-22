@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 
 try:
     from synth_containers import GEPA_OPTIMIZER_CONTRACT_VERSION
@@ -346,13 +346,56 @@ async def task_info() -> dict[str, Any]:
         "task": {
             "task_id": TASK_ID,
             "name": "Terminal-Bench-Lite Python function impl",
-            "description": "Optimize a starting_prompt for an OpenAI agent that writes Python functions verified by hidden pytest.",
+            "description": (
+                "Optimize a starting_prompt for an OpenAI coding agent that writes one Python "
+                "function and is scored by hidden pytest tests."
+            ),
+            "objective": "Maximize the fraction of hidden pytest tests passed across coding tasks.",
+            "domain": "single-function Python code generation with edge-case-sensitive hidden tests",
         },
         "dataset": {
             "dataset_id": DATASET_ID,
             "visible_splits": ["train", "test"],
             "default_split": "train",
             "row_count": len(ROWS),
+            "seed_semantics": (
+                "Seeds select deterministic tasks from the public task catalog. The catalog is small, "
+                "so profiles should prefer more proposal search over fake extra rows."
+            ),
+            "task_types": sorted({row["example_id"] for row in ROWS}),
+        },
+        "prompt_program": {
+            "mutable_modules": ["starting_prompt"],
+            "candidate_field": "starting_prompt",
+            "output_contract": "The policy must output only Python function source code with the exact requested signature.",
+        },
+        "evaluation": {
+            "primary_metric": "outcome_reward",
+            "reward_definition": "passed_tests / total_tests from a real pytest subprocess",
+            "rollout_trace_contains": ["agent_solution", "pytest_verdict", "stdout_tail"],
+        },
+        "proposal_guidance": {
+            "premises": [
+                "The user prompt provides a function signature, natural-language spec, and no hidden tests.",
+                "The generated answer is written to solution.py and imported by pytest.",
+                "Markdown fences, prose, wrong signatures, imports with side effects, or example usage usually fail.",
+            ],
+            "constraints": [
+                "Do not optimize for one literal task only; propose general coding-agent behavior.",
+                "Keep the output contract strict: source code only, exact signature, standard library.",
+                "Prefer robust edge-case handling over clever short code.",
+            ],
+            "high_leverage_heuristics": [
+                "Tell the agent to infer input invariants and handle empty, singleton, duplicate, negative, and malformed-ish cases.",
+                "Tell it to preserve the signature exactly and return deterministic values.",
+                "Tell it to implement the simplest complete algorithm before adding polish.",
+                "Tell it to avoid prints, global mutable state, file/network I/O, and test-specific hacks.",
+            ],
+            "anti_patterns": [
+                "Memorized mappings from visible task names to solutions.",
+                "Verbose explanations or markdown around the function.",
+                "Instructions that encourage broad frameworks instead of a direct function body.",
+            ],
         },
         "metadata": {
             "policy_model": POLICY_MODEL,
@@ -424,8 +467,8 @@ async def dataset_rows(request: Request) -> dict[str, Any]:
 
 @app.post("/rollout")
 @app.post("/rollouts")
-async def rollout(request: Request) -> dict[str, Any]:
-    payload = await request.json()
+def rollout(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
+    payload = payload or {}
     incoming_row = payload.get("dataset_row") if isinstance(payload.get("dataset_row"), dict) else None
     if incoming_row and "tests" in incoming_row:
         row = incoming_row

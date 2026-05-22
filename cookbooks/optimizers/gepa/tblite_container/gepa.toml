@@ -6,6 +6,9 @@ seed = 0
 [container]
 url = "http://127.0.0.1:8766"
 command = [
+  "/usr/bin/env",
+  "TBLITE_POLICY_MODEL=gpt-4.1-nano",
+  "TBLITE_TEST_TIMEOUT_SECONDS=30",
   "uv", "run", "--project", "tblite_container",
   "python", "tblite_container/synth_service_app.py",
   "--host", "127.0.0.1", "--port", "8766",
@@ -48,6 +51,22 @@ proposals_per_generation = 1
 minibatch_size = 3
 max_total_rollouts = 16
 max_cost_usd = 0.0
+
+[gepa.pipeline]
+mode = "async_pipelined"
+max_in_flight_candidates = 1
+
+[gepa.pipeline.workers]
+rollout = 10
+
+[gepa.pipeline.adaptive_rollout_concurrency]
+enabled = true
+initial = 10
+min = 1
+max = 30
+increase_step = 5
+decrease_step = 5
+increase_after_successes = 20
 
 [cache]
 mode = "readwrite"

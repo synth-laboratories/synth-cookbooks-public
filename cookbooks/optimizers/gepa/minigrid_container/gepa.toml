@@ -6,6 +6,10 @@ seed = 0
 [container]
 url = "http://127.0.0.1:8769"
 command = [
+  "/usr/bin/env",
+  "MINIGRID_POLICY_MODEL=gpt-4.1-nano",
+  "MINIGRID_MAX_STEPS=48",
+  "MINIGRID_ENV_ID=MiniGrid-DoorKey-5x5-v0",
   "uv", "run", "--project", "minigrid_container",
   "python", "minigrid_container/synth_service_app.py",
   "--host", "127.0.0.1", "--port", "8769",
@@ -49,6 +53,22 @@ proposals_per_generation = 1
 minibatch_size = 2
 max_total_rollouts = 8
 max_cost_usd = 0.0
+
+[gepa.pipeline]
+mode = "async_pipelined"
+max_in_flight_candidates = 1
+
+[gepa.pipeline.workers]
+rollout = 10
+
+[gepa.pipeline.adaptive_rollout_concurrency]
+enabled = true
+initial = 10
+min = 1
+max = 30
+increase_step = 5
+decrease_step = 5
+increase_after_successes = 20
 
 [cache]
 mode = "readwrite"
