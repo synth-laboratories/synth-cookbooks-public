@@ -1,0 +1,103 @@
+{
+  "chart": "compute_parity_head_to_head",
+  "generated_from": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head",
+  "caveat": "All three public cookbook rows use the same HTTP container boundary for gepa-ai and Synth GEPA. Banking77 is the broadest comparison; TBLite and Crafter are small public smoke-scale parity splits.",
+  "rows": [
+    {
+      "task": "banking77",
+      "stack": "Seed candidate",
+      "heldout_reward": 0.88,
+      "source": "True same-container comparison on 24 train / 200 heldout rows with 2400-call budget."
+    },
+    {
+      "task": "banking77",
+      "stack": "gepa-ai",
+      "heldout_reward": 0.88,
+      "seed_heldout_reward": 0.88,
+      "best_candidate_id": 0,
+      "rollout_calls": 2402,
+      "proposer_calls": 25,
+      "prompt_tokens": 1287446,
+      "completion_tokens": 17727,
+      "total_usd": 0.135835,
+      "wall_clock_s": 463.53,
+      "source": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/gepa_ai_via_container/banking77_20260521_011836/summary.json"
+    },
+    {
+      "task": "banking77",
+      "stack": "Synth GEPA",
+      "heldout_reward": 0.885,
+      "minibatch_reward": 0.9375,
+      "best_candidate_id": "gepa_2ec8e0e53a78",
+      "rollout_calls": 2272,
+      "proposer_calls": 8,
+      "prompt_tokens": 1261646,
+      "completion_tokens": 12994,
+      "source": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/banking77_parity_synth_gepa/result_manifest.json"
+    },
+    {
+      "task": "tblite",
+      "stack": "Seed candidate",
+      "heldout_reward": 1.0,
+      "source": "Fresh same-container comparison on 3 train / 2 heldout rows; seed is already perfect on heldout."
+    },
+    {
+      "task": "tblite",
+      "stack": "gepa-ai",
+      "heldout_reward": 1.0,
+      "seed_heldout_reward": 1.0,
+      "best_candidate_id": 0,
+      "rollout_calls": 17,
+      "proposer_calls": 0,
+      "prompt_tokens": 2534,
+      "completion_tokens": 1242,
+      "total_usd": 0.00075,
+      "wall_clock_s": 25.34,
+      "source": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/gepa_ai_via_container/tblite_20260522_014223/summary.json"
+    },
+    {
+      "task": "tblite",
+      "stack": "Synth GEPA",
+      "heldout_reward": 1.0,
+      "minibatch_reward": null,
+      "best_candidate_id": "gepa_05c38a291174",
+      "rollout_calls": 8,
+      "proposer_calls": 1,
+      "prompt_tokens": 1610,
+      "completion_tokens": 619,
+      "source": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/tblite_parity_synth_gepa/result_manifest.json"
+    },
+    {
+      "task": "crafter",
+      "stack": "Seed candidate",
+      "heldout_reward": 1.0,
+      "source": "Fresh same-container comparison on 2 train / 1 heldout row at the small public budget."
+    },
+    {
+      "task": "crafter",
+      "stack": "gepa-ai",
+      "heldout_reward": 2.0,
+      "seed_heldout_reward": 1.0,
+      "best_candidate_id": 1,
+      "rollout_calls": 11,
+      "proposer_calls": 1,
+      "prompt_tokens": 29816,
+      "completion_tokens": 2024,
+      "total_usd": 0.003791,
+      "wall_clock_s": 186.15,
+      "source": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/gepa_ai_via_container/crafter_20260522_014303/summary.json"
+    },
+    {
+      "task": "crafter",
+      "stack": "Synth GEPA",
+      "heldout_reward": 2.0,
+      "minibatch_reward": 1.5,
+      "best_candidate_id": "gepa_d6f62fa19daf",
+      "rollout_calls": 8,
+      "proposer_calls": 1,
+      "prompt_tokens": 48195,
+      "completion_tokens": 1746,
+      "source": "cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/runs/synth_gepa/crafter_parity_synth_gepa/result_manifest.json"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+Classify the customer banking query into exactly one Banking77 intent label. Output only the single best label, using the exact label name. Focus on the main request, ignore irrelevant details, and choose the most specific matching intent.
