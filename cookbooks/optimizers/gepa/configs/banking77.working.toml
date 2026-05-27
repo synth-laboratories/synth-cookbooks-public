@@ -1,3 +1,9 @@
+# VERIFIED WORKING (2026-05-27): produced real heldout lift on banking77.
+# run banking77_sanity_20260527165710: best gepa_502b8f13e25d heldout 0.505 vs
+# seed 0.470 = +0.035 (n=400 heldout, 2 candidates beat baseline, generalizes).
+# Policy llama-3.2-3b (OpenRouter), proposer gpt-5.4-mini codex, 200 train / 400 heldout.
+# Copy of configs/banking77.toml at the time lift was confirmed.
+
 # Banking77 GEPA — public-cookbook-scale counts (sanity + meaningful search).
 # Run: ./run_gepa.sh --cfg configs/banking77.toml
 [run]

@@ -35,3 +35,8 @@ reasoning/workspace-heavy; estimate a few dollars.
   `/api/v1/credits` (policy) and the OpenAI usage dashboard (proposer) before/after.
 - Biggest single cost driver: multi-generation runs with large heldout (the 4-gen
   100/200 run hit 21 GB disk and ~1.3M+ tokens before the disk cap).
+
+## 2026-05-27 — verified lift run (banking77_sanity_20260527165710)
+- Config: 200 train / 400 heldout, minibatch 50, 3 gens × 4 proposals, llama-3.2-3b policy (OpenRouter), gpt-5.4-mini codex proposer. Saved as `configs/banking77.working.toml`.
+- Result: best gepa_502b8f13e25d heldout 0.505 vs seed 0.470 = **+0.035 lift** (real at n=400; 2 candidates beat baseline).
+- Spend: policy 3.071M tokens (llama-3.2-3b ≈ ~$0.05–0.08 on OpenRouter); proposer 3 gpt-5.4-mini codex calls (OpenAI, un-surfaced); 4200 rollouts. cost printed $0.0000 (pricing unwired).
