@@ -1,0 +1,4 @@
+# horse-race / run_gepa.sh stamped run configs + run artifacts (not source)
+.gepa_run_*.toml
+gepa.minigrid_gepa_public_*.toml
+runs/
