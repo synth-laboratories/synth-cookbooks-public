@@ -124,6 +124,9 @@ TRAIN_SAMPLE = int(os.environ.get("BANKING77_TRAIN_SAMPLE", "24"))
 TEST_SAMPLE = int(os.environ.get("BANKING77_TEST_SAMPLE", "200"))
 TRAIN_SHUFFLE_SEED = int(os.environ.get("BANKING77_TRAIN_SHUFFLE_SEED", "1009"))
 TEST_SHUFFLE_SEED = int(os.environ.get("BANKING77_TEST_SHUFFLE_SEED", "2003"))
+# Optional: restrict to a comma-separated subset of label names (e.g. a
+# high-confusability cluster). Empty = all 77 labels (default, unchanged).
+LABEL_SUBSET = [s.strip() for s in os.environ.get("BANKING77_LABELS", "").split(",") if s.strip()]
 
 
 def _load_banking77_rows() -> tuple[list[str], list[dict[str, Any]]]:
@@ -137,6 +140,12 @@ def _load_banking77_rows() -> tuple[list[str], list[dict[str, Any]]]:
         grouped: dict[int, list[int]] = {idx: [] for idx in range(len(label_names))}
         for source_index, ex in enumerate(split):
             grouped[int(ex["label"])].append(source_index)
+        if LABEL_SUBSET:
+            allowed = {i for i, n in enumerate(label_names) if n in LABEL_SUBSET}
+            missing = set(LABEL_SUBSET) - {label_names[i] for i in allowed}
+            if missing:
+                raise ValueError(f"BANKING77_LABELS contains unknown labels: {sorted(missing)}")
+            grouped = {idx: v for idx, v in grouped.items() if idx in allowed}
         rng = random.Random(shuffle_seed)
         for indices in grouped.values():
             rng.shuffle(indices)
