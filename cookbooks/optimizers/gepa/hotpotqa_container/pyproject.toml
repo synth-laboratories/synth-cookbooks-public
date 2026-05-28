@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Public GEPA cookbook container for HotpotQA multi-hop QA."
 requires-python = ">=3.11"
 dependencies = [
+  "synth-containers @ git+https://github.com/synth-laboratories/containers.git@78ec34f",
   "datasets>=2.18,<4",
   "fastapi>=0.110",
   "openai>=1.0",
