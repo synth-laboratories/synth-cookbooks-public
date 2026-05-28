@@ -11,13 +11,13 @@
 #     and config changes silently don't apply)
 #   - stamps a fresh run_id + cache namespace per invocation (avoids stale-lease
 #     and stale-cache reuse)
-#   - runs the prebuilt synth-optimizers binary, falling back to a source build
+#   - runs synth-optimizers from the pinned public org repo
 #   - streams the live GEPA terminal visualizer (SYNTH_OPTIMIZERS_TERMINAL=1)
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"
-PREBUILT="$REPO_ROOT/packages/synth-optimizers/.venv/bin/synth-optimizers"
+OPTIMIZERS_SPEC="synth-optimizers @ git+https://github.com/synth-laboratories/optimizers.git@d5acd9c3464fd28fda0a0d417b0cd4418152ab62"
 
 CFG=""
 while [[ $# -gt 0 ]]; do
@@ -55,13 +55,8 @@ RUNCFG="$SCRIPT_DIR/.gepa_run_${STAMP}.toml"
 trap 'rm -f "$RUNCFG"' EXIT
 sed -E "s/(run_id = \"[^\"]*)\"/\1_${STAMP}\"/; s/(namespace = \"[^\"]*)\"/\1_${STAMP}\"/" "$CFG" > "$RUNCFG"
 
-# pick the runner: prebuilt binary if present, else source build via uv
-if [[ -x "$PREBUILT" ]]; then
-  RUNNER=("$PREBUILT")
-else
-  export PATH="$HOME/.cargo/bin:$PATH"   # source build needs cargo
-  RUNNER=(uv run --project "$REPO_ROOT/packages/synth-optimizers" --group dev synth-optimizers)
-fi
+export PATH="$HOME/.cargo/bin:$PATH"   # git install builds the Rust extension when needed
+RUNNER=(uv run --with "$OPTIMIZERS_SPEC" synth-optimizers)
 
 echo "GEPA config : $CFG"
 echo "run config  : $RUNCFG  (run_id stamped ${STAMP})"
