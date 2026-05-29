@@ -2,7 +2,7 @@
 # in banking77_via_container.py. Compute-parity head-to-head.
 #
 # Boot the container separately on port 8810, then:
-#   uv run --project packages/synth-optimizers synth-optimizers gepa run \
+#   uv run --no-project --with synth-optimizers==0.2.0 synth-optimizers gepa run \
 #     --config cookbooks/blogs/oss-containers-and-gepa/chart-a-head-to-head/configs/synth_gepa/banking77_parity.toml
 
 [run]

@@ -61,7 +61,7 @@ echo "=== Synth GEPA (via gepa.toml, max_total_rollouts=200) ==="
 # Synth GEPA's run_id is fixed; clear prior workspace state so we get a fresh run.
 rm -rf "${CHART_DIR}/runs/synth_gepa/banking77_parity_synth_gepa" 2>/dev/null || true
 SYNTH_T0=$(python3 -c 'import time; print(time.time())')
-uv run --project packages/synth-optimizers synth-optimizers gepa run \
+uv run --no-project --with synth-optimizers==0.2.0 synth-optimizers gepa run \
   --config "${CHART_DIR}/configs/synth_gepa/banking77_parity.toml" 2>&1 | tail -25 | tee /tmp/synth_gepa_tail.txt
 SYNTH_T1=$(python3 -c 'import time; print(time.time())')
 
