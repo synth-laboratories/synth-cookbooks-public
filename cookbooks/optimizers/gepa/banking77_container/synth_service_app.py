@@ -130,6 +130,8 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
             detail="rollout.policy.base_url is required for provider=openrouter.",
         )
     max_tokens = policy.get("max_tokens", DEFAULT_POLICY_MAX_TOKENS)
+    if max_tokens is None:  # optimizer may send max_tokens: null explicitly
+        max_tokens = DEFAULT_POLICY_MAX_TOKENS
     try:
         max_tokens = int(max_tokens)
     except (TypeError, ValueError) as exc:
