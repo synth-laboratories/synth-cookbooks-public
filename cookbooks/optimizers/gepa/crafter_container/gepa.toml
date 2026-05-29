@@ -10,7 +10,7 @@ url = "http://127.0.0.1:8768"
 # directory so a user only installs Crafter-side deps when they run Crafter.
 command = [
   "/usr/bin/env",
-  "CRAFTER_POLICY_MODEL=gpt-4.1-nano",
+  "CRAFTER_POLICY_MODEL=gemini-3.1-flash-lite",
   "CRAFTER_MAX_TURNS=20",
   "CRAFTER_MIN_BATCH=1",
   "CRAFTER_MAX_BATCH=5",
@@ -36,11 +36,11 @@ target_modules = ["react_system_prompt"]
 react_system_prompt = "You are a Crafter agent. Respond with <tool_call>{\"name\":\"crafter_interact\",\"arguments\":{\"actions_list\":[\"<action>\"]}}</tool_call>. Pick reasonable actions."
 
 [policy]
-# Live OpenAI policy. The container reads OPENAI_API_KEY from its env.
-# Override the model via CRAFTER_POLICY_MODEL.
-provider = "openai"
-model = "gpt-4.1-nano"
-api_key_env = "OPENAI_API_KEY"
+# Live Gemini policy via the OpenAI-compatible endpoint. The container reads
+# GEMINI_API_KEY from its env and defaults base_url to Gemini's OpenAI surface.
+provider = "gemini"
+model = "gemini-3.1-flash-lite"
+api_key_env = "GEMINI_API_KEY"
 
 [proposer]
 backend = "codex_app_server"

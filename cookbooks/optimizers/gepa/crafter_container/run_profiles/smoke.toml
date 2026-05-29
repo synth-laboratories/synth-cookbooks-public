@@ -7,9 +7,9 @@ config = "gepa.toml"
 run_id = "crafter_gepa_public"
 
 [policy]
-provider = "openai"
-model = "gpt-4.1-nano"
-api_key_env = "OPENAI_API_KEY"
+provider = "gemini"
+model = "gemini-3.1-flash-lite"
+api_key_env = "GEMINI_API_KEY"
 
 [proposer]
 model = "gpt-5.4-nano"

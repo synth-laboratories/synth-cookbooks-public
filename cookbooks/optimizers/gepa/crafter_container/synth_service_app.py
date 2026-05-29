@@ -195,10 +195,15 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
                 status_code=422,
                 detail="rollout.policy.max_tokens must be positive when set.",
             )
+    resolved_base_url = _strip_openai_endpoint_suffix(raw_base_url) if raw_base_url else None
+    # Gemini speaks the OpenAI chat-completions wire format on this endpoint, so
+    # provider=gemini works through the same OpenAI client with GEMINI_API_KEY.
+    if resolved_base_url is None and provider.lower() == "gemini":
+        resolved_base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
     return {
         "provider": provider,
         "model": model,
-        "base_url": _strip_openai_endpoint_suffix(raw_base_url) if raw_base_url else None,
+        "base_url": resolved_base_url,
         "credential_mode": credential_mode,
         "max_tokens": max_tokens,
     }
@@ -207,7 +212,13 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
 def _policy_api_key(policy: dict[str, Any]) -> str:
     if policy["credential_mode"] == "proxy":
         return "proxy"
-    env_name = "OPENROUTER_API_KEY" if policy["provider"].lower() == "openrouter" else "OPENAI_API_KEY"
+    provider_l = policy["provider"].lower()
+    if provider_l == "openrouter":
+        env_name = "OPENROUTER_API_KEY"
+    elif provider_l == "gemini":
+        env_name = "GEMINI_API_KEY"
+    else:
+        env_name = "OPENAI_API_KEY"
     value = os.environ.get(env_name, "").strip()
     if value:
         return value
