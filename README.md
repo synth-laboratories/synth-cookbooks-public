@@ -52,12 +52,13 @@ Rust `synth-optimizers` GEPA runtime with a Codex app-server proposer and
 HTTP task containers. Current cookbook containers include Banking77, HotpotQA,
 TBLite, Crafter, and MiniGrid.
 
-Related reusable agent skills:
+Related reusable agent skills now live in their canonical repos:
 
-- `skills/containers/SKILL.md` - how to build and debug Synth task containers
-  against the `synth-containers` HTTP contract.
-- `skills/gepa/SKILL.md` - how to run, configure, debug, and adapt public Rust
-  GEPA cookbooks.
+- [`synth-laboratories/containers`](https://github.com/synth-laboratories/containers)
+  → `skills/containers/` - build and debug Synth task containers against the
+  `synth-containers` HTTP contract.
+- [`synth-laboratories/optimizers`](https://github.com/synth-laboratories/optimizers)
+  → `skills/gepa/` - run, configure, debug, and adapt public Rust GEPA.
 
 Run GEPA from the container directory. Each container keeps its base
 `gepa.toml`, profile TOMLs under `run_profiles/`, and a `run_fresh_gepa.sh`
