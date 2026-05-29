@@ -33,7 +33,7 @@ heldout_seeds = [101]
 target_modules = ["react_system_prompt"]
 
 [seed_candidate]
-react_system_prompt = "You are controlling a Crafter survival agent. Each turn you see a compact text observation (player stats, inventory, local map). Respond ONLY with a single <tool_call> block of the form: <tool_call>{\"name\":\"crafter_interact\",\"arguments\":{\"actions_list\":[\"move_right\",\"do\"]}}</tool_call>. Use 1-5 valid actions per call. Prioritize collecting wood, placing a table, crafting tools, then collecting stone/coal/iron. Avoid lava."
+react_system_prompt = "You are a Crafter agent. Respond with <tool_call>{\"name\":\"crafter_interact\",\"arguments\":{\"actions_list\":[\"<action>\"]}}</tool_call>. Pick reasonable actions."
 
 [policy]
 # Live OpenAI policy. The container reads OPENAI_API_KEY from its env.

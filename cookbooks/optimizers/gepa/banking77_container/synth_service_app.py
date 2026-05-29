@@ -11,8 +11,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 
-# Live OpenAI-compatible policy. OpenRouter is supported through
-# BANKING77_POLICY_BASE_URL plus OPENROUTER_API_KEY.
+# Live OpenAI-compatible policy is supplied per rollout through request.policy.
 try:
     from openai import AsyncOpenAI
 except Exception as _openai_err:  # pragma: no cover
@@ -20,11 +19,6 @@ except Exception as _openai_err:  # pragma: no cover
     _OPENAI_IMPORT_ERROR = _openai_err
 else:
     _OPENAI_IMPORT_ERROR = None
-
-POLICY_MODEL = os.environ.get("BANKING77_POLICY_MODEL", "qwen/qwen-2.5-7b-instruct")
-POLICY_BASE_URL = os.environ.get("BANKING77_POLICY_BASE_URL") or os.environ.get(
-    "OPENAI_BASE_URL"
-)
 
 # Fixed cap for OpenAI-compatible calls inside this service. Adaptive fan-out is
 # owned by the Rust GEPA scheduler so run behavior is checkpointed with the run.
@@ -37,19 +31,142 @@ POLICY_RETRY_BACKOFF_SECONDS = float(
 ROLLOUT_TIMEOUT_SECONDS = float(
     os.environ.get("BANKING77_ROLLOUT_TIMEOUT_SECONDS", str(POLICY_TIMEOUT_SECONDS + 5))
 )
-POLICY_API_MODE = os.environ.get("BANKING77_POLICY_API_MODE", "auto").strip().lower()
-POLICY_MAX_TOKENS = int(os.environ.get("BANKING77_POLICY_MAX_TOKENS", "16"))
-POLICY_DISABLE_REASONING = (
-    os.environ.get("BANKING77_POLICY_DISABLE_REASONING", "auto").strip().lower()
-)
-_openai_client: Any = None
+DEFAULT_POLICY_MAX_TOKENS = 16
+_openai_clients: dict[tuple[str, str, str], Any] = {}
 _openai_semaphore: asyncio.Semaphore | None = None
+_RAW_CREDENTIAL_KEYS = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer_token",
+    "openai_api_key",
+    "openrouter_api_key",
+    "secret_key",
+}
 
 
-def _get_openai_client() -> Any:
-    global _openai_client
-    if _openai_client is not None:
-        return _openai_client
+def _find_raw_credential_key(value: Any) -> str | None:
+    if isinstance(value, dict):
+        for raw_key, raw_value in value.items():
+            normalized = str(raw_key).strip().lower().replace("-", "_")
+            if normalized in _RAW_CREDENTIAL_KEYS or normalized.endswith("_api_key"):
+                return str(raw_key)
+            nested = _find_raw_credential_key(raw_value)
+            if nested is not None:
+                return nested
+    elif isinstance(value, list):
+        for item in value:
+            nested = _find_raw_credential_key(item)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _normalize_policy_enum(value: Any, default: str) -> str:
+    text = str(value or "").strip().lower().replace("-", "_")
+    return text or default
+
+
+def _strip_openai_endpoint_suffix(url: str) -> str:
+    normalized = url.strip().rstrip("/")
+    for suffix in ("/chat/completions", "/responses"):
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)]
+    return normalized
+
+
+def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
+    policy = payload.get("policy")
+    if not isinstance(policy, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy is required for GEPA optimizer contract v2.",
+        )
+    raw_key = _find_raw_credential_key(policy.get("config", {}))
+    if raw_key is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"rollout.policy.config must not carry raw credential field {raw_key!r}.",
+        )
+    provider = str(policy.get("provider") or "").strip()
+    model = str(policy.get("model") or "").strip()
+    if not provider or not model:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.provider and rollout.policy.model are required.",
+        )
+    api_family = _normalize_policy_enum(policy.get("api_family"), "chat_completions")
+    if api_family not in {"chat_completions", "responses"}:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported rollout.policy.api_family: {api_family!r}",
+        )
+    credential_mode = _normalize_policy_enum(policy.get("credential_mode"), "byok")
+    if credential_mode not in {"byok", "proxy"}:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported rollout.policy.credential_mode: {credential_mode!r}",
+        )
+    disable_reasoning = _normalize_policy_enum(policy.get("disable_reasoning"), "auto")
+    if disable_reasoning not in {"auto", "on", "off", "true", "false", "1", "0"}:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported rollout.policy.disable_reasoning: {disable_reasoning!r}",
+        )
+    raw_base_url = (
+        str(policy.get("inference_url") or "").strip()
+        if credential_mode == "proxy"
+        else str(policy.get("base_url") or "").strip()
+    )
+    if credential_mode == "proxy" and not raw_base_url:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.inference_url is required when credential_mode=proxy.",
+        )
+    if provider.lower() == "openrouter" and credential_mode == "byok" and not raw_base_url:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.base_url is required for provider=openrouter.",
+        )
+    max_tokens = policy.get("max_tokens", DEFAULT_POLICY_MAX_TOKENS)
+    try:
+        max_tokens = int(max_tokens)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.max_tokens must be an integer when set.",
+        ) from exc
+    if max_tokens <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.max_tokens must be positive.",
+        )
+    return {
+        "provider": provider,
+        "model": model,
+        "api_family": api_family,
+        "base_url": _strip_openai_endpoint_suffix(raw_base_url) if raw_base_url else None,
+        "credential_mode": credential_mode,
+        "max_tokens": max_tokens,
+        "disable_reasoning": disable_reasoning,
+    }
+
+
+def _policy_api_key(policy: dict[str, Any]) -> str:
+    if policy["credential_mode"] == "proxy":
+        return "proxy"
+    env_name = "OPENROUTER_API_KEY" if policy["provider"].lower() == "openrouter" else "OPENAI_API_KEY"
+    api_key = os.environ.get(env_name, "").strip()
+    if api_key:
+        return api_key
+    raise HTTPException(
+        status_code=503,
+        detail=f"{env_name} is not set; rollout.policy credential_mode=byok requires a container env credential.",
+    )
+
+
+def _get_openai_client(policy: dict[str, Any]) -> Any:
     if AsyncOpenAI is None:
         raise HTTPException(
             status_code=503,
@@ -58,17 +175,16 @@ def _get_openai_client() -> Any:
                 f"Original import error: {_OPENAI_IMPORT_ERROR!r}"
             ),
         )
-    api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENROUTER_API_KEY or OPENAI_API_KEY not set in container env; cannot serve live rollouts.",
-        )
-    client_kwargs = {"api_key": api_key, "timeout": POLICY_TIMEOUT_SECONDS}
-    if POLICY_BASE_URL:
-        client_kwargs["base_url"] = POLICY_BASE_URL
-    _openai_client = AsyncOpenAI(**client_kwargs)
-    return _openai_client
+    base_url = policy.get("base_url")
+    key = (policy["provider"].lower(), policy["credential_mode"], str(base_url or ""))
+    client = _openai_clients.get(key)
+    if client is None:
+        client_kwargs = {"api_key": _policy_api_key(policy), "timeout": POLICY_TIMEOUT_SECONDS}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client = AsyncOpenAI(**client_kwargs)
+        _openai_clients[key] = client
+    return client
 
 
 def _get_openai_semaphore() -> asyncio.Semaphore:
@@ -86,22 +202,19 @@ def _is_policy_timeout(error: Exception) -> bool:
     return "timeout" in name or "timedout" in name
 
 
-def _policy_prefers_chat() -> bool:
-    if POLICY_API_MODE in {"chat", "chat_completions", "completions"}:
-        return True
-    if POLICY_API_MODE in {"responses", "response"}:
-        return False
-    return "openrouter.ai" in str(POLICY_BASE_URL or "").lower()
+def _policy_prefers_chat(policy: dict[str, Any]) -> bool:
+    return policy["api_family"] == "chat_completions"
 
 
 def _policy_retry_delay(attempt: int) -> float:
     return min(POLICY_RETRY_BACKOFF_SECONDS * (2 ** max(0, attempt - 1)), 8.0)
 
 
-def _policy_chat_extra_body() -> dict[str, Any] | None:
-    disable_reasoning = POLICY_DISABLE_REASONING in {"1", "true", "yes", "on"}
-    if POLICY_DISABLE_REASONING == "auto":
-        disable_reasoning = "openrouter.ai" in str(POLICY_BASE_URL or "").lower()
+def _policy_chat_extra_body(policy: dict[str, Any]) -> dict[str, Any] | None:
+    setting = policy["disable_reasoning"]
+    disable_reasoning = setting in {"1", "true", "yes", "on"}
+    if setting == "auto":
+        disable_reasoning = "openrouter.ai" in str(policy.get("base_url") or "").lower()
     if not disable_reasoning:
         return None
     return {
@@ -113,7 +226,7 @@ def _policy_chat_extra_body() -> dict[str, Any] | None:
 try:
     from synth_containers import GEPA_OPTIMIZER_CONTRACT_VERSION
 except Exception:
-    GEPA_OPTIMIZER_CONTRACT_VERSION = "synth_optimizers.gepa.v1"
+    GEPA_OPTIMIZER_CONTRACT_VERSION = "synth_optimizers.gepa.v2"
 
 
 TASK_ID = "banking77.intent_classification"
@@ -465,6 +578,7 @@ async def terminate_rollout(rollout_id: str, request: Request) -> dict[str, Any]
 
 
 async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    policy = _require_policy(payload)
     row = payload.get("dataset_row") if isinstance(payload.get("dataset_row"), dict) else None
     if not row:
         row = _row_for_seed(
@@ -477,6 +591,7 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
     # via a module-level asyncio.Semaphore(POLICY_CONCURRENCY).
     prediction, usage = await _predict_label(
         str(row.get("text") or ""),
+        policy=policy,
         system_prompt=system_prompt,
     )
     expected = str(row.get("label") or "")
@@ -496,7 +611,7 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "prediction": prediction,
                 "expected": expected,
                 "system_prompt_len": len(system_prompt),
-                "policy_model": POLICY_MODEL,
+                "policy_model": policy["model"],
             },
         },
         "summary": {
@@ -521,6 +636,9 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
 async def _execute_rollout_payload_with_timeout(payload: dict[str, Any]) -> dict[str, Any]:
     row = payload.get("dataset_row") if isinstance(payload.get("dataset_row"), dict) else None
     example_id = str((row or {}).get("example_id") or payload.get("trace_correlation_id") or "-")
+    policy = payload.get("policy") if isinstance(payload.get("policy"), dict) else {}
+    policy_model = str(policy.get("model") or "unknown")
+    api_family = str(policy.get("api_family") or "unknown")
     try:
         return await asyncio.wait_for(
             _execute_rollout_payload(payload),
@@ -531,8 +649,8 @@ async def _execute_rollout_payload_with_timeout(payload: dict[str, Any]) -> dict
             status_code=504,
             detail=(
                 f"rollout request timed out after {ROLLOUT_TIMEOUT_SECONDS:.1f}s "
-                f"for example_id={example_id}; policy_model={POLICY_MODEL} "
-                f"api_mode={POLICY_API_MODE} policy_timeout={POLICY_TIMEOUT_SECONDS:.1f}s "
+                f"for example_id={example_id}; policy_model={policy_model} "
+                f"api_family={api_family} policy_timeout={POLICY_TIMEOUT_SECONDS:.1f}s "
                 f"policy_retries={POLICY_RETRIES} policy_concurrency={POLICY_CONCURRENCY}"
             ),
         ) from exc
@@ -592,7 +710,12 @@ def _row_for_seed(*, split: str, seed: int) -> dict[str, Any]:
     return result
 
 
-async def _predict_label(text: str, *, system_prompt: str) -> tuple[str, dict[str, int]]:
+async def _predict_label(
+    text: str,
+    *,
+    policy: dict[str, Any],
+    system_prompt: str,
+) -> tuple[str, dict[str, int]]:
     """Call the live policy model. Returns (predicted_label, token_usage).
 
     Uses AsyncOpenAI + a module-level Semaphore so the container only ever
@@ -600,7 +723,7 @@ async def _predict_label(text: str, *, system_prompt: str) -> tuple[str, dict[st
     container accept any number of concurrent /rollout requests without
     overrunning OpenAI's per-key connection pool.
     """
-    client = _get_openai_client()
+    client = _get_openai_client(policy)
     semaphore = _get_openai_semaphore()
     user_content = (
         f"Customer query:\n{text}\n\n"
@@ -611,19 +734,19 @@ async def _predict_label(text: str, *, system_prompt: str) -> tuple[str, dict[st
     # Deterministic policy: temperature=0 so identical (seed, candidate)
     # pairs produce byte-identical predictions across both stacks.
     async with semaphore:
-        if _policy_prefers_chat():
+        if _policy_prefers_chat(policy):
             last_error: Exception | None = None
             for attempt in range(1, POLICY_RETRIES + 1):
                 try:
-                    extra_body = _policy_chat_extra_body()
+                    extra_body = _policy_chat_extra_body(policy)
                     request_kwargs = {
-                        "model": POLICY_MODEL,
+                        "model": policy["model"],
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_content},
                         ],
                         "temperature": 0,
-                        "max_tokens": POLICY_MAX_TOKENS,
+                        "max_tokens": policy["max_tokens"],
                     }
                     if extra_body is not None:
                         request_kwargs["extra_body"] = extra_body
@@ -639,7 +762,7 @@ async def _predict_label(text: str, *, system_prompt: str) -> tuple[str, dict[st
                         raise HTTPException(
                             status_code=status_code,
                             detail=(
-                                f"Policy model {POLICY_MODEL!r} failed through Chat Completions API "
+                                f"Policy model {policy['model']!r} failed through Chat Completions API "
                                 f"after {attempt}/{POLICY_RETRIES} attempts, "
                                 f"timeout={POLICY_TIMEOUT_SECONDS:.1f}s."
                             ),
@@ -648,7 +771,7 @@ async def _predict_label(text: str, *, system_prompt: str) -> tuple[str, dict[st
             else:
                 raise HTTPException(
                     status_code=504,
-                    detail=f"Policy model {POLICY_MODEL!r} failed: {last_error!r}",
+                    detail=f"Policy model {policy['model']!r} failed: {last_error!r}",
                 )
             raw = (resp.choices[0].message.content or "").strip()
             usage = {
@@ -660,7 +783,7 @@ async def _predict_label(text: str, *, system_prompt: str) -> tuple[str, dict[st
         try:
             resp = await asyncio.wait_for(
                 client.responses.create(
-                    model=POLICY_MODEL,
+                    model=policy["model"],
                     input=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_content},
@@ -680,21 +803,21 @@ async def _predict_label(text: str, *, system_prompt: str) -> tuple[str, dict[st
                 raise HTTPException(
                     status_code=504,
                     detail=(
-                        f"Policy model {POLICY_MODEL!r} timed out after "
+                        f"Policy model {policy['model']!r} timed out after "
                         f"{POLICY_TIMEOUT_SECONDS:.1f}s through Responses API."
                     ),
                 ) from responses_error
             # Fallback to Chat Completions for endpoints that don't support Responses API.
             try:
-                extra_body = _policy_chat_extra_body()
+                extra_body = _policy_chat_extra_body(policy)
                 request_kwargs = {
-                    "model": POLICY_MODEL,
+                    "model": policy["model"],
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_content},
                     ],
                     "temperature": 0,
-                    "max_tokens": POLICY_MAX_TOKENS,
+                    "max_tokens": policy["max_tokens"],
                 }
                 if extra_body is not None:
                     request_kwargs["extra_body"] = extra_body
@@ -707,7 +830,7 @@ async def _predict_label(text: str, *, system_prompt: str) -> tuple[str, dict[st
                 raise HTTPException(
                     status_code=status_code,
                     detail=(
-                        f"Policy model {POLICY_MODEL!r} failed through OpenAI-compatible API. "
+                        f"Policy model {policy['model']!r} failed through OpenAI-compatible API. "
                         f"Responses error: {responses_error!r}; chat completions error: {chat_error!r}"
                     ),
                 ) from chat_error

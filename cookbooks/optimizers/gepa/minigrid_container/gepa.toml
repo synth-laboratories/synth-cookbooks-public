@@ -28,7 +28,7 @@ heldout_seeds = [100]
 target_modules = ["system_prompt"]
 
 [seed_candidate]
-system_prompt = "You are a MiniGrid agent. Each turn you see a compact text description of the gridworld (mission, your position/direction, what you're carrying, visible objects, admissible actions). Respond ONLY with strict JSON of the form: {\"action\": \"<one admissible action name>\"}. Choose actions that make real progress toward the mission. Pick up keys before trying to open locked doors. Use toggle to open doors. Use forward to move in your current direction."
+system_prompt = "Pick an action. Reply with JSON: {\"action\": \"name\"}."
 
 [policy]
 provider = "openai"

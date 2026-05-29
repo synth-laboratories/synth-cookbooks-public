@@ -1334,8 +1334,15 @@ fn proposer_metadata_read_model(
         "policy": {
             "provider": input.config.policy.provider,
             "model": input.config.policy.model,
+            "api_family": input.config.policy.api_family,
             "base_url": input.config.policy.base_url,
-            "api_key_env": input.config.policy.api_key_env,
+            "inference_url": input.config.policy.inference_url,
+            "max_tokens": input.config.policy.max_tokens,
+            "disable_reasoning": input.config.policy.disable_reasoning,
+            "tool_call_style": input.config.policy.tool_call_style,
+            "proxy_mode": input.config.policy.proxy_mode,
+            "credential_mode": input.config.policy.credential_mode,
+            "config": input.config.policy.config,
         },
         "proposer": {
             "backend": input.config.proposer.backend,

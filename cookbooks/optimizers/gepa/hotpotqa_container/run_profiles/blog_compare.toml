@@ -1,0 +1,57 @@
+[profile]
+name = "blog_compare"
+description = "HotpotQA GEPA run matching blog post head-to-head comparison: n=24 train, n=100 heldout, 2 generations × 4 proposals, gpt-4.1-nano policy."
+
+[base]
+config = "gepa.toml"
+run_id = "hotpotqa_blog_compare"
+
+[policy]
+provider = "openai"
+model = "gpt-4.1-nano"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+api_mode = "auto"
+concurrency = 64
+retries = 2
+max_tokens = 64
+
+[proposer]
+model = "gpt-5.4-nano"
+auth_mode = "api_key"
+api_key_env = "OPENAI_API_KEY"
+copy_host_auth = false
+
+[dataset]
+train_size = 24
+heldout_size = 100
+train_seed_start = 0
+heldout_seed_start = 1000
+
+[pipeline]
+max_generations = 4
+proposals_per_generation = 6
+minibatch_size = 24
+max_in_flight_candidates = 6
+rollout_workers = 32
+rollout_chunk_size = "auto"
+
+[pipeline.adaptive_rollout_concurrency]
+enabled = true
+initial = 32
+min = 1
+max = 64
+increase_step = 8
+decrease_step = 8
+increase_after_successes = 20
+
+[budgets]
+# 24 train × 6 proposals × 4 generations = 576 train + buffer
+train_rollouts = 800
+heldout_rollouts = 2500
+
+[timeouts]
+policy_seconds = 25
+rollout_seconds = 30
+container_http_seconds = 45
+rollout_http_retries = 1

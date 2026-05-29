@@ -1,0 +1,59 @@
+[profile]
+name = "blog_compare"
+description = "Crafter GEPA blog head-to-head — n=12 train / n=16 heldout, max_turns=15, weakened seed prompt so the seed score doesn't saturate at 2.000."
+
+[base]
+config = "gepa.toml"
+run_id = "crafter_blog_compare"
+
+[policy]
+provider = "openai"
+model = "gpt-4.1-nano"
+api_key_env = "OPENAI_API_KEY"
+
+[proposer]
+model = "gpt-5.4-nano"
+auth_mode = "api_key"
+api_key_env = "OPENAI_API_KEY"
+copy_host_auth = false
+
+[task]
+max_turns = 15
+min_batch = 1
+max_batch = 5
+
+[dataset]
+train_size = 12
+heldout_size = 16
+train_seed_start = 11
+heldout_seed_start = 101
+
+[pipeline]
+max_generations = 2
+proposals_per_generation = 4
+minibatch_size = 12
+max_in_flight_candidates = 2
+# Low rollout_workers because each Crafter rollout spawns a fresh JAX env
+# that triggers a 30-90s XLA JIT compile. Scaling parallelism past 2 sends
+# JAX into a thrash where compiles serialize behind a global lock.
+rollout_workers = 2
+rollout_chunk_size = "auto"
+
+[pipeline.adaptive_rollout_concurrency]
+enabled = true
+initial = 2
+min = 1
+max = 4
+increase_step = 1
+decrease_step = 1
+increase_after_successes = 8
+
+[budgets]
+# 12 train × 4 × 2 = 96 + heldout ~10 × 16 = 160 + slack
+train_rollouts = 250
+heldout_rollouts = 250
+
+[timeouts]
+container_http_seconds = 240
+rollout_async_seconds = 360
+rollout_http_retries = 0

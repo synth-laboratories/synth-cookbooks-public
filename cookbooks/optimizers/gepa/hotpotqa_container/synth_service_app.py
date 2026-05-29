@@ -19,7 +19,7 @@ from openai import AsyncOpenAI
 try:
     from synth_containers import GEPA_OPTIMIZER_CONTRACT_VERSION
 except Exception:
-    GEPA_OPTIMIZER_CONTRACT_VERSION = "synth_optimizers.gepa.v1"
+    GEPA_OPTIMIZER_CONTRACT_VERSION = "synth_optimizers.gepa.v2"
 
 
 DATASET_NAME = "hotpot_qa"
@@ -40,14 +40,11 @@ DEFAULT_STAGE1_USER = (
     "Return only the short answer string."
 )
 
-POLICY_MODEL = os.environ.get("HOTPOTQA_POLICY_MODEL", "qwen/qwen-2.5-7b-instruct")
-POLICY_BASE_URL = os.environ.get("HOTPOTQA_POLICY_BASE_URL", "https://openrouter.ai/api/v1")
-POLICY_API_KEY_ENV = os.environ.get("HOTPOTQA_POLICY_API_KEY_ENV", "OPENROUTER_API_KEY")
 POLICY_TIMEOUT_SECONDS = float(os.environ.get("HOTPOTQA_POLICY_TIMEOUT_SECONDS", "20"))
 POLICY_RETRIES = int(os.environ.get("HOTPOTQA_POLICY_RETRIES", "1"))
-POLICY_MAX_TOKENS = int(os.environ.get("HOTPOTQA_POLICY_MAX_TOKENS", "32"))
 POLICY_CONCURRENCY = int(os.environ.get("HOTPOTQA_POLICY_CONCURRENCY", "120"))
 ROLLOUT_TIMEOUT_SECONDS = float(os.environ.get("HOTPOTQA_ROLLOUT_TIMEOUT_SECONDS", "25"))
+DEFAULT_POLICY_MAX_TOKENS = 32
 
 HOTPOTQA_PROPOSER_HINTS = {
     "task_output_space": "open_short_answer",
@@ -65,7 +62,7 @@ HOTPOTQA_PROPOSER_HINTS = {
     "valid_examples": "Use abstract or synthetic examples only; do not quote train question-answer pairs.",
 }
 
-_client: AsyncOpenAI | None = None
+_clients: dict[tuple[str, str, str], AsyncOpenAI] = {}
 _policy_semaphore: asyncio.Semaphore | None = None
 _dataset_lock = asyncio.Lock()
 _train_dataset: Any | None = None
@@ -73,32 +70,149 @@ _validation_dataset: Any | None = None
 _async_rollouts: dict[str, dict[str, Any]] = {}
 _async_rollouts_lock = asyncio.Lock()
 _terminal_statuses = {"completed", "failed", "cancelled", "terminated"}
+_RAW_CREDENTIAL_KEYS = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer_token",
+    "openai_api_key",
+    "openrouter_api_key",
+    "secret_key",
+}
+
+
+def _find_raw_credential_key(value: Any) -> str | None:
+    if isinstance(value, dict):
+        for raw_key, raw_value in value.items():
+            normalized = str(raw_key).strip().lower().replace("-", "_")
+            if normalized in _RAW_CREDENTIAL_KEYS or normalized.endswith("_api_key"):
+                return str(raw_key)
+            nested = _find_raw_credential_key(raw_value)
+            if nested is not None:
+                return nested
+    elif isinstance(value, list):
+        for item in value:
+            nested = _find_raw_credential_key(item)
+            if nested is not None:
+                return nested
+    return None
 
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def _api_key() -> str:
-    value = os.environ.get(POLICY_API_KEY_ENV, "").strip()
+def _normalize_policy_enum(value: Any, default: str) -> str:
+    text = str(value or "").strip().lower().replace("-", "_")
+    return text or default
+
+
+def _strip_openai_endpoint_suffix(url: str) -> str:
+    normalized = url.strip().rstrip("/")
+    for suffix in ("/chat/completions", "/responses"):
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)]
+    return normalized
+
+
+def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
+    policy = payload.get("policy")
+    if not isinstance(policy, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy is required for GEPA optimizer contract v2.",
+        )
+    raw_key = _find_raw_credential_key(policy.get("config", {}))
+    if raw_key is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"rollout.policy.config must not carry raw credential field {raw_key!r}.",
+        )
+    provider = str(policy.get("provider") or "").strip()
+    model = str(policy.get("model") or "").strip()
+    if not provider or not model:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.provider and rollout.policy.model are required.",
+        )
+    api_family = _normalize_policy_enum(policy.get("api_family"), "chat_completions")
+    if api_family != "chat_completions":
+        raise HTTPException(
+            status_code=422,
+            detail=f"{TASK_ID} supports rollout.policy.api_family='chat_completions'; got {api_family!r}.",
+        )
+    credential_mode = _normalize_policy_enum(policy.get("credential_mode"), "byok")
+    if credential_mode not in {"byok", "proxy"}:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported rollout.policy.credential_mode: {credential_mode!r}",
+        )
+    raw_base_url = (
+        str(policy.get("inference_url") or "").strip()
+        if credential_mode == "proxy"
+        else str(policy.get("base_url") or "").strip()
+    )
+    if credential_mode == "proxy" and not raw_base_url:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.inference_url is required when credential_mode=proxy.",
+        )
+    if provider.lower() == "openrouter" and credential_mode == "byok" and not raw_base_url:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.base_url is required for provider=openrouter.",
+        )
+    max_tokens = policy.get("max_tokens", DEFAULT_POLICY_MAX_TOKENS)
+    try:
+        max_tokens = int(max_tokens)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.max_tokens must be an integer when set.",
+        ) from exc
+    if max_tokens <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.max_tokens must be positive.",
+        )
+    return {
+        "provider": provider,
+        "model": model,
+        "base_url": _strip_openai_endpoint_suffix(raw_base_url) if raw_base_url else None,
+        "credential_mode": credential_mode,
+        "max_tokens": max_tokens,
+    }
+
+
+def _api_key(policy: dict[str, Any]) -> str:
+    if policy["credential_mode"] == "proxy":
+        return "proxy"
+    env_name = "OPENROUTER_API_KEY" if policy["provider"].lower() == "openrouter" else "OPENAI_API_KEY"
+    value = os.environ.get(env_name, "").strip()
     if value:
         return value
     raise HTTPException(
         status_code=503,
-        detail=f"{POLICY_API_KEY_ENV} is not set; HotpotQA policy rollouts need an API key.",
+        detail=f"{env_name} is not set; rollout.policy credential_mode=byok requires a container env credential.",
     )
 
 
-def _get_client() -> AsyncOpenAI:
-    global _client
-    if _client is None:
-        _client = AsyncOpenAI(
-            api_key=_api_key(),
-            base_url=POLICY_BASE_URL,
-            timeout=POLICY_TIMEOUT_SECONDS,
-            max_retries=0,
-        )
-    return _client
+def _get_client(policy: dict[str, Any]) -> AsyncOpenAI:
+    base_url = policy.get("base_url")
+    key = (policy["provider"].lower(), policy["credential_mode"], str(base_url or ""))
+    client = _clients.get(key)
+    if client is None:
+        client_kwargs: dict[str, Any] = {
+            "api_key": _api_key(policy),
+            "timeout": POLICY_TIMEOUT_SECONDS,
+            "max_retries": 0,
+        }
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client = AsyncOpenAI(**client_kwargs)
+        _clients[key] = client
+    return client
 
 
 def _get_policy_semaphore() -> asyncio.Semaphore:
@@ -206,21 +320,25 @@ def _extract_answer(raw: str) -> str:
     return text.splitlines()[0].strip().strip('"')
 
 
-async def _predict_answer(system_prompt: str, user_prompt: str) -> tuple[str, dict[str, Any]]:
-    client = _get_client()
+async def _predict_answer(
+    policy: dict[str, Any],
+    system_prompt: str,
+    user_prompt: str,
+) -> tuple[str, dict[str, Any]]:
+    client = _get_client(policy)
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     last_error: Exception | None = None
     async with _get_policy_semaphore():
         for attempt in range(POLICY_RETRIES + 1):
             try:
                 response = await client.chat.completions.create(
-                    model=POLICY_MODEL,
+                    model=policy["model"],
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.0,
-                    max_tokens=POLICY_MAX_TOKENS,
+                    max_tokens=policy["max_tokens"],
                 )
                 if response.usage is not None:
                     usage = {
@@ -239,7 +357,7 @@ async def _predict_answer(system_prompt: str, user_prompt: str) -> tuple[str, di
                 await asyncio.sleep(0.25 + random.random() * 0.25)
     raise HTTPException(
         status_code=502,
-        detail=f"Policy model '{POLICY_MODEL}' failed after {POLICY_RETRIES + 1} attempt(s): {last_error}",
+        detail=f"Policy model {policy['model']!r} failed after {POLICY_RETRIES + 1} attempt(s): {last_error}",
     )
 
 
@@ -313,7 +431,7 @@ async def task_info() -> dict[str, Any]:
         "proposer_hints": HOTPOTQA_PROPOSER_HINTS,
         "metadata": {
             "primary_metric": "token_f1",
-            "policy_model": POLICY_MODEL,
+            "policy_model_source": "rollout.policy.model",
             "answer_contract": "Return only the short final answer string.",
             "proposer_hints": HOTPOTQA_PROPOSER_HINTS,
         },
@@ -459,6 +577,7 @@ async def terminate_rollout(rollout_id: str, request: Request) -> dict[str, Any]
 
 
 async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    policy = _require_policy(payload)
     row = payload.get("dataset_row") if isinstance(payload.get("dataset_row"), dict) else None
     if row is None:
         row = await _row_for_seed(
@@ -471,7 +590,7 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
         question=str(row.get("question") or ""),
         context=str(row.get("context") or ""),
     )
-    prediction, usage = await _predict_answer(system_prompt, user_prompt)
+    prediction, usage = await _predict_answer(policy, system_prompt, user_prompt)
     expected = str(row.get("answer") or "")
     f1 = _token_f1(prediction, expected)
     exact_match = 1.0 if _normalize_text(prediction) == _normalize_text(expected) else 0.0
@@ -490,7 +609,7 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "prediction": prediction,
                 "expected": expected,
                 "exact_match": exact_match,
-                "policy_model": POLICY_MODEL,
+                "policy_model": policy["model"],
             },
         },
         "summary": {
@@ -500,7 +619,7 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "prediction": prediction,
             "expected": expected,
         },
-        "usage": {**usage, "cost_usd": 0.0, "model": POLICY_MODEL},
+        "usage": {**usage, "cost_usd": 0.0, "model": policy["model"]},
         "trace": {
             "event_history": [
                 {"type": "question", "text": row.get("question")},
@@ -524,6 +643,8 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _execute_rollout_payload_with_timeout(payload: dict[str, Any]) -> dict[str, Any]:
+    policy = payload.get("policy") if isinstance(payload.get("policy"), dict) else {}
+    policy_model = str(policy.get("model") or "unknown")
     try:
         return await asyncio.wait_for(
             _execute_rollout_payload(payload),
@@ -534,7 +655,7 @@ async def _execute_rollout_payload_with_timeout(payload: dict[str, Any]) -> dict
             status_code=504,
             detail=(
                 f"rollout request timed out after {ROLLOUT_TIMEOUT_SECONDS:.1f}s; "
-                f"policy_model={POLICY_MODEL} policy_timeout={POLICY_TIMEOUT_SECONDS:.1f}s "
+                f"policy_model={policy_model} policy_timeout={POLICY_TIMEOUT_SECONDS:.1f}s "
                 f"policy_retries={POLICY_RETRIES} policy_concurrency={POLICY_CONCURRENCY}"
             ),
         ) from exc

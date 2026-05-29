@@ -1,0 +1,58 @@
+[profile]
+name = "blog_n24"
+description = "Banking77 GEPA run matching blog post parameters: n=24 train, n=200 heldout, 6 generations."
+
+[base]
+config = "gepa.toml"
+run_id = "banking77_blog_n24"
+
+[policy]
+provider = "openai"
+model = "gpt-4.1-nano"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+api_mode = "auto"
+concurrency = 128
+retries = 2
+max_tokens = 64
+disable_reasoning = "auto"
+
+[proposer]
+model = "gpt-5.4-nano"
+auth_mode = "api_key"
+api_key_env = "OPENAI_API_KEY"
+copy_host_auth = false
+
+[dataset]
+train_size = 24
+heldout_size = 200
+train_shuffle_seed = 664514459
+heldout_shuffle_seed = 4174331086
+
+[pipeline]
+max_generations = 6
+proposals_per_generation = 6
+minibatch_size = 24
+max_in_flight_candidates = 6
+rollout_workers = 20
+rollout_chunk_size = "auto"
+
+[pipeline.adaptive_rollout_concurrency]
+enabled = true
+initial = 50
+min = 1
+max = 120
+increase_step = 10
+decrease_step = 10
+increase_after_successes = 40
+
+[budgets]
+# 24 seeds × ~30 candidates = 720 train; top-10 heldout × 200 = 2000 heldout
+train_rollouts = 800
+heldout_rollouts = 2200
+
+[timeouts]
+policy_seconds = 20
+rollout_seconds = 25
+container_http_seconds = 30
+rollout_http_retries = 1
