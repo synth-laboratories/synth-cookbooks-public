@@ -5,15 +5,16 @@ Public GEPA examples for `synth-optimizers`.
 The current public launch examples are **Banking77** (live OpenAI
 classifier), **HotpotQA** (multi-hop QA with token-F1 verifier),
 **TBLite** (real Python coding tasks with pytest verifier), and
-**Crafter** (real Craftax episodes). **MiniGrid** is included as the
-next public container scaffold. Every rollout exercises real models and
-real environments. Each
+**MiniGrid** (real MiniGrid policy-control episodes). Every rollout exercises real models and
+real task containers. Each
 container declares its own deps in a per-container `pyproject.toml` so
 installing one cookbook does not pull deps for the others.
 
-Additional containers (LangProbe set, Tau-Bench 3, and the vertical-domain
-roadmap) flip public over follow-up releases; see
-`cookbooks/blogs/oss-containers-and-gepa/README.md` for the full catalog.
+- https://prompt-opt.com
+- https://prompt-opt.com/gepa
+- https://prompt-opt.com/docs
+- https://prompt-opt.com/docs/examples
+- https://prompt-opt.com/blog/oss-containers-and-gepa
 
 ## Directory Map
 
@@ -39,12 +40,6 @@ cookbooks/optimizers/gepa/
     pyproject.toml           # gymnasium, minigrid, openai
     gepa.toml
     synth_service_app.py     # real MiniGrid DoorKey env
-  crafter_container/
-    README.md
-    pyproject.toml           # craftax, jax[cpu], openai
-    crafter_text_env.py
-    gepa.toml
-    synth_service_app.py     # real Craftax episodes
 ```
 
 Each example keeps its optimizer config beside the container it exercises. There
@@ -85,11 +80,7 @@ Canonical base configs are also runnable directly:
 - `cookbooks/optimizers/gepa/banking77_container/gepa.toml` — live Banking77 classifier
 - `cookbooks/optimizers/gepa/hotpotqa_container/gepa.toml` — HotpotQA multi-hop QA
 - `cookbooks/optimizers/gepa/tblite_container/gepa.toml` — real pytest verifier
-- `cookbooks/optimizers/gepa/crafter_container/gepa.toml` — real Craftax episodes
-
-The MiniGrid scaffold is present under
-`cookbooks/optimizers/gepa/minigrid_container/` for the next public container
-flip.
+- `cookbooks/optimizers/gepa/minigrid_container/gepa.toml` — real MiniGrid policy-control episodes
 
 ## Codex Proposer Auth
 
