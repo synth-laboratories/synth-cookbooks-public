@@ -1,0 +1,12 @@
+Synth GEPA vs gepa-ai — harvey_lab  (equal search-rollout budget = 250)
+========================================================================
+── Headline ──────────────────────────────────────────────────────
+  joint Pareto frontier size (both stacks pooled): 2
+  gepa_ai              candidates= 10  seed=0.107  best=0.110  lift=+0.003  mov.avg slope=N/A/cand  rollouts=238  cost(metered)=$1.9532  cost(codex-sub)=$1.7166  time=824s  pareto=2/2 (100%)
+  synth_gepa           candidates=  4  seed=0.106  best=0.106  lift=+0.000  mov.avg slope=N/A/cand  rollouts=90  cost(metered)=$1.1430  cost(codex-sub)=$0.6350  time=576s  pareto=0/2 (0%)
+
+── Cumulative seed coverage (reward >= 1e-06 by >=1 candidate) ──
+  gepa_ai              train=22/25 (best 1 cand 18)   heldout=8/9 (best 1 cand 8)
+  synth_gepa           train=21/25 (best 1 cand 18)   heldout=8/9 (best 1 cand 8)
+  joint heldout: 8/9 ever solved  |  never solved by anyone: 1
+  joint train  : 22/25 ever solved  |  never solved by anyone: 3

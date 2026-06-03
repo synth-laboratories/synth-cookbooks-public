@@ -2,13 +2,13 @@
 
 Public GEPA examples for `synth-optimizers`.
 
-The current public launch examples are **Banking77** (live OpenAI
-classifier), **HotpotQA** (multi-hop QA with token-F1 verifier),
-**TBLite** (real Python coding tasks with pytest verifier), and
-**MiniGrid** (real MiniGrid policy-control episodes). Every rollout exercises real models and
-real task containers. Each
-container declares its own deps in a per-container `pyproject.toml` so
-installing one cookbook does not pull deps for the others.
+The current public launch examples include **HealthBench Professional**,
+**Harvey Lab Tax**, **tau2-bench retail**, and **DungeonGrid** for the GEPA
+platform blog evidence, plus the earlier **Banking77**, **HotpotQA**,
+**TBLite**, **Crafter**, and **MiniGrid** cookbook containers. Every rollout
+exercises real models and real task containers. Each container declares its own
+deps in a per-container `pyproject.toml` so installing one cookbook does not
+pull deps for the others.
 
 - https://prompt-opt.com
 - https://prompt-opt.com/gepa
@@ -21,9 +21,25 @@ installing one cookbook does not pull deps for the others.
 ```text
 cookbooks/optimizers/gepa/
   README.md
-  banking77_container/
-    README.md
-    gepa.toml
+	  evals/
+	    README.md                # Synth GEPA vs gepa-ai curve-comparison scope
+	  healthbench_container/
+	    pyproject.toml
+	    synth_service_app.py     # HealthBench Professional rubric scorer
+	  harvey_lab_container/
+	    README.md
+	    pyproject.toml
+	    synth_service_app.py     # Harvey Lab Tax matter scorer
+	  tau2_retail_container/
+	    pyproject.toml
+	    synth_service_app.py     # tau2-bench retail tool-use episodes
+	  dungeongrid_container/
+	    README.md
+	    pyproject.toml
+	    synth_service_app.py     # two-hero DungeonGrid episodes
+	  banking77_container/
+	    README.md
+	    gepa.toml
     synth_service_app.py     # live OpenAI classifier
   hotpotqa_container/
     README.md
@@ -81,6 +97,10 @@ Canonical base configs are also runnable directly:
 - `cookbooks/optimizers/gepa/hotpotqa_container/gepa.toml` — HotpotQA multi-hop QA
 - `cookbooks/optimizers/gepa/tblite_container/gepa.toml` — real pytest verifier
 - `cookbooks/optimizers/gepa/minigrid_container/gepa.toml` — real MiniGrid policy-control episodes
+- `cookbooks/optimizers/gepa/evals/configs/healthbench.toml` — HealthBench Professional final evidence config
+- `cookbooks/optimizers/gepa/evals/configs/harvey_lab.toml` — Harvey Lab Tax final evidence config
+- `cookbooks/optimizers/gepa/evals/configs/tau2_retail.toml` — tau2-bench retail final evidence config
+- `cookbooks/optimizers/gepa/evals/configs/dungeongrid.toml` — DungeonGrid final evidence config
 
 ## Codex Proposer Auth
 

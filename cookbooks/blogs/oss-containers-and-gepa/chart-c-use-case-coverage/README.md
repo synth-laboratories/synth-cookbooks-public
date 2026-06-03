@@ -1,47 +1,52 @@
-# Chart C — Use Case Coverage
+# Chart C — Heldout Coverage
 
-Honest capability matrix: which optimization use cases each
-implementation can target today.
+Heldout coverage curves for the final same-container comparison. This chart
+answers a different question from Chart A: instead of showing the single best
+heldout reward per stack, it counts how many distinct heldout rows each stack
+covers cumulatively as candidates are added.
 
-The single most important row is **`optimize_anything`**: gepa-ai
-supports it, Synth GEPA does not (yet). This folder makes that gap
-explicit instead of hiding it.
+Coverage means reward greater than or equal to the benchmark's configured
+threshold:
 
-## Coverage matrix (current state)
+- HealthBench Pro, Harvey Lab Tax, and DungeonGrid use positive reward
+  (`>= 0.000001`).
+- tau2-bench retail uses task success (`>= 1.0`).
 
-| Use case | Synth GEPA | gepa-ai |
-|---|---|---|
-| Single-prompt supervised classification | ✓ | ✓ |
-| Single-prompt agentic (tool-use) | ✓ | ✓ |
-| Multi-module compound prompt programs | ✓ | ✓ |
-| Long-horizon ReAct environments | ✓ | ✓ |
-| `optimize_anything` (executable code, DSL configs, policy params) | ✗ | ✓ |
-| Container-owned task boundary (HTTP contract) | ✓ | partial |
-| Cached / readonly replay of public runs | ✓ | ✗ |
-| Frozen TOML config, narrow env overrides | ✓ | ✗ |
+The producer asserts each curve's final value against the final
+`summary.json` packet emitted by the shared GEPA eval evidence pipeline.
 
-(Update the matrix in this README and in `coverage.json` whenever
-either implementation ships new surface area.)
+## Final Coverage Counts
+
+| Task | Heldout rows | Synth GEPA | gepa-ai |
+|---|---:|---:|---:|
+| HealthBench Pro | 200 | 158 | 157 |
+| Harvey Lab Tax | 9 | 8 | 8 |
+| tau2-bench retail | 94 | 58 | 75 |
+| DungeonGrid | 8 | 8 | 8 |
 
 ## Layout
 
 ```
 chart-c-use-case-coverage/
   README.md
-  coverage.json                # Machine-readable matrix
-  build_chart.py               # Reads coverage.json, emits figures/coverage.svg
+  build_heldout_coverage.py    # Reads final eval evidence, emits JSON
   figures/
-    coverage.svg
+    use_case_heldout_coverage_data.json
 ```
+
+The producer also writes the frontend mirror at
+`frontend/src/components/blog/posts/introducing-gepa-platform/data/use_case_heldout_coverage_data.json`.
 
 ## Reproduce
 
 ```bash
-python build_chart.py
+python cookbooks/blogs/oss-containers-and-gepa/chart-c-use-case-coverage/build_heldout_coverage.py
 ```
 
 ## Status
 
-- [ ] `coverage.json` populated for current state of both stacks.
-- [ ] `build_chart.py` renders SVG.
-- [ ] Section in blog MDX renders the matrix.
+- [x] Final heldout evidence exists for HealthBench Pro, Harvey Lab Tax,
+      tau2-bench retail, and DungeonGrid.
+- [x] Producer asserts final curve values against benchmark summaries.
+- [x] Producer emits the cookbook JSON and frontend mirror.
+- [x] Frontend consumes the generated JSON in `ParetoCoverageChart`.

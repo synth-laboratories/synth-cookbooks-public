@@ -1,30 +1,37 @@
 # OSS Containers and GEPA — Reproduction Cookbook
 
 Reproduction code for the charts in the **OSS Containers and GEPA**
-blog post (May 2026).
+blog post (June 2026).
 
 Live post: <https://usesynth.ai/blog/introducing-gepa-platform> (link
 goes live with the launch).
 
 ## What this folder contains
 
-Every chart in the post has a matching subfolder. Each subfolder has its
-own README, configs, run commands, and tracked source evidence so the
-chart can be regenerated end-to-end against the public container
-contract. Large local rerun outputs live under ignored `runs/`
-directories; Chart A tracks the launch evidence compactly in
-`chart-a-head-to-head/figures/source_evidence.json`.
+Every result chart in the post has a matching subfolder. Each launch subfolder
+has its own README, producer script, run commands, and tracked source evidence
+so the chart can be regenerated against the public container contract. Large
+local rerun outputs live under ignored `runs/` directories; the launch figures
+track compact evidence snapshots and checksums in committed JSON.
+
+Hard rule for launch: every number, curve, table cell, and chart series in
+the post must be produced by committed code in this folder. A chart folder
+must contain the producer script that reads real run artifacts and emits the
+data JSON consumed by the frontend. Hand-typed chart numbers, ad-hoc `/tmp`
+scripts, invented curves, and unregenerable illustrative data do not ship.
 
 ## Charts
 
-| Folder | What the chart shows |
-|---|---|
-| [chart-a-head-to-head/](./chart-a-head-to-head/) | Head-to-head: Synth GEPA vs gepa-ai on the three public launch cookbooks. Code Review stays runner-OSS/container-private. |
-| [chart-b-prompt-diff/](./chart-b-prompt-diff/) | Qualitative side-by-side of best candidate prompts from both implementations on Banking77, TBLite, and Crafter. |
-| [chart-c-use-case-coverage/](./chart-c-use-case-coverage/) | Honest capability matrix: what each implementation can target today (incl. `optimize_anything` gap). |
-| [chart-d-proposer-scaling/](./chart-d-proposer-scaling/) | Does optimizer quality ride the proposer-model curve? Sweep across `gpt-5` → `gpt-5.5`. |
-| [chart-e-policy-model-variation/](./chart-e-policy-model-variation/) | Cross-student-model transfer: does a GEPA-discovered prompt carry to gpt-4.1-nano, gemini-3.1-flash-lite, claude-haiku, etc. |
-| [chart-f-program-stage-scaling/](./chart-f-program-stage-scaling/) | LangProbe-analog: heldout reward vs program size (1/2/3 stages) on HotpotQA, HoVer, Banking77, Heart Disease. |
+| Folder | Launch status | What the chart shows |
+|---|---|---|
+| [chart-a-head-to-head/](./chart-a-head-to-head/) | in post | Final same-container head-to-head: Synth GEPA vs gepa-ai across HealthBench Pro, Harvey Lab Tax, tau2-bench retail, and DungeonGrid. |
+| [chart-c-use-case-coverage/](./chart-c-use-case-coverage/) | in post | Cumulative heldout coverage for the final four same-container tasks. |
+| [chart-d-proposer-scaling/](./chart-d-proposer-scaling/) | in post | Proposer-model sweep across `gpt-5.4-nano`, `gpt-5.4-mini`, and `gpt-5.4` at fixed task container, policy model, splits, and budget. |
+| [chart-g-dungeongrid/](./chart-g-dungeongrid/) | in post addendum | DungeonGrid candidate trajectory and progress-signal frequencies from final heldout evidence. |
+| [chart-h-reward-diagnostics/](./chart-h-reward-diagnostics/) | in post | Harvey fractional row reward plus DungeonGrid reward and objective-recovery diagnostics from final heldout evidence. |
+| [chart-b-prompt-diff/](./chart-b-prompt-diff/) | support/future | Qualitative prompt-diff extraction for selected candidate fields. Not a launch result chart unless embedded by the post. |
+| [chart-e-policy-model-variation/](./chart-e-policy-model-variation/) | future | Cross-student-model transfer. Not used by the launch post. |
+| [chart-f-program-stage-scaling/](./chart-f-program-stage-scaling/) | future | Program-stage scaling. Not used by the launch post. |
 
 ## Prerequisites
 
@@ -78,35 +85,33 @@ Status legend:
 |---|---|---|
 | Crafter | [danijar/crafter](https://github.com/danijar/crafter) | ✓ public ([container](../../optimizers/gepa/crafter_container/)) |
 | MiniGrid | [Farama MiniGrid](https://minigrid.farama.org/) (via OpenEnv) | → public |
-| Tau-Bench 3 | [sierra-research/tau-bench](https://github.com/sierra-research/tau-bench) | → public |
+| tau2-bench retail | [sierra-research/tau2-bench](https://github.com/sierra-research/tau2-bench) | ✓ public ([container](../../optimizers/gepa/tau2_retail_container/)) |
+| DungeonGrid | [JoshuaPurtell/DungeonGrid](https://github.com/JoshuaPurtell/DungeonGrid) | ✓ public ([container](../../optimizers/gepa/dungeongrid_container/)) |
 
 ### Vertical / domain agent (real-world professional workflows)
 
 | Container | Upstream / dataset | Status |
 |---|---|---|
-| Harvey Labs (legal) | [harveyai/harvey-labs](https://github.com/harveyai/harvey-labs) | roadmap |
+| Harvey Labs (legal) | [harveyai/harvey-labs](https://github.com/harveyai/harvey-labs) | ✓ public ([container](../../optimizers/gepa/harvey_lab_container/)) |
 | Legal Apex Agents | [mercor/apex-agents](https://huggingface.co/datasets/mercor/apex-agents) | roadmap |
-| HealthBench Professional (medical) | [openai/healthbench-professional](https://huggingface.co/datasets/openai/healthbench-professional) ([paper](https://cdn.openai.com/dd128428-0184-4e25-b155-3a7686c7d744/HealthBench-Professional.pdf)) | roadmap |
+| HealthBench Professional (medical) | [openai/healthbench-professional](https://huggingface.co/datasets/openai/healthbench-professional) ([paper](https://cdn.openai.com/dd128428-0184-4e25-b155-3a7686c7d744/HealthBench-Professional.pdf)) | ✓ public ([container](../../optimizers/gepa/healthbench_container/)) |
 
 ### Tally
 
-- **Public today:** 3 (Banking77, TBLite, Crafter).
-- **Going public with this release:** 6 (Banking77-MIPROv2, HotpotQA,
-  HoVer, Heart Disease, MiniGrid, Tau-Bench 3).
-- **Runner OSS · container private:** 2 (Code Review, NGO-style).
-- **Vertical roadmap:** 3 (Harvey Labs, Legal Apex Agents, HealthBench
-  Professional).
-
-That's **9 public containers** after the flip across four lever-shape
-categories, with the optimizer runner open-source for every category
-including the rows where the container stays internal.
+The launch evidence in the post uses four public containers:
+HealthBench Professional, Harvey Labs Tax, tau2-bench retail, and DungeonGrid.
+The broader catalog remains here to show the container-contract surface across
+classification, QA, coding, environment-control, and professional-workflow tasks.
 
 ## Compute-parity ground rules
 
 Every "vs gepa-ai" chart in this folder documents the matched conditions
 it uses. Chart A matches the public HTTP container boundary for every row;
-Banking77 is the broad fixed-budget parity case, while TBLite and Crafter
-are smoke-scale public splits. Other sweep charts should pin:
+the final launch rows are HealthBench Pro, Harvey Lab Tax, tau2-bench retail,
+and DungeonGrid. Each row pins the task container, train/heldout split,
+coverage threshold, proposer/reflection model, and task-specific policy or
+judge model in `cookbooks/optimizers/gepa/evals/evidence/benchmarks/*/`.
+Other sweep charts should pin:
 
 - Same `max_total_rollouts` budget per run.
 - Same proposer model (default: `gpt-5.4-mini`, unless the chart is

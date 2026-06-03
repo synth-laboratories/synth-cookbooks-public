@@ -1,0 +1,51 @@
+{
+  "benchmark": "dungeongrid",
+  "config_path": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/dungeongrid.toml",
+  "train_seeds": [
+    11,
+    13,
+    17,
+    19,
+    23,
+    29,
+    31,
+    37
+  ],
+  "heldout_seeds": [
+    101,
+    103,
+    107,
+    109,
+    113,
+    127,
+    131,
+    137
+  ],
+  "train_shuffle_seed": 0,
+  "test_shuffle_seed": 0,
+  "coverage_reward_threshold": 1e-06,
+  "seed_candidate": {
+    "react_system_prompt": "You control a party of heroes exploring a dangerous DungeonGrid dungeon. Each turn you see a text observation for the active hero (its stats, position, the visible map, nearby entities and objects, and the objective). Respond with a single dungeongrid_act tool call choosing ONE action for the active hero. Use `direction` (north/south/west/east) for move, `target` for an entity/object id or \"x,y\" for inspect_tile, and `text` for message content. Reveal rooms and map tiles, open doors, search for traps and treasure, defeat blocking monsters, recover the objective, and extract the party."
+  },
+  "search_rollout_budget": 120,
+  "pricing_usd_per_1m": {
+    "policy_input_per_1m": 0.1,
+    "policy_output_per_1m": 0.4,
+    "proposer_input_per_1m": 0.75,
+    "proposer_cached_input_per_1m": 0.075,
+    "proposer_output_per_1m": 4.5
+  },
+  "proposer_model": "gpt-5.4-mini",
+  "reflection_model": "gpt-5.4-mini",
+  "policy_model": "google/gemini-3.1-flash-lite",
+  "policy_base_url": "https://openrouter.ai/api/v1",
+  "policy_api_key_env": "OPENROUTER_API_KEY",
+  "policy_max_tokens": 2048,
+  "policy_retries": 1,
+  "eval_policy_retries": 3,
+  "policy_timeout_seconds": 90,
+  "rollout_timeout_seconds": 240,
+  "cache_mode": "off",
+  "random_seed": 0,
+  "rollout_concurrency": 4
+}

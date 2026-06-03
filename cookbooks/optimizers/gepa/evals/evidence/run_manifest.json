@@ -1,0 +1,185 @@
+{
+  "benchmark": "dungeongrid",
+  "stacks": [
+    "gepa_ai",
+    "synth_gepa"
+  ],
+  "run_commands": [
+    {
+      "command_id": "24934a3c-c856-44d6-809d-056fcb9cb7d5",
+      "phase": "run",
+      "stack": "synth_gepa",
+      "benchmark": "dungeongrid",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "dungeongrid",
+        "--stack",
+        "synth_gepa"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/dungeongrid/synth_gepa_dungeongrid_20260603T013258/gepa_run.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/dungeongrid/synth_gepa_dungeongrid_20260603T013258"
+      ],
+      "started_at": "2026-06-03T01:32:58.670030+00:00",
+      "finished_at": "2026-06-03T01:41:34.239662+00:00",
+      "exit_code": 0
+    },
+    {
+      "command_id": "262e6004-a95f-4a6a-8a34-0b8374af6f24",
+      "phase": "run",
+      "stack": "gepa_ai",
+      "benchmark": "dungeongrid",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        ".",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "dungeongrid",
+        "--stack",
+        "gepa_ai"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/dungeongrid.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/dungeongrid/gepa_ai_dungeongrid_20260603T014117"
+      ],
+      "started_at": "2026-06-03T01:41:17.840387+00:00",
+      "finished_at": "2026-06-03T01:50:16.261493+00:00",
+      "exit_code": 0
+    }
+  ],
+  "num_candidates_total": 5,
+  "per_stack": {
+    "gepa_ai": {
+      "run_commands": [
+        {
+          "command_id": "262e6004-a95f-4a6a-8a34-0b8374af6f24",
+          "phase": "run",
+          "stack": "gepa_ai",
+          "benchmark": "dungeongrid",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            ".",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "dungeongrid",
+            "--stack",
+            "gepa_ai"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/dungeongrid.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/dungeongrid/gepa_ai_dungeongrid_20260603T014117"
+          ],
+          "started_at": "2026-06-03T01:41:17.840387+00:00",
+          "finished_at": "2026-06-03T01:50:16.261493+00:00",
+          "exit_code": 0
+        }
+      ],
+      "run_ids": [
+        "gepa_ai_dungeongrid_20260603T014117"
+      ],
+      "num_candidates": 1,
+      "seed_heldout_score": 1.5968750000000003,
+      "best_heldout_score": 1.5968750000000003,
+      "mean_heldout_score": 1.5968750000000003,
+      "lift_over_seed": 0.0,
+      "candidates_with_heldout": 1,
+      "total_rollouts": 4,
+      "total_cost_usd": 0.0174777,
+      "total_rollout_cost_usd": 0.0174777,
+      "total_proposer_cost_usd": 0.0,
+      "total_elapsed_seconds": 18.722,
+      "cost_metered_usd": 0.0174777,
+      "cost_with_codex_subscription_usd": 0.0174777,
+      "best_candidate_id": "gepa_ai_cand_0",
+      "best_at_rollouts": 4,
+      "best_at_cost_usd": 0.0174777,
+      "best_at_elapsed_seconds": 18.722
+    },
+    "synth_gepa": {
+      "run_commands": [
+        {
+          "command_id": "24934a3c-c856-44d6-809d-056fcb9cb7d5",
+          "phase": "run",
+          "stack": "synth_gepa",
+          "benchmark": "dungeongrid",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "dungeongrid",
+            "--stack",
+            "synth_gepa"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/dungeongrid/synth_gepa_dungeongrid_20260603T013258/gepa_run.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/dungeongrid/synth_gepa_dungeongrid_20260603T013258"
+          ],
+          "started_at": "2026-06-03T01:32:58.670030+00:00",
+          "finished_at": "2026-06-03T01:41:34.239662+00:00",
+          "exit_code": 0
+        }
+      ],
+      "run_ids": [
+        "synth_gepa_dungeongrid_20260603T013258"
+      ],
+      "num_candidates": 4,
+      "seed_heldout_score": 1.7500000000000002,
+      "best_heldout_score": 1.8943750000000001,
+      "mean_heldout_score": 1.5970312500000001,
+      "lift_over_seed": 0.14437499999999992,
+      "candidates_with_heldout": 4,
+      "total_rollouts": 28,
+      "total_cost_usd": 0.6572438,
+      "total_rollout_cost_usd": 0.1280618,
+      "total_proposer_cost_usd": 0.529182,
+      "total_elapsed_seconds": 513.842,
+      "cost_metered_usd": 0.6572438,
+      "cost_with_codex_subscription_usd": 0.1280618,
+      "best_candidate_id": "gepa_2bac68c65d53",
+      "best_at_rollouts": 12,
+      "best_at_cost_usd": 0.248896,
+      "best_at_elapsed_seconds": 166.858
+    }
+  },
+  "parity_controls_path": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/evidence/parity_controls.json"
+}

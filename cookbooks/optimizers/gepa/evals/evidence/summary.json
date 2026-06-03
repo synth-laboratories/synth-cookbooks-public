@@ -1,0 +1,273 @@
+{
+  "benchmark": "dungeongrid",
+  "generated_at": "2026-06-03T04:04:13.476848+00:00",
+  "joint_pareto_frontier_size": 3,
+  "joint_pareto_objectives": "maximize heldout_score, minimize cumulative_cost_usd (metered), minimize elapsed_seconds",
+  "seed_coverage": {
+    "heldout": {
+      "seeds_total": 8,
+      "coverage_reward_threshold": 1e-06,
+      "joint_cumulative_solved": 8,
+      "never_solved": 0
+    },
+    "train": {
+      "seeds_total": 8,
+      "coverage_reward_threshold": 1e-06,
+      "joint_cumulative_solved": 8,
+      "never_solved": 0
+    }
+  },
+  "per_stack": {
+    "gepa_ai": {
+      "run_ids": [
+        "gepa_ai_dungeongrid_20260603T014117"
+      ],
+      "num_candidates": 1,
+      "seed_heldout_score": 1.5968750000000003,
+      "best_heldout_score": 1.5968750000000003,
+      "mean_heldout_score": 1.5968750000000003,
+      "lift_over_seed": 0.0,
+      "candidates_with_heldout": 1,
+      "total_rollouts": 4,
+      "total_cost_usd": 0.0174777,
+      "total_rollout_cost_usd": 0.0174777,
+      "total_proposer_cost_usd": 0.0,
+      "total_elapsed_seconds": 18.722,
+      "cost_metered_usd": 0.0174777,
+      "cost_with_codex_subscription_usd": 0.0174777,
+      "best_candidate_id": "gepa_ai_cand_0",
+      "best_at_rollouts": 4,
+      "best_at_cost_usd": 0.0174777,
+      "best_at_elapsed_seconds": 18.722,
+      "num_candidates_created": 1,
+      "mean_rolling_heldout_slope": null,
+      "joint_pareto_points": 1,
+      "joint_pareto_share": 0.3333333333333333,
+      "heldout_seeds_total": 8,
+      "heldout_best_single_solved": 8,
+      "heldout_cumulative_solved": 8,
+      "heldout_cumulative_coverage": 1.0,
+      "heldout_breadth_gain": 0,
+      "train_seeds_total": 8,
+      "train_best_single_solved": 8,
+      "train_cumulative_solved": 8,
+      "train_cumulative_coverage": 1.0,
+      "train_breadth_gain": 0,
+      "best_so_far_curve": [
+        {
+          "x": 0,
+          "y": 1.5968750000000003
+        }
+      ],
+      "best_so_far_by_rollouts": [
+        {
+          "x": 4,
+          "y": 1.5968750000000003
+        }
+      ],
+      "best_so_far_by_cost": [
+        {
+          "x": 0.0174777,
+          "y": 1.5968750000000003
+        }
+      ],
+      "best_so_far_by_time": [
+        {
+          "x": 18.722,
+          "y": 1.5968750000000003
+        }
+      ],
+      "pareto_coverage_curve": [
+        {
+          "x": 0,
+          "y": 1.0
+        }
+      ]
+    },
+    "synth_gepa": {
+      "run_ids": [
+        "synth_gepa_dungeongrid_20260603T013258"
+      ],
+      "num_candidates": 4,
+      "seed_heldout_score": 1.7500000000000002,
+      "best_heldout_score": 1.8943750000000001,
+      "mean_heldout_score": 1.5970312500000001,
+      "lift_over_seed": 0.14437499999999992,
+      "candidates_with_heldout": 4,
+      "total_rollouts": 28,
+      "total_cost_usd": 0.6572438,
+      "total_rollout_cost_usd": 0.1280618,
+      "total_proposer_cost_usd": 0.529182,
+      "total_elapsed_seconds": 513.842,
+      "cost_metered_usd": 0.6572438,
+      "cost_with_codex_subscription_usd": 0.1280618,
+      "best_candidate_id": "gepa_2bac68c65d53",
+      "best_at_rollouts": 12,
+      "best_at_cost_usd": 0.248896,
+      "best_at_elapsed_seconds": 166.858,
+      "num_candidates_created": 4,
+      "mean_rolling_heldout_slope": -0.050989583333333366,
+      "joint_pareto_points": 2,
+      "joint_pareto_share": 0.6666666666666666,
+      "heldout_seeds_total": 8,
+      "heldout_best_single_solved": 8,
+      "heldout_cumulative_solved": 8,
+      "heldout_cumulative_coverage": 1.0,
+      "heldout_breadth_gain": 0,
+      "train_seeds_total": 8,
+      "train_best_single_solved": 8,
+      "train_cumulative_solved": 8,
+      "train_cumulative_coverage": 1.0,
+      "train_breadth_gain": 0,
+      "best_so_far_curve": [
+        {
+          "x": 0,
+          "y": 1.7500000000000002
+        },
+        {
+          "x": 1,
+          "y": 1.8943750000000001
+        },
+        {
+          "x": 2,
+          "y": 1.8943750000000001
+        },
+        {
+          "x": 3,
+          "y": 1.8943750000000001
+        }
+      ],
+      "best_so_far_by_rollouts": [
+        {
+          "x": 8,
+          "y": 1.7500000000000002
+        },
+        {
+          "x": 12,
+          "y": 1.8943750000000001
+        },
+        {
+          "x": 24,
+          "y": 1.8943750000000001
+        },
+        {
+          "x": 28,
+          "y": 1.8943750000000001
+        }
+      ],
+      "best_so_far_by_cost": [
+        {
+          "x": 0.0349507,
+          "y": 1.7500000000000002
+        },
+        {
+          "x": 0.248896,
+          "y": 1.8943750000000001
+        },
+        {
+          "x": 0.4558466,
+          "y": 1.8943750000000001
+        },
+        {
+          "x": 0.6572438,
+          "y": 1.8943750000000001
+        }
+      ],
+      "best_so_far_by_time": [
+        {
+          "x": 17.68,
+          "y": 1.7500000000000002
+        },
+        {
+          "x": 166.858,
+          "y": 1.8943750000000001
+        },
+        {
+          "x": 343.368,
+          "y": 1.8943750000000001
+        },
+        {
+          "x": 513.842,
+          "y": 1.8943750000000001
+        }
+      ],
+      "pareto_coverage_curve": [
+        {
+          "x": 0,
+          "y": 0.5
+        },
+        {
+          "x": 1,
+          "y": 1.0
+        },
+        {
+          "x": 2,
+          "y": 1.0
+        },
+        {
+          "x": 3,
+          "y": 1.0
+        }
+      ]
+    }
+  },
+  "parity_controls": {
+    "benchmark": "dungeongrid",
+    "config_path": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/dungeongrid.toml",
+    "train_seeds": [
+      11,
+      13,
+      17,
+      19,
+      23,
+      29,
+      31,
+      37
+    ],
+    "heldout_seeds": [
+      101,
+      103,
+      107,
+      109,
+      113,
+      127,
+      131,
+      137
+    ],
+    "train_shuffle_seed": 0,
+    "test_shuffle_seed": 0,
+    "coverage_reward_threshold": 1e-06,
+    "seed_candidate": {
+      "react_system_prompt": "You control a party of heroes exploring a dangerous DungeonGrid dungeon. Each turn you see a text observation for the active hero (its stats, position, the visible map, nearby entities and objects, and the objective). Respond with a single dungeongrid_act tool call choosing ONE action for the active hero. Use `direction` (north/south/west/east) for move, `target` for an entity/object id or \"x,y\" for inspect_tile, and `text` for message content. Reveal rooms and map tiles, open doors, search for traps and treasure, defeat blocking monsters, recover the objective, and extract the party."
+    },
+    "search_rollout_budget": 120,
+    "pricing_usd_per_1m": {
+      "policy_input_per_1m": 0.1,
+      "policy_output_per_1m": 0.4,
+      "proposer_input_per_1m": 0.75,
+      "proposer_cached_input_per_1m": 0.075,
+      "proposer_output_per_1m": 4.5
+    },
+    "proposer_model": "gpt-5.4-mini",
+    "reflection_model": "gpt-5.4-mini",
+    "policy_model": "google/gemini-3.1-flash-lite",
+    "policy_base_url": "https://openrouter.ai/api/v1",
+    "policy_api_key_env": "OPENROUTER_API_KEY",
+    "policy_max_tokens": 2048,
+    "policy_retries": 1,
+    "eval_policy_retries": 3,
+    "policy_timeout_seconds": 90,
+    "rollout_timeout_seconds": 240,
+    "cache_mode": "off",
+    "random_seed": 0,
+    "rollout_concurrency": 4
+  },
+  "num_reviews": 5,
+  "caveats": [
+    "Heldout scores are re-evaluated for every candidate of both stacks on the same dataset.heldout_seeds, independent of each stack's internal scoring.",
+    "Cost is computed from recorded token usage via the shared [limits.cost] price table, applied identically to both stacks. Both proposer/reflection paths use gpt-5.4-mini through Codex app-server ChatGPT auth in this run; metered cost reports the token-accounted counterfactual, while with_codex_subscription treats those proposer/reflection tokens as marginal $0.",
+    "Search-rollout budget is held equal across stacks (search_rollout_budget=120); synth_gepa's internal heldout is pinned to the minimum (max_heldout_rollouts=1) and ignored.",
+    "num_candidates counts candidates evaluated within budget. synth_gepa proposed additional candidates in late generations that the budget never let it evaluate; those are excluded from the comparison.",
+    "joint_pareto_share uses metered cost; under a Codex subscription both stacks' cost-axis positions improve by removing the marginal proposer/reflection token charge."
+  ]
+}

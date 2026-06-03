@@ -1,0 +1,83 @@
+[run]
+run_id = "dungeongrid_gepa_public"
+output_dir = "../runs"
+seed = 0
+
+[container]
+url = "http://127.0.0.1:8770"
+# Container's deps are declared per-container in this folder's pyproject.toml
+# (dungeongrid, openai, fastapi, uvicorn). Boot it via uv against this
+# directory so a user only installs DungeonGrid-side deps when they run it.
+command = [
+  "/usr/bin/env",
+  "OPENAI_BASE_URL=https://openrouter.ai/api/v1",
+  "DUNGEONGRID_POLICY_MODEL=google/gemini-3.1-flash-lite",
+  "DUNGEONGRID_QUEST=lantern_crypt",
+  "DUNGEONGRID_NUM_HEROES=2",
+  "DUNGEONGRID_MAX_TURNS=30",
+  "uv", "run", "--project", "dungeongrid_container",
+  "python", "dungeongrid_container/synth_service_app.py",
+  "--host", "127.0.0.1", "--port", "8770",
+]
+cwd = ".."
+startup_timeout_seconds = 60
+
+[dataset]
+train_split = "train"
+heldout_split = "test"
+train_seeds = [11, 13, 17, 19, 23, 29, 31, 37]
+heldout_seeds = [101, 103, 107, 109, 113, 127, 131, 137]
+
+[candidate]
+target_modules = ["react_system_prompt"]
+
+[seed_candidate]
+react_system_prompt = "You control a party of heroes exploring a dangerous DungeonGrid dungeon. Each turn you see a text observation for the active hero (its stats, position, the visible map, nearby entities and objects, and the objective). Respond with a single dungeongrid_act tool call choosing ONE action for the active hero. Use `direction` (north/south/west/east) for move, `target` for an entity/object id or \"x,y\" for inspect_tile, and `text` for message content. Reveal rooms and map tiles, open doors, search for traps and treasure, defeat blocking monsters, recover the objective, and extract the party."
+
+[policy]
+# Live LLM policy. The container reads OPENAI_API_KEY (and optional
+# OPENAI_BASE_URL for a gemini OpenAI-compatible gateway) from its env.
+# Override the model via DUNGEONGRID_POLICY_MODEL.
+provider = "openai"
+model = "google/gemini-3.1-flash-lite"
+api_key_env = "OPENAI_API_KEY"
+
+[proposer]
+backend = "codex_app_server"
+execution_mode = "local_process"
+timeout_seconds = 900
+model = "gpt-5.4-mini"
+reasoning_effort = "medium"
+auth_mode = "chatgpt"
+codex_home = "/Users/joshpurtell/.codex_chatgpt_jmvpurtell"
+copy_host_auth = false
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+
+[gepa]
+max_generations = 1
+proposals_per_generation = 1
+minibatch_size = 4
+max_total_rollouts = 120
+max_cost_usd = 0.0
+
+[gepa.pipeline]
+mode = "async_pipelined"
+max_in_flight_candidates = 1
+
+[gepa.pipeline.workers]
+rollout = 10
+
+[gepa.pipeline.adaptive_rollout_concurrency]
+enabled = true
+initial = 10
+min = 1
+max = 30
+increase_step = 5
+decrease_step = 5
+increase_after_successes = 20
+
+[cache]
+mode = "readwrite"
+path = "../runs/dungeongrid_gepa_cache.sqlite"
+namespace = "dungeongrid_gepa_public_live"

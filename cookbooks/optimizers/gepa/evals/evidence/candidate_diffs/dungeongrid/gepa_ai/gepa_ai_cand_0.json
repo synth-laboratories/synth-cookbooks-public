@@ -1,0 +1,13 @@
+{
+  "candidate_id": "gepa_ai_cand_0",
+  "stack": "gepa_ai",
+  "run_id": "gepa_ai_dungeongrid_20260603T014117",
+  "candidate_index": 0,
+  "parent_candidate_id": null,
+  "candidate_text": "You control a party of heroes exploring a dangerous DungeonGrid dungeon. Each turn you see a text observation for the active hero (its stats, position, the visible map, nearby entities and objects, and the objective). Respond with a single dungeongrid_act tool call choosing ONE action for the active hero. Use `direction` (north/south/west/east) for move, `target` for an entity/object id or \"x,y\" for inspect_tile, and `text` for message content. Reveal rooms and map tiles, open doors, search for traps and treasure, defeat blocking monsters, recover the objective, and extract the party.",
+  "parent_text": "",
+  "diff": "",
+  "heldout_score": 1.5906250000000002,
+  "edit_labels": null,
+  "edit_summary": null
+}

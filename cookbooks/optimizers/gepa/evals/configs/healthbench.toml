@@ -1,0 +1,92 @@
+# HealthBench Professional parity comparison config.
+# Defines shared parameters for Synth GEPA and gepa-ai.
+# Both stacks must run under these settings for the comparison to be valid.
+
+[benchmark]
+name = "healthbench"
+container_dir = "healthbench_container"
+env_prefix = "HEALTHBENCH"
+mutable_field = "stage1_system"
+train_shuffle_seed = 0
+test_shuffle_seed = 0
+synthetic_train_cap = 100
+# HealthBench rewards are fractional rubric scores. Coverage means a candidate
+# earned any positive rubric credit on the seed.
+coverage_reward_threshold = 0.000001
+
+[dataset]
+train_split = "train"
+heldout_split = "test"
+train_seeds = [
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+  20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+  40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+  60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+  80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99,
+]
+heldout_seeds = [
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+  20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+  40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+  60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+  80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99,
+  100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115,
+  116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
+  132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147,
+  148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163,
+  164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179,
+  180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195,
+  196, 197, 198, 199,
+]
+
+[seed_candidate]
+stage1_system = "You are an expert physician. Answer the clinical question directly and accurately. Provide a clear, evidence-based response that addresses all aspects of the question. Include relevant considerations for diagnosis, treatment, or clinical management as appropriate. Be concise and precise."
+
+[parity_controls]
+proposer_model = "gpt-5.4-mini"
+reflection_model = "gpt-5.4-mini"
+policy_model = "google/gemini-2.5-flash-lite"
+judge_model = "google/gemini-2.5-flash-lite"
+policy_base_url = "https://openrouter.ai/api/v1"
+policy_api_key_env = "OPENROUTER_API_KEY"
+policy_max_tokens = 512
+judge_max_tokens = 4
+policy_retries = 1
+eval_policy_retries = 4
+policy_timeout_seconds = 40
+rollout_timeout_seconds = 100
+cache_mode = "off"
+random_seed = 0
+rollout_concurrency = 24
+
+[limits]
+search_rollout_budget = 1400
+eval_concurrency = 32
+eval_workers = 1
+
+[limits.cost]
+policy_input_per_1m = 0.10
+policy_output_per_1m = 0.40
+proposer_input_per_1m = 0.75
+proposer_cached_input_per_1m = 0.075
+proposer_output_per_1m = 4.50
+
+[synth_gepa]
+max_generations = 4
+proposals_per_generation = 4
+minibatch_size = 40
+proposer_backend = "codex_app_server"
+proposer_auth_mode = "chatgpt"
+proposer_copy_host_auth = true
+proposer_codex_home = "~/.codex"
+proposer_sandbox_mode = "workspace-write"
+proposer_approval_policy = "never"
+proposer_reasoning_effort = "medium"
+proposer_timeout_seconds = 900
+rollout_submission_mode = "sync"
+rollout_chunk_size = 80
+pipeline_mode = "sync_serial"
+
+[gepa_ai]
+reflection_minibatch_size = 8
+candidate_selection_strategy = "pareto"

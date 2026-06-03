@@ -1,0 +1,15 @@
+[project]
+name = "harvey-lab-tax-gepa-container"
+version = "0.1.0"
+description = "Public GEPA cookbook container for Harvey LAB Tax (MIT legal-agent benchmark, LLM policy + rubric judge)."
+requires-python = ">=3.11"
+dependencies = [
+  "synth-containers @ git+https://github.com/synth-laboratories/containers.git@78ec34f",
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+  "openai>=1.0",
+]
+
+# Text-in/text-out container: no Docker sandbox, no pandoc, no .docx. The
+# dataset is fetched by prepare_dataset.py (clones the MIT harveyai/harvey-labs
+# repo); only the Tax practice area is bundled.

@@ -1,0 +1,79 @@
+[run]
+run_id = "harvey_lab_tax_gepa_public"
+output_dir = "../runs"
+seed = 0
+
+[container]
+url = "http://127.0.0.1:8772"
+# Container deps are declared per-container in this folder's pyproject.toml.
+# Run `python prepare_dataset.py` once first to fetch the MIT Harvey LAB Tax
+# dataset, then boot the container via uv against this directory.
+command = [
+  "/usr/bin/env",
+  "OPENAI_BASE_URL=https://openrouter.ai/api/v1",
+  "HARVEY_LAB_POLICY_MODEL=google/gemini-3.1-flash-lite",
+  "uv", "run", "--project", "harvey_lab_container",
+  "python", "harvey_lab_container/synth_service_app.py",
+  "--host", "127.0.0.1", "--port", "8772",
+]
+cwd = ".."
+startup_timeout_seconds = 60
+
+[taskset]
+train_split = "train"
+heldout_split = "heldout"
+train_ids = [
+  "train:0", "train:1", "train:2", "train:3", "train:4",
+  "train:5", "train:6", "train:7", "train:8", "train:9",
+  "train:10", "train:11", "train:12", "train:13", "train:14",
+  "train:15", "train:16", "train:17", "train:18", "train:19",
+  "train:20", "train:21", "train:22", "train:23", "train:24",
+]
+heldout_ids = [
+  "heldout:0", "heldout:1", "heldout:2", "heldout:3", "heldout:4",
+  "heldout:5", "heldout:6", "heldout:7", "heldout:8",
+]
+
+[candidate]
+target_modules = ["system_prompt"]
+
+[seed_candidate]
+system_prompt = "You are a meticulous law-firm associate. You are given a client matter with a document data room and a partner's instructions. Read the relevant documents, do the legal analysis, and produce a precise, well-supported work product. Cite specific documents and facts; do not invent authorities."
+
+[policy]
+# Live LLM policy. The container reads OPENROUTER_API_KEY through OpenRouter.
+# Override the model via HARVEY_LAB_POLICY_MODEL.
+provider = "openai"
+model = "google/gemini-3.1-flash-lite"
+api_key_env = "OPENAI_API_KEY"
+
+[proposer]
+backend = "codex_app_server"
+execution_mode = "local_process"
+timeout_seconds = 900
+model = "gpt-5.4-mini"
+reasoning_effort = "medium"
+auth_mode = "chatgpt"
+codex_home = "/Users/joshpurtell/.codex_chatgpt_jmvpurtell"
+copy_host_auth = false
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+
+[gepa]
+max_generations = 3
+proposals_per_generation = 2
+minibatch_size = 5
+max_total_rollouts = 250
+max_cost_usd = 0.0
+
+[gepa.pipeline]
+mode = "async_pipelined"
+max_in_flight_candidates = 1
+
+[gepa.pipeline.workers]
+rollout = 6
+
+[cache]
+mode = "readwrite"
+path = "../runs/harvey_lab_tax_gepa_cache.sqlite"
+namespace = "harvey_lab_tax_gepa_public_live"

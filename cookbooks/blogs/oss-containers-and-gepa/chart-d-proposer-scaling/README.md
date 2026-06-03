@@ -1,32 +1,37 @@
 # Chart D — Proposer Scaling
 
 Does optimizer quality ride the proposer-model curve? Sweep the
-proposer model across generations and measure best heldout reward at
-fixed compute budget per cookbook.
+proposer model across three generations and measure best heldout reward
+at a fixed compute budget, holding all other variables constant.
 
 ## Sweep grid
 
-- **Proposer models** (X-axis, ordered chronologically):
-  - `gpt-5`
-  - `gpt-5.1-codex`
-  - `gpt-5.2`
-  - `gpt-5.3-codex`
-  - `gpt-5.4`
-  - `gpt-5.5`
-- **Cookbooks** (Y-axis series, one line per cookbook):
-  - Banking77 · TBLite · Code Review · Crafter
-- **Held constant**:
-  - Optimizer = Synth GEPA
-  - Student/policy = cookbook fixture (or one fixed live model — TBD)
-  - `max_total_rollouts` = same per cell
-  - Train/heldout seeds = same per cookbook
+- **Proposer models** (X-axis, ordered by capability):
+  - `gpt-5.4-nano`  (`reasoning_effort = "low"`)
+  - `gpt-5.4-mini`  (`reasoning_effort = "medium"`)
+  - `gpt-5.4`       (`reasoning_effort = "high"`)
+- **Tasks** (two panels in the bar chart):
+  - HealthBench Pro  (medical QA scored by rubric)
+  - tau2-bench retail  (tool-using customer-service episodes)
+- **Held constant across all cells**:
+  - Optimizer: Synth GEPA
+  - HealthBench policy/judge: `google/gemini-2.5-flash-lite` via OpenRouter
+  - tau2 retail agent: `openrouter/google/gemini-3.1-flash-lite`
+  - Train + heldout seeds: same per task
+  - Proposer auth: nano uses API-key auth because ChatGPT Codex auth rejects
+    `gpt-5.4-nano`; mini and `gpt-5.4` use ChatGPT Codex auth.
 
-## Companion chart (Pareto)
+## Configs
 
-For each cell, log `total_cost_usd` from the run manifest and emit a
-secondary Pareto scatter (cost-per-reward-point) — nano / mini
-proposers may sit on the Pareto frontier even if they aren't peak
-quality.
+```
+configs/proposer_sweep/
+  healthbench_gpt-5.4-nano.toml
+  healthbench_gpt-5.4-mini.toml
+  healthbench_gpt-5.4.toml
+  tau2_retail_gpt-5.4-nano.toml
+  tau2_retail_gpt-5.4-mini.toml
+  tau2_retail_gpt-5.4.toml
+```
 
 ## Layout
 
@@ -35,36 +40,75 @@ chart-d-proposer-scaling/
   README.md
   configs/
     proposer_sweep/
-      banking77_gpt-5.toml
-      banking77_gpt-5.1-codex.toml
-      ...                        # 6 proposers × 4 cookbooks = 24 configs
-  run_sweep.sh                   # Launches all 24 runs
-  build_chart.py                 # Reads runs/, emits figures/proposer_scaling.svg
-                                  # and figures/proposer_pareto.svg
+      healthbench_gpt-5.4-nano.toml
+      healthbench_gpt-5.4-mini.toml
+      healthbench_gpt-5.4.toml
+      tau2_retail_gpt-5.4-nano.toml
+      tau2_retail_gpt-5.4-mini.toml
+      tau2_retail_gpt-5.4.toml
+  run_sweep.sh            # boots containers, runs all 6 configs in parallel, builds chart
+  build_chart.py          # reads runs/, emits figures/ plus public manifest snapshots
   runs/
-    banking77_gpt-5_<ts>/
-    ...
+    final_20260603/
+      healthbench_nano/
+      healthbench_mini/
+      healthbench_gpt54/
+      tau2_retail_nano/
+      tau2_retail_mini/
+      tau2_retail_gpt54/
   figures/
+    manifest_snapshots/
+      healthbench_nano.result_manifest.json
+      healthbench_mini.result_manifest.json
+      healthbench_gpt54.result_manifest.json
+      tau2_retail_nano.result_manifest.json
+      tau2_retail_mini.result_manifest.json
+      tau2_retail_gpt54.result_manifest.json
+    proposer_scaling_data.json
+    proposer_scaling.md
     proposer_scaling.svg
-    proposer_pareto.svg
+    source_evidence.json
 ```
 
 ## Reproduce
 
+Boot containers and run all 6 cells from the repo root:
+
 ```bash
-./run_sweep.sh                 # All 24 runs (cache-aware; reruns are cheap)
-python build_chart.py
+export OPENAI_API_KEY=...
+export OPENROUTER_API_KEY=...
+bash cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/run_sweep.sh
+```
+
+Smoke mode (nano + mini on HealthBench only):
+
+```bash
+bash cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/run_sweep.sh --smoke
+```
+
+Rebuild figures from existing runs (no new rollouts):
+
+```bash
+cd cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling
+uv run python build_chart.py
 ```
 
 ## Status
 
-- [ ] Configs for all 6 proposers × 4 cookbooks generated.
-- [ ] Sweep launched.
-- [ ] Both chart SVGs rendered.
-- [ ] Section in blog MDX embeds chart.
+- [x] All 6 configs verified against running containers.
+- [x] Sweep launched and completed.
+- [x] `figures/proposer_scaling.svg` rendered.
+- [x] Section in blog MDX embeds chart.
 
-## Open questions
+## Design notes
 
-- Do we have proposer auth for all 6 generations through Codex app
-  server, or do some need direct OpenAI API routing?
-- Cost cap per cell so the full sweep is bounded?
+- `run_sweep.sh` launches all cells in parallel against shared task containers;
+  the containers handle concurrent rollout requests.
+- `build_chart.py` requires all six launch manifests, validates core numeric
+  fields, and fails before writing JSON if any cell is incomplete. It mirrors
+  the six result manifests into `figures/manifest_snapshots/` so the public
+  chart directory remains inspectable without committing ignored run databases,
+  traces, or failed attempts.
+- The producer writes both `figures/proposer_scaling_data.json` and the sibling
+  frontend mirror used by the blog component.
+- The launch run group is `runs/final_20260603`.

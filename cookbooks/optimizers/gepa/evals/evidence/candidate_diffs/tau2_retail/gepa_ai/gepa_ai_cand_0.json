@@ -1,0 +1,13 @@
+{
+  "candidate_id": "gepa_ai_cand_0",
+  "stack": "gepa_ai",
+  "run_id": "gepa_ai_tau2_retail_20260603T012949",
+  "candidate_index": 0,
+  "parent_candidate_id": null,
+  "candidate_text": "Use the retail policy exactly. Be concise, collect required information before taking actions, use tools when needed, and never promise an action unless it is allowed by policy.",
+  "parent_text": "",
+  "diff": "",
+  "heldout_score": 0.2978723404255319,
+  "edit_labels": null,
+  "edit_summary": null
+}

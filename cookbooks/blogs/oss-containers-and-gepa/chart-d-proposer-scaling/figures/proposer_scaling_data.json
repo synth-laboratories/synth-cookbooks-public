@@ -1,0 +1,94 @@
+{
+  "chart": "proposer_scaling",
+  "generated_from": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling",
+  "description": "Synth GEPA heldout reward vs proposer model (size ladder) for HealthBench and tau2-bench retail. Policy model held constant per task. 3 proposer models (gpt-5.4-nano/mini/gpt-5.4) \u00d7 2 tasks = 6 cells.",
+  "proposer_models": [
+    "gpt-5.4-nano",
+    "gpt-5.4-mini",
+    "gpt-5.4"
+  ],
+  "tasks": [
+    "healthbench",
+    "tau2_retail"
+  ],
+  "cells": [
+    {
+      "task": "healthbench",
+      "proposer_slug": "nano",
+      "proposer_label": "gpt-5.4-nano",
+      "proposer_auth_mode": "api_key",
+      "status": "completed",
+      "seed_reward": 0.2547314326739686,
+      "best_heldout_reward": 0.49790966869506426,
+      "proposer_calls": 3,
+      "proposer_tokens": 437065,
+      "total_cost_usd": 0.0,
+      "notes": ""
+    },
+    {
+      "task": "healthbench",
+      "proposer_slug": "mini",
+      "proposer_label": "gpt-5.4-mini",
+      "proposer_auth_mode": "chatgpt",
+      "status": "completed",
+      "seed_reward": 0.2547314326739686,
+      "best_heldout_reward": 0.4810826233941853,
+      "proposer_calls": 3,
+      "proposer_tokens": 660828,
+      "total_cost_usd": 0.0,
+      "notes": ""
+    },
+    {
+      "task": "healthbench",
+      "proposer_slug": "gpt54",
+      "proposer_label": "gpt-5.4",
+      "proposer_auth_mode": "chatgpt",
+      "status": "completed",
+      "seed_reward": 0.2547314326739686,
+      "best_heldout_reward": 0.41302988505747124,
+      "proposer_calls": 3,
+      "proposer_tokens": 682327,
+      "total_cost_usd": 0.0,
+      "notes": ""
+    },
+    {
+      "task": "tau2_retail",
+      "proposer_slug": "nano",
+      "proposer_label": "gpt-5.4-nano",
+      "proposer_auth_mode": "api_key",
+      "status": "completed",
+      "seed_reward": 0.2978723404255319,
+      "best_heldout_reward": 0.4,
+      "proposer_calls": 3,
+      "proposer_tokens": 126383,
+      "total_cost_usd": 0.0087187,
+      "notes": ""
+    },
+    {
+      "task": "tau2_retail",
+      "proposer_slug": "mini",
+      "proposer_label": "gpt-5.4-mini",
+      "proposer_auth_mode": "chatgpt",
+      "status": "completed",
+      "seed_reward": 0.2978723404255319,
+      "best_heldout_reward": 0.2,
+      "proposer_calls": 3,
+      "proposer_tokens": 221485,
+      "total_cost_usd": 0.0171376,
+      "notes": ""
+    },
+    {
+      "task": "tau2_retail",
+      "proposer_slug": "gpt54",
+      "proposer_label": "gpt-5.4",
+      "proposer_auth_mode": "chatgpt",
+      "status": "completed",
+      "seed_reward": 0.2978723404255319,
+      "best_heldout_reward": 0.0,
+      "proposer_calls": 3,
+      "proposer_tokens": 343751,
+      "total_cost_usd": 0.007918799999999998,
+      "notes": ""
+    }
+  ]
+}

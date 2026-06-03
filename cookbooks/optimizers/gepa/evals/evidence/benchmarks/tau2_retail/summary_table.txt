@@ -1,0 +1,12 @@
+Synth GEPA vs gepa-ai — tau2_retail  (equal search-rollout budget = 400)
+========================================================================
+── Headline ──────────────────────────────────────────────────────
+  joint Pareto frontier size (both stacks pooled): 5
+  gepa_ai              candidates= 10  seed=0.298  best=0.447  lift=+0.149  mov.avg slope=N/A/cand  rollouts=360  cost(metered)=$1.5685  cost(codex-sub)=$0.0000  time=3580s  pareto=4/5 (80%)
+  synth_gepa           candidates=  4  seed=0.298  best=0.394  lift=+0.096  mov.avg slope=N/A/cand  rollouts=75  cost(metered)=$0.7647  cost(codex-sub)=$0.0000  time=767s  pareto=1/5 (20%)
+
+── Cumulative seed coverage (reward >= 1 by >=1 candidate) ──
+  gepa_ai              train=19/20 (best 1 cand 14)   heldout=75/94 (best 1 cand 42)
+  synth_gepa           train=17/20 (best 1 cand 12)   heldout=58/94 (best 1 cand 37)
+  joint heldout: 81/94 ever solved  |  never solved by anyone: 13
+  joint train  : 19/20 ever solved  |  never solved by anyone: 1

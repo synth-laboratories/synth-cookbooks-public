@@ -1,0 +1,66 @@
+# DungeonGrid parity comparison config for the GEPA blog final scope.
+
+[benchmark]
+name = "dungeongrid"
+container_dir = "dungeongrid_container"
+env_prefix = "DUNGEONGRID"
+mutable_field = "react_system_prompt"
+train_shuffle_seed = 0
+test_shuffle_seed = 0
+coverage_reward_threshold = 0.000001
+
+[dataset]
+train_split = "train"
+heldout_split = "test"
+train_seeds = [11, 13, 17, 19, 23, 29, 31, 37]
+heldout_seeds = [101, 103, 107, 109, 113, 127, 131, 137]
+
+[seed_candidate]
+react_system_prompt = "You control a party of heroes exploring a dangerous DungeonGrid dungeon. Each turn you see a text observation for the active hero (its stats, position, the visible map, nearby entities and objects, and the objective). Respond with a single dungeongrid_act tool call choosing ONE action for the active hero. Use `direction` (north/south/west/east) for move, `target` for an entity/object id or \"x,y\" for inspect_tile, and `text` for message content. Reveal rooms and map tiles, open doors, search for traps and treasure, defeat blocking monsters, recover the objective, and extract the party."
+
+[parity_controls]
+proposer_model = "gpt-5.4-mini"
+reflection_model = "gpt-5.4-mini"
+policy_model = "google/gemini-3.1-flash-lite"
+policy_base_url = "https://openrouter.ai/api/v1"
+policy_api_key_env = "OPENROUTER_API_KEY"
+policy_max_tokens = 2048
+policy_retries = 1
+eval_policy_retries = 3
+policy_timeout_seconds = 90
+rollout_timeout_seconds = 240
+cache_mode = "off"
+random_seed = 0
+rollout_concurrency = 4
+
+[limits]
+search_rollout_budget = 120
+eval_concurrency = 4
+eval_workers = 1
+
+[limits.cost]
+policy_input_per_1m = 0.10
+policy_output_per_1m = 0.40
+proposer_input_per_1m = 0.75
+proposer_cached_input_per_1m = 0.075
+proposer_output_per_1m = 4.50
+
+[synth_gepa]
+max_generations = 3
+proposals_per_generation = 2
+minibatch_size = 4
+proposer_backend = "codex_app_server"
+proposer_auth_mode = "chatgpt"
+proposer_copy_host_auth = false
+proposer_codex_home = "/Users/joshpurtell/.codex_chatgpt_jmvpurtell"
+proposer_sandbox_mode = "workspace-write"
+proposer_approval_policy = "never"
+proposer_reasoning_effort = "medium"
+proposer_timeout_seconds = 900
+rollout_submission_mode = "sync"
+rollout_chunk_size = 8
+pipeline_mode = "async_pipelined"
+
+[gepa_ai]
+reflection_minibatch_size = 4
+candidate_selection_strategy = "pareto"

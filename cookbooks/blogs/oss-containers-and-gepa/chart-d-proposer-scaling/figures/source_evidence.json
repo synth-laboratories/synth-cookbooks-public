@@ -1,0 +1,162 @@
+{
+  "chart": "proposer_scaling",
+  "generated_from": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling",
+  "evidence": [
+    {
+      "task": "healthbench",
+      "proposer_slug": "nano",
+      "proposer_label": "gpt-5.4-nano",
+      "original_manifest_path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/runs/final_20260603/healthbench_nano/healthbench_proposer_nano/result_manifest.json",
+      "manifest_snapshot_path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/figures/manifest_snapshots/healthbench_nano.result_manifest.json",
+      "source_ref": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/figures/manifest_snapshots/healthbench_nano.result_manifest.json",
+        "sha256": "cfdb05711167a8dc32f773648f06ff9ee2524a354c12f5793ab12f6a46e0d876",
+        "bytes": 1501191,
+        "exists": true
+      },
+      "cell": {
+        "task": "healthbench",
+        "proposer_slug": "nano",
+        "proposer_label": "gpt-5.4-nano",
+        "proposer_auth_mode": "api_key",
+        "status": "completed",
+        "seed_reward": 0.2547314326739686,
+        "best_heldout_reward": 0.49790966869506426,
+        "proposer_calls": 3,
+        "proposer_tokens": 437065,
+        "total_cost_usd": 0.0,
+        "notes": ""
+      }
+    },
+    {
+      "task": "healthbench",
+      "proposer_slug": "mini",
+      "proposer_label": "gpt-5.4-mini",
+      "original_manifest_path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/runs/final_20260603/healthbench_mini/healthbench_proposer_mini/result_manifest.json",
+      "manifest_snapshot_path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/figures/manifest_snapshots/healthbench_mini.result_manifest.json",
+      "source_ref": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/figures/manifest_snapshots/healthbench_mini.result_manifest.json",
+        "sha256": "23ea9f09bfbf26e0616d3762add49bd60e571859edb2cc9ccdf747aabf083bf3",
+        "bytes": 1511299,
+        "exists": true
+      },
+      "cell": {
+        "task": "healthbench",
+        "proposer_slug": "mini",
+        "proposer_label": "gpt-5.4-mini",
+        "proposer_auth_mode": "chatgpt",
+        "status": "completed",
+        "seed_reward": 0.2547314326739686,
+        "best_heldout_reward": 0.4810826233941853,
+        "proposer_calls": 3,
+        "proposer_tokens": 660828,
+        "total_cost_usd": 0.0,
+        "notes": ""
+      }
+    },
+    {
+      "task": "healthbench",
+      "proposer_slug": "gpt54",
+      "proposer_label": "gpt-5.4",
+      "original_manifest_path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/runs/final_20260603/healthbench_gpt54/healthbench_proposer_gpt54/result_manifest.json",
+      "manifest_snapshot_path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/figures/manifest_snapshots/healthbench_gpt54.result_manifest.json",
+      "source_ref": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/figures/manifest_snapshots/healthbench_gpt54.result_manifest.json",
+        "sha256": "b3351597272c1e3ee2e1144a4315d65862b1407e24577a20a6a06916055d5825",
+        "bytes": 1411604,
+        "exists": true
+      },
+      "cell": {
+        "task": "healthbench",
+        "proposer_slug": "gpt54",
+        "proposer_label": "gpt-5.4",
+        "proposer_auth_mode": "chatgpt",
+        "status": "completed",
+        "seed_reward": 0.2547314326739686,
+        "best_heldout_reward": 0.41302988505747124,
+        "proposer_calls": 3,
+        "proposer_tokens": 682327,
+        "total_cost_usd": 0.0,
+        "notes": ""
+      }
+    },
+    {
+      "task": "tau2_retail",
+      "proposer_slug": "nano",
+      "proposer_label": "gpt-5.4-nano",
+      "original_manifest_path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/runs/final_20260603/tau2_retail_nano/tau2_retail_proposer_nano/result_manifest.json",
+      "manifest_snapshot_path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/figures/manifest_snapshots/tau2_retail_nano.result_manifest.json",
+      "source_ref": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/figures/manifest_snapshots/tau2_retail_nano.result_manifest.json",
+        "sha256": "2a206c719c8c3e8b491d72bd3cd51d2614030081fa86ac66ee59ae5509f2d9f2",
+        "bytes": 219422,
+        "exists": true
+      },
+      "cell": {
+        "task": "tau2_retail",
+        "proposer_slug": "nano",
+        "proposer_label": "gpt-5.4-nano",
+        "proposer_auth_mode": "api_key",
+        "status": "completed",
+        "seed_reward": 0.2978723404255319,
+        "best_heldout_reward": 0.4,
+        "proposer_calls": 3,
+        "proposer_tokens": 126383,
+        "total_cost_usd": 0.0087187,
+        "notes": ""
+      }
+    },
+    {
+      "task": "tau2_retail",
+      "proposer_slug": "mini",
+      "proposer_label": "gpt-5.4-mini",
+      "original_manifest_path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/runs/final_20260603/tau2_retail_mini/tau2_retail_proposer_mini/result_manifest.json",
+      "manifest_snapshot_path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/figures/manifest_snapshots/tau2_retail_mini.result_manifest.json",
+      "source_ref": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/figures/manifest_snapshots/tau2_retail_mini.result_manifest.json",
+        "sha256": "f245bfaf0910668bcc1f85c05235f0e0d99e5f10fd146818caaa7c22bcec5a03",
+        "bytes": 304323,
+        "exists": true
+      },
+      "cell": {
+        "task": "tau2_retail",
+        "proposer_slug": "mini",
+        "proposer_label": "gpt-5.4-mini",
+        "proposer_auth_mode": "chatgpt",
+        "status": "completed",
+        "seed_reward": 0.2978723404255319,
+        "best_heldout_reward": 0.2,
+        "proposer_calls": 3,
+        "proposer_tokens": 221485,
+        "total_cost_usd": 0.0171376,
+        "notes": ""
+      }
+    },
+    {
+      "task": "tau2_retail",
+      "proposer_slug": "gpt54",
+      "proposer_label": "gpt-5.4",
+      "original_manifest_path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/runs/final_20260603/tau2_retail_gpt54/tau2_retail_proposer_gpt54/result_manifest.json",
+      "manifest_snapshot_path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/figures/manifest_snapshots/tau2_retail_gpt54.result_manifest.json",
+      "source_ref": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/chart-d-proposer-scaling/figures/manifest_snapshots/tau2_retail_gpt54.result_manifest.json",
+        "sha256": "71f6e554662a41f83518a03afc97d574530ec452817c42e71e25f304e0675f4f",
+        "bytes": 268262,
+        "exists": true
+      },
+      "cell": {
+        "task": "tau2_retail",
+        "proposer_slug": "gpt54",
+        "proposer_label": "gpt-5.4",
+        "proposer_auth_mode": "chatgpt",
+        "status": "completed",
+        "seed_reward": 0.2978723404255319,
+        "best_heldout_reward": 0.0,
+        "proposer_calls": 3,
+        "proposer_tokens": 343751,
+        "total_cost_usd": 0.007918799999999998,
+        "notes": ""
+      }
+    }
+  ]
+}

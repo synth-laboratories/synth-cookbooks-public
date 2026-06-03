@@ -1,0 +1,12 @@
+Synth GEPA vs gepa-ai — dungeongrid  (equal search-rollout budget = 120)
+========================================================================
+── Headline ──────────────────────────────────────────────────────
+  joint Pareto frontier size (both stacks pooled): 3
+  gepa_ai              candidates=  1  seed=1.597  best=1.597  lift=+0.000  mov.avg slope=N/A/cand  rollouts=4  cost(metered)=$0.0175  cost(codex-sub)=$0.0175  time=19s  pareto=1/3 (33%)
+  synth_gepa           candidates=  4  seed=1.750  best=1.894  lift=+0.144  mov.avg slope=-0.0510/cand  rollouts=28  cost(metered)=$0.6572  cost(codex-sub)=$0.1281  time=514s  pareto=2/3 (67%)
+
+── Cumulative seed coverage (reward >= 1e-06 by >=1 candidate) ──
+  gepa_ai              train=8/8 (best 1 cand 8)   heldout=8/8 (best 1 cand 8)
+  synth_gepa           train=8/8 (best 1 cand 8)   heldout=8/8 (best 1 cand 8)
+  joint heldout: 8/8 ever solved  |  never solved by anyone: 0
+  joint train  : 8/8 ever solved  |  never solved by anyone: 0

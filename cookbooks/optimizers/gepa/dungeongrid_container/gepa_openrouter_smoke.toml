@@ -1,0 +1,68 @@
+[run]
+run_id = "dungeongrid_gepa_openrouter_codex_smoke"
+output_dir = "../runs"
+seed = 0
+
+[container]
+url = "http://127.0.0.1:8770"
+command = [
+  "/usr/bin/env",
+  "OPENAI_BASE_URL=https://openrouter.ai/api/v1",
+  "DUNGEONGRID_POLICY_MODEL=openai/gpt-4.1-nano",
+  "DUNGEONGRID_QUEST=lantern_crypt",
+  "DUNGEONGRID_NUM_HEROES=2",
+  "DUNGEONGRID_MAX_TURNS=2",
+  "uv", "run", "--project", "dungeongrid_container",
+  "python", "dungeongrid_container/synth_service_app.py",
+  "--host", "127.0.0.1", "--port", "8770",
+]
+cwd = ".."
+startup_timeout_seconds = 60
+
+[dataset]
+train_split = "train"
+heldout_split = "test"
+train_seeds = [11]
+heldout_seeds = [101]
+
+[candidate]
+target_modules = ["react_system_prompt"]
+
+[seed_candidate]
+react_system_prompt = "You control a party of heroes exploring a dangerous DungeonGrid dungeon. Each turn you see a text observation for the active hero (its stats, position, the visible map, nearby entities and objects, and the objective). Respond with a single dungeongrid_act tool call choosing ONE action for the active hero. Use `direction` (north/south/west/east) for move, `target` for an entity/object id or \"x,y\" for inspect_tile, and `text` for message content. Reveal rooms and map tiles, open doors, search for traps and treasure, defeat blocking monsters, recover the objective, and extract the party."
+
+[policy]
+provider = "openai"
+model = "openai/gpt-4.1-nano"
+api_key_env = "OPENAI_API_KEY"
+
+[proposer]
+backend = "codex_app_server"
+execution_mode = "local_process"
+timeout_seconds = 900
+model = "gpt-5.4-mini"
+reasoning_effort = "medium"
+auth_mode = "chatgpt"
+codex_home = "/Users/joshpurtell/.codex_chatgpt_jmvpurtell"
+copy_host_auth = false
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+
+[gepa]
+max_generations = 1
+proposals_per_generation = 1
+minibatch_size = 1
+max_total_rollouts = 2
+max_cost_usd = 0.0
+
+[gepa.pipeline]
+mode = "async_pipelined"
+max_in_flight_candidates = 1
+
+[gepa.pipeline.workers]
+rollout = 1
+
+[cache]
+mode = "off"
+path = "../runs/dungeongrid_gepa_openrouter_codex_smoke_cache.sqlite"
+namespace = "dungeongrid_gepa_openrouter_codex_smoke"

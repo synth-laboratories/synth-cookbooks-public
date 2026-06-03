@@ -1,0 +1,309 @@
+{
+  "benchmark": "healthbench",
+  "stacks": [
+    "gepa_ai",
+    "synth_gepa"
+  ],
+  "run_commands": [
+    {
+      "command_id": "2de9f067-f144-422e-b99b-a083ad013aeb",
+      "phase": "run",
+      "stack": "synth_gepa",
+      "benchmark": "healthbench",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "healthbench",
+        "--stack",
+        "synth_gepa"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/healthbench/synth_gepa_healthbench_20260602T035339/gepa_run.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/healthbench/synth_gepa_healthbench_20260602T035339"
+      ],
+      "started_at": "2026-06-02T03:53:39.282094+00:00",
+      "finished_at": "2026-06-02T04:17:16.634783+00:00",
+      "exit_code": 0
+    },
+    {
+      "command_id": "3cdceef7-4731-4db5-a407-7fbefe93238d",
+      "phase": "run",
+      "stack": "gepa_ai",
+      "benchmark": "healthbench",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        ".",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "healthbench",
+        "--stack",
+        "gepa_ai"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/healthbench.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/healthbench/gepa_ai_healthbench_20260602T041730"
+      ],
+      "started_at": "2026-06-02T04:17:30.238382+00:00",
+      "finished_at": "2026-06-02T04:36:00.307291+00:00",
+      "exit_code": 0
+    },
+    {
+      "command_id": "4ebe6b5d-ee94-4a67-81d1-dbf7ab2d8329",
+      "phase": "run",
+      "stack": "gepa_ai",
+      "benchmark": "healthbench",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        ".",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "healthbench",
+        "--stack",
+        "gepa_ai"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/healthbench.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/healthbench/gepa_ai_healthbench_20260603T010401"
+      ],
+      "started_at": "2026-06-03T01:04:01.125902+00:00",
+      "finished_at": "2026-06-03T01:21:49.364902+00:00",
+      "exit_code": 0
+    },
+    {
+      "command_id": "7fa8ac6a-004d-4a6a-92c8-53fe12d48da8",
+      "phase": "run",
+      "stack": "synth_gepa",
+      "benchmark": "healthbench",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "healthbench",
+        "--stack",
+        "synth_gepa"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/healthbench/synth_gepa_healthbench_20260603T010401/gepa_run.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/healthbench/synth_gepa_healthbench_20260603T010401"
+      ],
+      "started_at": "2026-06-03T01:04:01.311055+00:00",
+      "finished_at": "2026-06-03T01:21:59.340835+00:00",
+      "exit_code": 0
+    }
+  ],
+  "num_candidates_total": 38,
+  "per_stack": {
+    "gepa_ai": {
+      "run_commands": [
+        {
+          "command_id": "3cdceef7-4731-4db5-a407-7fbefe93238d",
+          "phase": "run",
+          "stack": "gepa_ai",
+          "benchmark": "healthbench",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            ".",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "healthbench",
+            "--stack",
+            "gepa_ai"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/healthbench.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/healthbench/gepa_ai_healthbench_20260602T041730"
+          ],
+          "started_at": "2026-06-02T04:17:30.238382+00:00",
+          "finished_at": "2026-06-02T04:36:00.307291+00:00",
+          "exit_code": 0
+        },
+        {
+          "command_id": "4ebe6b5d-ee94-4a67-81d1-dbf7ab2d8329",
+          "phase": "run",
+          "stack": "gepa_ai",
+          "benchmark": "healthbench",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            ".",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "healthbench",
+            "--stack",
+            "gepa_ai"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/healthbench.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/healthbench/gepa_ai_healthbench_20260603T010401"
+          ],
+          "started_at": "2026-06-03T01:04:01.125902+00:00",
+          "finished_at": "2026-06-03T01:21:49.364902+00:00",
+          "exit_code": 0
+        }
+      ],
+      "run_ids": [
+        "gepa_ai_healthbench_20260603T010401"
+      ],
+      "num_candidates": 21,
+      "seed_heldout_score": 0.25166131092793886,
+      "best_heldout_score": 0.35265410417293763,
+      "mean_heldout_score": 0.3083320798723363,
+      "lift_over_seed": 0.10099279324499877,
+      "candidates_with_heldout": 21,
+      "total_rollouts": 1368,
+      "total_cost_usd": 1.0728574,
+      "total_rollout_cost_usd": 0.5538274,
+      "total_proposer_cost_usd": 0.51903,
+      "total_elapsed_seconds": 1061.061,
+      "cost_metered_usd": 1.0728574,
+      "cost_with_codex_subscription_usd": 0.5538274,
+      "best_candidate_id": "gepa_ai_cand_4",
+      "best_at_rollouts": 264,
+      "best_at_cost_usd": 0.17171325,
+      "best_at_elapsed_seconds": 134.326
+    },
+    "synth_gepa": {
+      "run_commands": [
+        {
+          "command_id": "2de9f067-f144-422e-b99b-a083ad013aeb",
+          "phase": "run",
+          "stack": "synth_gepa",
+          "benchmark": "healthbench",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "healthbench",
+            "--stack",
+            "synth_gepa"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/healthbench/synth_gepa_healthbench_20260602T035339/gepa_run.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/healthbench/synth_gepa_healthbench_20260602T035339"
+          ],
+          "started_at": "2026-06-02T03:53:39.282094+00:00",
+          "finished_at": "2026-06-02T04:17:16.634783+00:00",
+          "exit_code": 0
+        },
+        {
+          "command_id": "7fa8ac6a-004d-4a6a-92c8-53fe12d48da8",
+          "phase": "run",
+          "stack": "synth_gepa",
+          "benchmark": "healthbench",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "healthbench",
+            "--stack",
+            "synth_gepa"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/healthbench/synth_gepa_healthbench_20260603T010401/gepa_run.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/healthbench/synth_gepa_healthbench_20260603T010401"
+          ],
+          "started_at": "2026-06-03T01:04:01.311055+00:00",
+          "finished_at": "2026-06-03T01:21:59.340835+00:00",
+          "exit_code": 0
+        }
+      ],
+      "run_ids": [
+        "synth_gepa_healthbench_20260603T010401"
+      ],
+      "num_candidates": 17,
+      "seed_heldout_score": 0.2547314326739686,
+      "best_heldout_score": 0.3609311821772041,
+      "mean_heldout_score": 0.30895713628188476,
+      "lift_over_seed": 0.10619974950323552,
+      "candidates_with_heldout": 17,
+      "total_rollouts": 1240,
+      "total_cost_usd": 1.0870517,
+      "total_rollout_cost_usd": 0.3972875,
+      "total_proposer_cost_usd": 0.6897642,
+      "total_elapsed_seconds": 1010.515,
+      "cost_metered_usd": 1.0870517,
+      "cost_with_codex_subscription_usd": 0.3972875,
+      "best_candidate_id": "gepa_33b35da45b3d",
+      "best_at_rollouts": 880,
+      "best_at_cost_usd": 0.78296975,
+      "best_at_elapsed_seconds": 667.128
+    }
+  },
+  "parity_controls_path": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/evidence/parity_controls.json"
+}

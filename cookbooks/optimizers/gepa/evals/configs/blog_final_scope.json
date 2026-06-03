@@ -1,0 +1,20 @@
+{
+  "benchmarks": {
+    "healthbench": {
+      "synth_gepa": "synth_gepa_healthbench_20260603T010401",
+      "gepa_ai": "gepa_ai_healthbench_20260603T010401"
+    },
+    "harvey_lab": {
+      "synth_gepa": "synth_gepa_harvey_lab_20260603T012949",
+      "gepa_ai": "gepa_ai_harvey_lab_20260603T012949"
+    },
+    "tau2_retail": {
+      "synth_gepa": "synth_gepa_tau2_retail_20260603T014341",
+      "gepa_ai": "gepa_ai_tau2_retail_20260603T012949"
+    },
+    "dungeongrid": {
+      "synth_gepa": "synth_gepa_dungeongrid_20260603T013258",
+      "gepa_ai": "gepa_ai_dungeongrid_20260603T014117"
+    }
+  }
+}

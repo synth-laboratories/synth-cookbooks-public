@@ -1,0 +1,185 @@
+{
+  "benchmark": "harvey_lab",
+  "stacks": [
+    "gepa_ai",
+    "synth_gepa"
+  ],
+  "run_commands": [
+    {
+      "command_id": "74c1158a-4304-4be6-b446-cc17fa178dc8",
+      "phase": "run",
+      "stack": "synth_gepa",
+      "benchmark": "harvey_lab",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "harvey_lab",
+        "--stack",
+        "synth_gepa"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/harvey_lab/synth_gepa_harvey_lab_20260603T012949/gepa_run.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/harvey_lab/synth_gepa_harvey_lab_20260603T012949"
+      ],
+      "started_at": "2026-06-03T01:29:49.260219+00:00",
+      "finished_at": "2026-06-03T01:39:27.560775+00:00",
+      "exit_code": 0
+    },
+    {
+      "command_id": "c53b9d6e-26c9-4f8f-a9ed-e408f12ac5f3",
+      "phase": "run",
+      "stack": "gepa_ai",
+      "benchmark": "harvey_lab",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        ".",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "harvey_lab",
+        "--stack",
+        "gepa_ai"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/harvey_lab.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/harvey_lab/gepa_ai_harvey_lab_20260603T012949"
+      ],
+      "started_at": "2026-06-03T01:29:49.057225+00:00",
+      "finished_at": "2026-06-03T01:43:52.086345+00:00",
+      "exit_code": 0
+    }
+  ],
+  "num_candidates_total": 14,
+  "per_stack": {
+    "gepa_ai": {
+      "run_commands": [
+        {
+          "command_id": "c53b9d6e-26c9-4f8f-a9ed-e408f12ac5f3",
+          "phase": "run",
+          "stack": "gepa_ai",
+          "benchmark": "harvey_lab",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            ".",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "harvey_lab",
+            "--stack",
+            "gepa_ai"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/harvey_lab.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/harvey_lab/gepa_ai_harvey_lab_20260603T012949"
+          ],
+          "started_at": "2026-06-03T01:29:49.057225+00:00",
+          "finished_at": "2026-06-03T01:43:52.086345+00:00",
+          "exit_code": 0
+        }
+      ],
+      "run_ids": [
+        "gepa_ai_harvey_lab_20260603T012949"
+      ],
+      "num_candidates": 10,
+      "seed_heldout_score": 0.10721224330627335,
+      "best_heldout_score": 0.11004697590705567,
+      "mean_heldout_score": 0.08438949916580497,
+      "lift_over_seed": 0.0028347326007823193,
+      "candidates_with_heldout": 10,
+      "total_rollouts": 238,
+      "total_cost_usd": 1.9532018,
+      "total_rollout_cost_usd": 1.7165756,
+      "total_proposer_cost_usd": 0.2366262,
+      "total_elapsed_seconds": 824.41,
+      "cost_metered_usd": 1.9532018,
+      "cost_with_codex_subscription_usd": 1.7165756,
+      "best_candidate_id": "gepa_ai_cand_9",
+      "best_at_rollouts": 238,
+      "best_at_cost_usd": 1.9532018,
+      "best_at_elapsed_seconds": 824.41
+    },
+    "synth_gepa": {
+      "run_commands": [
+        {
+          "command_id": "74c1158a-4304-4be6-b446-cc17fa178dc8",
+          "phase": "run",
+          "stack": "synth_gepa",
+          "benchmark": "harvey_lab",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "harvey_lab",
+            "--stack",
+            "synth_gepa"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/harvey_lab/synth_gepa_harvey_lab_20260603T012949/gepa_run.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/harvey_lab/synth_gepa_harvey_lab_20260603T012949"
+          ],
+          "started_at": "2026-06-03T01:29:49.260219+00:00",
+          "finished_at": "2026-06-03T01:39:27.560775+00:00",
+          "exit_code": 0
+        }
+      ],
+      "run_ids": [
+        "synth_gepa_harvey_lab_20260603T012949"
+      ],
+      "num_candidates": 4,
+      "seed_heldout_score": 0.10559074072307616,
+      "best_heldout_score": 0.10559074072307616,
+      "mean_heldout_score": 0.09270618482075088,
+      "lift_over_seed": 0.0,
+      "candidates_with_heldout": 4,
+      "total_rollouts": 90,
+      "total_cost_usd": 1.1430477,
+      "total_rollout_cost_usd": 0.6350016,
+      "total_proposer_cost_usd": 0.5080461,
+      "total_elapsed_seconds": 575.647,
+      "cost_metered_usd": 1.1430477,
+      "cost_with_codex_subscription_usd": 0.6350016,
+      "best_candidate_id": "gepa_b765cf00fd4c",
+      "best_at_rollouts": 25,
+      "best_at_cost_usd": 0.1769628,
+      "best_at_elapsed_seconds": 43.065
+    }
+  },
+  "parity_controls_path": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/evidence/parity_controls.json"
+}

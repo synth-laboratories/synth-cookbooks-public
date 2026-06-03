@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Chart A release evidence from checked-in run artifacts."""
+"""Build Chart A head-to-head data from final GEPA evidence summaries."""
 
 from __future__ import annotations
 
@@ -11,26 +11,30 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 REPO_ROOT = ROOT.parents[3]
+WORKSPACE = Path("/Users/joshpurtell/Documents/GitHub")
+EVALS = REPO_ROOT / "cookbooks" / "optimizers" / "gepa" / "evals"
+EVID = EVALS / "evidence"
+FRONTEND_OUT = (
+    WORKSPACE
+    / "frontend"
+    / "src"
+    / "components"
+    / "blog"
+    / "posts"
+    / "introducing-gepa-platform"
+    / "data"
+    / "head_to_head_data.json"
+)
 
-TASKS = {
-    "banking77": {
-        "seed": 0.88,
-        "synth_manifest": ROOT / "runs" / "synth_gepa" / "banking77_parity_synth_gepa" / "result_manifest.json",
-        "gepa_ai_summary": ROOT / "runs" / "gepa_ai_via_container" / "banking77_20260521_011836" / "summary.json",
-        "notes": "True same-container comparison on 24 train / 200 heldout rows with 2400-call budget.",
-    },
-    "tblite": {
-        "seed": 1.0,
-        "synth_manifest": ROOT / "runs" / "synth_gepa" / "tblite_parity_synth_gepa" / "result_manifest.json",
-        "gepa_ai_summary": ROOT / "runs" / "gepa_ai_via_container" / "tblite_20260522_014223" / "summary.json",
-        "notes": "Fresh same-container comparison on 3 train / 2 heldout rows; seed is already perfect on heldout.",
-    },
-    "crafter": {
-        "seed": 1.0,
-        "synth_manifest": ROOT / "runs" / "synth_gepa" / "crafter_parity_synth_gepa" / "result_manifest.json",
-        "gepa_ai_summary": ROOT / "runs" / "gepa_ai_via_container" / "crafter_20260522_014303" / "summary.json",
-        "notes": "Fresh same-container comparison on 2 train / 1 heldout row at the small public budget.",
-    },
+TASKS = [
+    ("healthbench", "HealthBench Pro"),
+    ("harvey_lab", "Harvey Lab Tax"),
+    ("tau2_retail", "tau2-bench retail"),
+    ("dungeongrid", "DungeonGrid"),
+]
+STACK_LABELS = {
+    "gepa_ai": "gepa-ai",
+    "synth_gepa": "Synth GEPA",
 }
 
 
@@ -47,214 +51,166 @@ def source_ref(path: Path) -> dict[str, Any]:
     }
 
 
-def repo_relative_path(raw_path: str | None) -> str | None:
-    if not raw_path:
-        return raw_path
-    path = Path(raw_path)
-    if path.is_absolute():
-        try:
-            return str(path.resolve().relative_to(REPO_ROOT))
-        except ValueError:
-            marker = "cookbooks/"
-            if marker in raw_path:
-                return raw_path[raw_path.index(marker):]
-    return str(path)
+def summary_path(task: str) -> Path:
+    return EVID / "benchmarks" / task / "summary.json"
 
 
-def synth_row(task: str, path: Path) -> dict[str, Any]:
-    manifest = read_json(path)
-    best = manifest.get("best_candidate") or {}
-    usage = manifest.get("usage") or {}
+def is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def require_number(value: Any, label: str) -> int | float:
+    if not is_number(value):
+        raise SystemExit(f"Chart A missing numeric {label}: {value!r}")
+    return value
+
+
+def row_for_stack(task: str, label: str, stack: str, summary: dict[str, Any]) -> dict[str, Any]:
+    stack_summary = (summary.get("per_stack") or {}).get(stack)
+    if not stack_summary:
+        raise SystemExit(f"Chart A missing stack summary for {task}/{stack}")
     return {
         "task": task,
-        "stack": "Synth GEPA",
-        "heldout_reward": best.get("heldout_reward"),
-        "minibatch_reward": best.get("minibatch_reward"),
-        "best_candidate_id": best.get("candidate_id"),
-        "rollout_calls": usage.get("rollout_calls"),
-        "proposer_calls": usage.get("proposer_calls"),
-        "prompt_tokens": usage.get("prompt_tokens"),
-        "completion_tokens": usage.get("completion_tokens"),
-        "source": str(path.relative_to(REPO_ROOT)),
+        "task_label": label,
+        "stack": STACK_LABELS[stack],
+        "stack_id": stack,
+        "heldout_reward": require_number(stack_summary.get("best_heldout_score"), f"{task}/{stack}.best_heldout_score"),
+        "seed_heldout_reward": require_number(stack_summary.get("seed_heldout_score"), f"{task}/{stack}.seed_heldout_score"),
+        "lift_over_seed": require_number(stack_summary.get("lift_over_seed"), f"{task}/{stack}.lift_over_seed"),
+        "best_candidate_id": stack_summary.get("best_candidate_id"),
+        "candidate_count": require_number(stack_summary.get("num_candidates"), f"{task}/{stack}.num_candidates"),
+        "rollout_calls": require_number(stack_summary.get("total_rollouts"), f"{task}/{stack}.total_rollouts"),
+        "total_cost_usd": require_number(stack_summary.get("cost_metered_usd"), f"{task}/{stack}.cost_metered_usd"),
+        "codex_subscription_cost_usd": require_number(stack_summary.get("cost_with_codex_subscription_usd"), f"{task}/{stack}.cost_with_codex_subscription_usd"),
+        "wall_clock_s": require_number(stack_summary.get("total_elapsed_seconds"), f"{task}/{stack}.total_elapsed_seconds"),
+        "source": str(summary_path(task).relative_to(REPO_ROOT)),
     }
 
 
-def synth_evidence(task: str, path: Path) -> dict[str, Any]:
-    manifest = read_json(path)
-    best = manifest.get("best_candidate") or {}
-    usage = manifest.get("usage") or {}
-    return {
-        "task": task,
-        "stack": "Synth GEPA",
-        "source": source_ref(path),
-        "best_candidate": {
-            "candidate_id": best.get("candidate_id"),
-            "source": best.get("source"),
-            "train_reward": best.get("train_reward"),
-            "heldout_reward": best.get("heldout_reward"),
-            "minibatch_reward": best.get("minibatch_reward"),
-            "status": best.get("status"),
-            "payload": best.get("payload"),
-        },
-        "usage": {
-            "rollout_calls": usage.get("rollout_calls"),
-            "proposer_calls": usage.get("proposer_calls"),
-            "prompt_tokens": usage.get("prompt_tokens"),
-            "completion_tokens": usage.get("completion_tokens"),
-            "total_tokens": usage.get("total_tokens"),
-        },
-        "artifact_refs": [
-            {
-                "kind": ref.get("kind"),
-                "path": repo_relative_path(ref.get("path")),
-                "sha256": ref.get("sha256"),
-                "bytes": ref.get("bytes"),
-            }
-            for ref in (manifest.get("artifact_refs") or [])
-        ],
-    }
+def load_rows() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    rows: list[dict[str, Any]] = []
+    evidence: list[dict[str, Any]] = []
+    for task, label in TASKS:
+        path = summary_path(task)
+        if not path.exists():
+            raise SystemExit(f"Chart A missing summary for {task}: {path}")
+        summary = read_json(path)
+        for stack in ("gepa_ai", "synth_gepa"):
+            rows.append(row_for_stack(task, label, stack, summary))
+        evidence.append({
+            "task": task,
+            "summary": source_ref(path),
+            "run_ids": {
+                stack: (summary.get("per_stack") or {}).get(stack, {}).get("run_ids")
+                for stack in ("gepa_ai", "synth_gepa")
+            },
+        })
+    return rows, evidence
 
 
-def gepa_ai_row(task: str, path: Path) -> dict[str, Any]:
-    summary = read_json(path)
-    return {
-        "task": task,
-        "stack": "gepa-ai",
-        "heldout_reward": summary.get("best_val_score"),
-        "seed_heldout_reward": summary.get("seed_val_score"),
-        "best_candidate_id": summary.get("best_idx"),
-        "rollout_calls": summary.get("rollout_calls"),
-        "proposer_calls": summary.get("reflection_calls"),
-        "prompt_tokens": (summary.get("rollout_prompt_tokens") or 0) + (summary.get("reflection_prompt_tokens") or 0),
-        "completion_tokens": (summary.get("rollout_completion_tokens") or 0) + (summary.get("reflection_completion_tokens") or 0),
-        "total_usd": summary.get("total_usd"),
-        "wall_clock_s": summary.get("wall_clock_s"),
-        "source": str(path.relative_to(REPO_ROOT)),
-    }
+def render_markdown(rows: list[dict[str, Any]]) -> str:
+    by_key = {(row["task"], row["stack_id"]): row for row in rows}
+    lines = [
+        "| Task | gepa-ai seed | gepa-ai best | Synth seed | Synth best | Synth - gepa | Winner |",
+        "|---|---:|---:|---:|---:|---:|---|",
+    ]
+    for task, label in TASKS:
+        gepa_row = by_key.get((task, "gepa_ai"), {})
+        synth_row = by_key.get((task, "synth_gepa"), {})
+        gepa_seed = gepa_row.get("seed_heldout_reward")
+        gepa = gepa_row.get("heldout_reward")
+        synth_seed = synth_row.get("seed_heldout_reward")
+        synth = synth_row.get("heldout_reward")
+        if not (is_number(gepa_seed) and is_number(gepa) and is_number(synth_seed) and is_number(synth)):
+            raise SystemExit(f"Chart A incomplete markdown row for {task}")
+        delta = synth - gepa
+        if synth > gepa:
+            winner = "Synth GEPA"
+        elif gepa > synth:
+            winner = "gepa-ai"
+        else:
+            winner = "tie"
+        lines.append(
+            "| "
+            + " | ".join([
+                label,
+                f"{gepa_seed:.3f}",
+                f"{gepa:.3f}",
+                f"{synth_seed:.3f}",
+                f"{synth:.3f}",
+                f"{delta:+.3f}",
+                winner,
+            ])
+            + " |"
+        )
+    return "\n".join(lines) + "\n"
 
 
-def gepa_ai_evidence(task: str, path: Path) -> dict[str, Any]:
-    summary = read_json(path)
-    best = summary.get("best_candidate") or {}
-    return {
-        "task": task,
-        "stack": "gepa-ai",
-        "source": source_ref(path),
-        "seed_val_score": summary.get("seed_val_score"),
-        "best_val_score": summary.get("best_val_score"),
-        "best_idx": summary.get("best_idx"),
-        "rollout_calls": summary.get("rollout_calls"),
-        "reflection_calls": summary.get("reflection_calls"),
-        "wall_clock_s": summary.get("wall_clock_s"),
-        "total_usd": summary.get("total_usd"),
-        "tokens": {
-            "rollout_prompt_tokens": summary.get("rollout_prompt_tokens"),
-            "rollout_completion_tokens": summary.get("rollout_completion_tokens"),
-            "reflection_prompt_tokens": summary.get("reflection_prompt_tokens"),
-            "reflection_completion_tokens": summary.get("reflection_completion_tokens"),
-        },
-        "best_candidate": best,
-    }
+def render_svg(rows: list[dict[str, Any]]) -> str:
+    by_key = {(row["task"], row["stack_id"]): row for row in rows}
+    width = 860
+    height = 430
+    row_h = 70
+    labels = []
+    for i, (task, label) in enumerate(TASKS):
+        y = 112 + i * row_h
+        gepa_row = by_key.get((task, "gepa_ai"), {})
+        synth_row = by_key.get((task, "synth_gepa"), {})
+        gepa_seed = gepa_row.get("seed_heldout_reward")
+        gepa = gepa_row.get("heldout_reward")
+        synth_seed = synth_row.get("seed_heldout_reward")
+        synth = synth_row.get("heldout_reward")
+        if not (is_number(gepa_seed) and is_number(gepa) and is_number(synth_seed) and is_number(synth)):
+            raise SystemExit(f"Chart A incomplete SVG row for {task}")
+        labels.append(
+            f'<text x="60" y="{y}" font-family="monospace" font-size="17" fill="#221f1b">{label}</text>'
+        )
+        for x, value, color in (
+            (290, gepa_seed, "#8b8175"),
+            (410, gepa, "#c8ad45"),
+            (530, synth_seed, "#8b8175"),
+            (650, synth, "#d88437"),
+        ):
+            txt = f"{float(value):.3f}"
+            labels.append(
+                f'<text x="{x}" y="{y}" font-family="monospace" font-size="17" fill="{color}" font-weight="700">{txt}</text>'
+            )
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}">
+<rect width="{width}" height="{height}" fill="#faf9f5"/>
+<text x="60" y="54" font-family="Arial, sans-serif" font-size="31" font-weight="700" fill="#221f1b">Final GEPA head-to-head</text>
+<text x="60" y="82" font-family="monospace" font-size="14" fill="#766d63">same containers · matched policy model · posthoc heldout evidence</text>
+<text x="290" y="112" font-family="monospace" font-size="12" fill="#8b8175">gepa seed</text>
+<text x="410" y="112" font-family="monospace" font-size="12" fill="#8b8175">gepa best</text>
+<text x="530" y="112" font-family="monospace" font-size="12" fill="#8b8175">Synth seed</text>
+<text x="650" y="112" font-family="monospace" font-size="12" fill="#8b8175">Synth best</text>
+{''.join(labels)}
+</svg>
+"""
 
 
 def main() -> int:
-    rows: list[dict[str, Any]] = []
-    evidence: list[dict[str, Any]] = []
-    for task, cfg in TASKS.items():
-        rows.append({
-            "task": task,
-            "stack": "Seed candidate",
-            "heldout_reward": cfg["seed"],
-            "source": cfg["notes"],
-        })
-        rows.append(gepa_ai_row(task, cfg["gepa_ai_summary"]))
-        rows.append(synth_row(task, cfg["synth_manifest"]))
-        evidence.append(gepa_ai_evidence(task, cfg["gepa_ai_summary"]))
-        evidence.append(synth_evidence(task, cfg["synth_manifest"]))
-
+    rows, evidence = load_rows()
     data = {
-        "chart": "compute_parity_head_to_head",
+        "chart": "final_gepa_head_to_head",
         "generated_from": str(ROOT.relative_to(REPO_ROOT)),
-        "caveat": (
-            "All three public cookbook rows use the same HTTP container boundary for gepa-ai "
-            "and Synth GEPA. Banking77 is the broadest comparison; TBLite and Crafter are "
-            "small public smoke-scale parity splits."
-        ),
+        "definition": "best posthoc heldout reward by stack for the final four GEPA blog benchmarks",
+        "tasks": [{"key": key, "label": label} for key, label in TASKS],
         "rows": rows,
     }
-
     out_dir = ROOT / "figures"
     out_dir.mkdir(exist_ok=True)
-    (out_dir / "head_to_head_data.json").write_text(json.dumps(data, indent=2))
+    for path in (out_dir / "head_to_head_data.json", FRONTEND_OUT):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n")
     (out_dir / "source_evidence.json").write_text(json.dumps({
         "chart": data["chart"],
         "generated_from": data["generated_from"],
-        "caveat": data["caveat"],
-        "source_note": "Compact tracked snapshot of ignored raw runs used to build Chart A.",
         "evidence": evidence,
-    }, indent=2))
+    }, indent=2) + "\n")
     (out_dir / "head_to_head.md").write_text(render_markdown(rows))
     (out_dir / "head_to_head.svg").write_text(render_svg(rows))
     print(json.dumps(data, indent=2))
     return 0
-
-
-def render_markdown(rows: list[dict[str, Any]]) -> str:
-    tasks = ["banking77", "tblite", "crafter"]
-    stacks = ["Seed candidate", "gepa-ai", "Synth GEPA"]
-    by_key = {(row["task"], row["stack"]): row for row in rows}
-    lines = [
-        "| Stack | Banking77 | TBLite | Crafter |",
-        "|---|---:|---:|---:|",
-    ]
-    for stack in stacks:
-        cells = [stack]
-        for task in tasks:
-            value = by_key[(task, stack)].get("heldout_reward")
-            cells.append("—" if value is None else f"{float(value):.3f}")
-        lines.append("| " + " | ".join(cells) + " |")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def render_svg(rows: list[dict[str, Any]]) -> str:
-    tasks = ["banking77", "tblite", "crafter"]
-    stacks = ["Seed candidate", "gepa-ai", "Synth GEPA"]
-    colors = {"Seed candidate": "#8a8a8a", "gepa-ai": "#f4c542", "Synth GEPA": "#f97316"}
-    by_key = {(row["task"], row["stack"]): row for row in rows}
-    width = 760
-    height = 340
-    left = 120
-    top = 48
-    chart_h = 220
-    group_w = 190
-    bar_w = 34
-    svg = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
-        '<rect width="100%" height="100%" fill="#151210"/>',
-        '<text x="24" y="30" fill="#f7efe8" font-family="Inter, sans-serif" font-size="18">Compute-parity head-to-head</text>',
-    ]
-    for tick in [0, 0.5, 1.0, 1.5, 2.0]:
-        y = top + chart_h - tick / 2.0 * chart_h
-        svg.append(f'<line x1="{left}" x2="{width - 28}" y1="{y:.1f}" y2="{y:.1f}" stroke="#302821" stroke-width="1"/>')
-        svg.append(f'<text x="72" y="{y + 4:.1f}" fill="#b9aaa0" font-family="Inter, sans-serif" font-size="11">{tick:.1f}</text>')
-    for i, task in enumerate(tasks):
-        gx = left + i * group_w
-        svg.append(f'<text x="{gx + 22}" y="{height - 36}" fill="#d8c9bd" font-family="Inter, sans-serif" font-size="12">{task}</text>')
-        for j, stack in enumerate(stacks):
-            row = by_key[(task, stack)]
-            value = float(row.get("heldout_reward") or 0)
-            bar_h = value / 2.0 * chart_h
-            x = gx + j * (bar_w + 8)
-            y = top + chart_h - bar_h
-            svg.append(f'<rect x="{x}" y="{y:.1f}" width="{bar_w}" height="{bar_h:.1f}" fill="{colors[stack]}" rx="2"/>')
-            svg.append(f'<text x="{x + 2}" y="{y - 5:.1f}" fill="#f7efe8" font-family="Inter, sans-serif" font-size="10">{value:.2f}</text>')
-    for j, stack in enumerate(stacks):
-        x = left + j * 150
-        svg.append(f'<rect x="{x}" y="{height - 18}" width="10" height="10" fill="{colors[stack]}"/>')
-        svg.append(f'<text x="{x + 16}" y="{height - 9}" fill="#d8c9bd" font-family="Inter, sans-serif" font-size="11">{stack}</text>')
-    svg.append("</svg>")
-    return "\n".join(svg)
 
 
 if __name__ == "__main__":

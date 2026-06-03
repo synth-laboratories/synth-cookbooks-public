@@ -1,0 +1,183 @@
+{
+  "chart": "use_case_heldout_coverage",
+  "metric": "cumulative_heldout_coverage",
+  "definition": "distinct heldout seeds solved by any candidate up to K (per-benchmark reward threshold)",
+  "stacks": [
+    "synth_gepa",
+    "gepa_ai"
+  ],
+  "source": "cookbooks/optimizers/gepa/evals/evidence/heldout_evaluations.jsonl (+ benchmark summary.json)",
+  "benchmarks": [
+    {
+      "key": "healthbench",
+      "total_heldout_rows": 200,
+      "threshold": 1e-06,
+      "series": {
+        "synth_gepa": {
+          "run_id": "synth_gepa_healthbench_20260603T010401",
+          "covered": [
+            105,
+            121,
+            134,
+            140,
+            146,
+            150,
+            151,
+            152,
+            153,
+            154,
+            157,
+            157,
+            157,
+            157,
+            157,
+            158,
+            158
+          ],
+          "seed": 105,
+          "final": 158,
+          "beyond_seed": 53,
+          "best_heldout_score": 0.3609311821772041
+        },
+        "gepa_ai": {
+          "run_id": "gepa_ai_healthbench_20260603T010401",
+          "covered": [
+            103,
+            125,
+            127,
+            130,
+            136,
+            140,
+            143,
+            145,
+            146,
+            148,
+            148,
+            150,
+            151,
+            153,
+            153,
+            154,
+            155,
+            155,
+            155,
+            156,
+            157
+          ],
+          "seed": 103,
+          "final": 157,
+          "beyond_seed": 54,
+          "best_heldout_score": 0.35265410417293763
+        }
+      }
+    },
+    {
+      "key": "harvey_lab",
+      "total_heldout_rows": 9,
+      "threshold": 1e-06,
+      "series": {
+        "synth_gepa": {
+          "run_id": "synth_gepa_harvey_lab_20260603T012949",
+          "covered": [
+            7,
+            8,
+            8,
+            8
+          ],
+          "seed": 7,
+          "final": 8,
+          "beyond_seed": 1,
+          "best_heldout_score": 0.10559074072307616
+        },
+        "gepa_ai": {
+          "run_id": "gepa_ai_harvey_lab_20260603T012949",
+          "covered": [
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8,
+            8
+          ],
+          "seed": 8,
+          "final": 8,
+          "beyond_seed": 0,
+          "best_heldout_score": 0.11004697590705567
+        }
+      }
+    },
+    {
+      "key": "tau2_retail",
+      "total_heldout_rows": 94,
+      "threshold": 1.0,
+      "series": {
+        "synth_gepa": {
+          "run_id": "synth_gepa_tau2_retail_20260603T014341",
+          "covered": [
+            28,
+            49,
+            56,
+            58
+          ],
+          "seed": 28,
+          "final": 58,
+          "beyond_seed": 30,
+          "best_heldout_score": 0.39361702127659576
+        },
+        "gepa_ai": {
+          "run_id": "gepa_ai_tau2_retail_20260603T012949",
+          "covered": [
+            28,
+            42,
+            49,
+            54,
+            56,
+            62,
+            64,
+            69,
+            74,
+            75
+          ],
+          "seed": 28,
+          "final": 75,
+          "beyond_seed": 47,
+          "best_heldout_score": 0.44680851063829785
+        }
+      }
+    },
+    {
+      "key": "dungeongrid",
+      "total_heldout_rows": 8,
+      "threshold": 1e-06,
+      "series": {
+        "synth_gepa": {
+          "run_id": "synth_gepa_dungeongrid_20260603T013258",
+          "covered": [
+            8,
+            8,
+            8,
+            8
+          ],
+          "seed": 8,
+          "final": 8,
+          "beyond_seed": 0,
+          "best_heldout_score": 1.8943750000000001
+        },
+        "gepa_ai": {
+          "run_id": "gepa_ai_dungeongrid_20260603T014117",
+          "covered": [
+            8
+          ],
+          "seed": 8,
+          "final": 8,
+          "beyond_seed": 0,
+          "best_heldout_score": 1.5968750000000003
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+[project]
+name = "dungeongrid-gepa-container"
+version = "0.1.0"
+description = "Public GEPA cookbook container for DungeonGrid (real env, LLM policy)."
+requires-python = ">=3.11"
+dependencies = [
+  "synth-containers @ git+https://github.com/synth-laboratories/containers.git@78ec34f",
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+  "openai>=1.0",
+  "dungeongrid @ git+https://github.com/JoshuaPurtell/DungeonGrid.git@f94dd8b",
+]
+
+# Keep container deps narrow on purpose: each cookbook container declares its
+# own deps so a user installing one cookbook does not have to install every
+# environment's toolchain. DungeonGrid is pure-Python (pydantic), so this
+# container is light compared with the Crafter (jax/craftax) one.

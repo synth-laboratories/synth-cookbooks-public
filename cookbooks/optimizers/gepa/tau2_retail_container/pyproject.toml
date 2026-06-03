@@ -1,0 +1,12 @@
+[project]
+name = "synth-gepa-tau2-retail-container"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi>=0.115.11",
+  "uvicorn>=0.34.0",
+  "tau2 @ git+https://github.com/sierra-research/tau2-bench.git@ada8e512e0f194685bb54c23bf5ef2819b27fb1e",
+]
+
+[tool.uv]
+package = false

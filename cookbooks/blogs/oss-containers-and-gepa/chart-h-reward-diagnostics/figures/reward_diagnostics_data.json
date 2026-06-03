@@ -1,0 +1,790 @@
+{
+  "status": "ready",
+  "chart": "reward_diagnostics",
+  "generated_from": "cookbooks/blogs/oss-containers-and-gepa/chart-h-reward-diagnostics/build_chart.py",
+  "sources": {
+    "producer": {
+      "path": "cookbooks/blogs/oss-containers-and-gepa/chart-h-reward-diagnostics/build_chart.py",
+      "sha256": "521e10ea57dc69b885daee66f72e8340439387dd0f269f3d8171a3c741e1103c",
+      "bytes": 13261
+    },
+    "heldout_evaluations": {
+      "path": "cookbooks/optimizers/gepa/evals/evidence/heldout_evaluations.jsonl",
+      "sha256": "2d92a2a1137f9e78c6d23871aa96b740f387cb2f190805c1bef817dd403614c8",
+      "bytes": 2643764
+    },
+    "harvey_summary": {
+      "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/harvey_lab/summary.json",
+      "sha256": "09a0b70dc0a56e2807cd9afead8965053f52f02c73fe187f42cdbc4c3ffc89db",
+      "bytes": 6470
+    },
+    "dungeongrid_summary": {
+      "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/dungeongrid/summary.json",
+      "sha256": "b75ee759525c2f32c8b6361c6b3925b740f558614c547ee452082c3f497f9870",
+      "bytes": 8414
+    }
+  },
+  "stacks": [
+    {
+      "stack_id": "synth_gepa",
+      "stack_label": "Synth GEPA"
+    },
+    {
+      "stack_id": "gepa_ai",
+      "stack_label": "gepa-ai"
+    }
+  ],
+  "harvey_lab": {
+    "benchmark": "harvey_lab",
+    "task_label": "Harvey Lab Tax",
+    "metric_label": "Fractional row reward",
+    "coverage_threshold": 1e-06,
+    "stacks": [
+      {
+        "n": 9,
+        "mean_reward": 0.10559074072307616,
+        "min_reward": 0.0,
+        "max_reward": 0.2777777777777778,
+        "positive_rows": 7,
+        "zero_rows": 2,
+        "stack_id": "synth_gepa",
+        "stack_label": "Synth GEPA",
+        "candidate_id": "gepa_b765cf00fd4c",
+        "summary_best_heldout": 0.10559074072307616,
+        "summary_seed_heldout": 0.10559074072307616,
+        "lift_over_seed": 0.0,
+        "bins": [
+          {
+            "key": "zero",
+            "label": "0",
+            "count": 2,
+            "n": 9,
+            "rate": 0.2222222222222222
+          },
+          {
+            "key": "lt_0_05",
+            "label": "0-0.05",
+            "count": 2,
+            "n": 9,
+            "rate": 0.2222222222222222
+          },
+          {
+            "key": "lt_0_15",
+            "label": "0.05-0.15",
+            "count": 2,
+            "n": 9,
+            "rate": 0.2222222222222222
+          },
+          {
+            "key": "lt_0_30",
+            "label": "0.15-0.30",
+            "count": 3,
+            "n": 9,
+            "rate": 0.3333333333333333
+          },
+          {
+            "key": "gte_0_30",
+            "label": ">=0.30",
+            "count": 0,
+            "n": 9,
+            "rate": 0.0
+          }
+        ],
+        "rows": [
+          {
+            "heldout_seed": 0,
+            "reward": 0.018691588785046728,
+            "prompt_tokens": 90866,
+            "completion_tokens": 2378
+          },
+          {
+            "heldout_seed": 1,
+            "reward": 0.2037037037037037,
+            "prompt_tokens": 60185,
+            "completion_tokens": 1535
+          },
+          {
+            "heldout_seed": 2,
+            "reward": 0.2777777777777778,
+            "prompt_tokens": 81248,
+            "completion_tokens": 1914
+          },
+          {
+            "heldout_seed": 3,
+            "reward": 0.02666666666666667,
+            "prompt_tokens": 86367,
+            "completion_tokens": 2065
+          },
+          {
+            "heldout_seed": 4,
+            "reward": 0.0,
+            "prompt_tokens": 55455,
+            "completion_tokens": 2100
+          },
+          {
+            "heldout_seed": 5,
+            "reward": 0.1951219512195122,
+            "prompt_tokens": 88046,
+            "completion_tokens": 1510
+          },
+          {
+            "heldout_seed": 6,
+            "reward": 0.12121212121212122,
+            "prompt_tokens": 41313,
+            "completion_tokens": 1291
+          },
+          {
+            "heldout_seed": 7,
+            "reward": 0.0,
+            "prompt_tokens": 75408,
+            "completion_tokens": 1776
+          },
+          {
+            "heldout_seed": 8,
+            "reward": 0.10714285714285714,
+            "prompt_tokens": 52545,
+            "completion_tokens": 1388
+          }
+        ]
+      },
+      {
+        "n": 9,
+        "mean_reward": 0.11004697590705567,
+        "min_reward": 0.0,
+        "max_reward": 0.42592592592592593,
+        "positive_rows": 8,
+        "zero_rows": 1,
+        "stack_id": "gepa_ai",
+        "stack_label": "gepa-ai",
+        "candidate_id": "gepa_ai_cand_9",
+        "summary_best_heldout": 0.11004697590705567,
+        "summary_seed_heldout": 0.10721224330627335,
+        "lift_over_seed": 0.0028347326007823193,
+        "bins": [
+          {
+            "key": "zero",
+            "label": "0",
+            "count": 1,
+            "n": 9,
+            "rate": 0.1111111111111111
+          },
+          {
+            "key": "lt_0_05",
+            "label": "0-0.05",
+            "count": 4,
+            "n": 9,
+            "rate": 0.4444444444444444
+          },
+          {
+            "key": "lt_0_15",
+            "label": "0.05-0.15",
+            "count": 2,
+            "n": 9,
+            "rate": 0.2222222222222222
+          },
+          {
+            "key": "lt_0_30",
+            "label": "0.15-0.30",
+            "count": 1,
+            "n": 9,
+            "rate": 0.1111111111111111
+          },
+          {
+            "key": "gte_0_30",
+            "label": ">=0.30",
+            "count": 1,
+            "n": 9,
+            "rate": 0.1111111111111111
+          }
+        ],
+        "rows": [
+          {
+            "heldout_seed": 0,
+            "reward": 0.037383177570093455,
+            "prompt_tokens": 92630,
+            "completion_tokens": 2436
+          },
+          {
+            "heldout_seed": 1,
+            "reward": 0.2037037037037037,
+            "prompt_tokens": 61746,
+            "completion_tokens": 1486
+          },
+          {
+            "heldout_seed": 2,
+            "reward": 0.42592592592592593,
+            "prompt_tokens": 82775,
+            "completion_tokens": 1793
+          },
+          {
+            "heldout_seed": 3,
+            "reward": 0.02666666666666667,
+            "prompt_tokens": 87880,
+            "completion_tokens": 2096
+          },
+          {
+            "heldout_seed": 4,
+            "reward": 0.0,
+            "prompt_tokens": 57142,
+            "completion_tokens": 2021
+          },
+          {
+            "heldout_seed": 5,
+            "reward": 0.04878048780487805,
+            "prompt_tokens": 89598,
+            "completion_tokens": 1692
+          },
+          {
+            "heldout_seed": 6,
+            "reward": 0.12121212121212122,
+            "prompt_tokens": 43070,
+            "completion_tokens": 1512
+          },
+          {
+            "heldout_seed": 7,
+            "reward": 0.0196078431372549,
+            "prompt_tokens": 77072,
+            "completion_tokens": 1792
+          },
+          {
+            "heldout_seed": 8,
+            "reward": 0.10714285714285714,
+            "prompt_tokens": 54123,
+            "completion_tokens": 1492
+          }
+        ]
+      }
+    ],
+    "seed_deltas": [
+      {
+        "heldout_seed": 0,
+        "synth_gepa": 0.018691588785046728,
+        "gepa_ai": 0.037383177570093455,
+        "delta": -0.018691588785046728
+      },
+      {
+        "heldout_seed": 1,
+        "synth_gepa": 0.2037037037037037,
+        "gepa_ai": 0.2037037037037037,
+        "delta": 0.0
+      },
+      {
+        "heldout_seed": 2,
+        "synth_gepa": 0.2777777777777778,
+        "gepa_ai": 0.42592592592592593,
+        "delta": -0.14814814814814814
+      },
+      {
+        "heldout_seed": 3,
+        "synth_gepa": 0.02666666666666667,
+        "gepa_ai": 0.02666666666666667,
+        "delta": 0.0
+      },
+      {
+        "heldout_seed": 4,
+        "synth_gepa": 0.0,
+        "gepa_ai": 0.0,
+        "delta": 0.0
+      },
+      {
+        "heldout_seed": 5,
+        "synth_gepa": 0.1951219512195122,
+        "gepa_ai": 0.04878048780487805,
+        "delta": 0.14634146341463417
+      },
+      {
+        "heldout_seed": 6,
+        "synth_gepa": 0.12121212121212122,
+        "gepa_ai": 0.12121212121212122,
+        "delta": 0.0
+      },
+      {
+        "heldout_seed": 7,
+        "synth_gepa": 0.0,
+        "gepa_ai": 0.0196078431372549,
+        "delta": -0.0196078431372549
+      },
+      {
+        "heldout_seed": 8,
+        "synth_gepa": 0.10714285714285714,
+        "gepa_ai": 0.10714285714285714,
+        "delta": 0.0
+      }
+    ]
+  },
+  "dungeongrid": {
+    "benchmark": "dungeongrid",
+    "task_label": "DungeonGrid",
+    "metric_label": "Heldout reward and achievement rates",
+    "coverage_threshold": 1e-06,
+    "stacks": [
+      {
+        "n": 8,
+        "mean_reward": 1.8943750000000001,
+        "min_reward": 1.1750000000000003,
+        "max_reward": 2.46,
+        "positive_rows": 8,
+        "zero_rows": 0,
+        "stack_id": "synth_gepa",
+        "stack_label": "Synth GEPA",
+        "candidate_id": "gepa_2bac68c65d53",
+        "summary_best_heldout": 1.8943750000000001,
+        "summary_seed_heldout": 1.7500000000000002,
+        "lift_over_seed": 0.14437499999999992,
+        "signals": [
+          {
+            "signal": "objective.item_recovered",
+            "label": "Objective recovered",
+            "count": 5,
+            "n": 8,
+            "rate": 0.625
+          },
+          {
+            "signal": "treasure.first_treasure_collected",
+            "label": "Treasure collected",
+            "count": 0,
+            "n": 8,
+            "rate": 0.0
+          },
+          {
+            "signal": "treasure.first_chest_opened",
+            "label": "Chest opened",
+            "count": 1,
+            "n": 8,
+            "rate": 0.125
+          },
+          {
+            "signal": "hazards.trap_disarmed",
+            "label": "Trap disarmed",
+            "count": 1,
+            "n": 8,
+            "rate": 0.125
+          },
+          {
+            "signal": "doors.first_door_opened",
+            "label": "Door opened",
+            "count": 8,
+            "n": 8,
+            "rate": 1.0
+          },
+          {
+            "signal": "exploration.first_room_revealed",
+            "label": "Room revealed",
+            "count": 8,
+            "n": 8,
+            "rate": 1.0
+          }
+        ],
+        "rows": [
+          {
+            "heldout_seed": 101,
+            "example_id": "ep_heldout_101",
+            "reward": 1.1750000000000003,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles"
+            ]
+          },
+          {
+            "heldout_seed": 103,
+            "example_id": "ep_heldout_103",
+            "reward": 2.265,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "base:lantern_crypt:lite.recover_lite_objective",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles",
+              "objective.item_recovered"
+            ]
+          },
+          {
+            "heldout_seed": 107,
+            "example_id": "ep_test_107",
+            "reward": 1.1750000000000003,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles"
+            ]
+          },
+          {
+            "heldout_seed": 109,
+            "example_id": "ep_test_109",
+            "reward": 1.2750000000000001,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles"
+            ]
+          },
+          {
+            "heldout_seed": 113,
+            "example_id": "ep_test_113",
+            "reward": 2.275,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "base:lantern_crypt:lite.recover_lite_objective",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles",
+              "objective.item_recovered"
+            ]
+          },
+          {
+            "heldout_seed": 127,
+            "example_id": "ep_test_127",
+            "reward": 2.265,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "base:lantern_crypt:lite.recover_lite_objective",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles",
+              "objective.item_recovered"
+            ]
+          },
+          {
+            "heldout_seed": 131,
+            "example_id": "ep_test_131",
+            "reward": 2.46,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "base:lantern_crypt:lite.recover_lite_objective",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles",
+              "hazards.trap_disarmed",
+              "hazards.trap_revealed",
+              "objective.item_recovered",
+              "treasure.first_chest_opened"
+            ]
+          },
+          {
+            "heldout_seed": 137,
+            "example_id": "ep_test_137",
+            "reward": 2.265,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "base:lantern_crypt:lite.recover_lite_objective",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles",
+              "objective.item_recovered"
+            ]
+          }
+        ]
+      },
+      {
+        "n": 8,
+        "mean_reward": 1.5968750000000003,
+        "min_reward": 1.4850000000000003,
+        "max_reward": 1.6900000000000002,
+        "positive_rows": 8,
+        "zero_rows": 0,
+        "stack_id": "gepa_ai",
+        "stack_label": "gepa-ai",
+        "candidate_id": "gepa_ai_cand_0",
+        "summary_best_heldout": 1.5968750000000003,
+        "summary_seed_heldout": 1.5968750000000003,
+        "lift_over_seed": 0.0,
+        "signals": [
+          {
+            "signal": "objective.item_recovered",
+            "label": "Objective recovered",
+            "count": 0,
+            "n": 8,
+            "rate": 0.0
+          },
+          {
+            "signal": "treasure.first_treasure_collected",
+            "label": "Treasure collected",
+            "count": 4,
+            "n": 8,
+            "rate": 0.5
+          },
+          {
+            "signal": "treasure.first_chest_opened",
+            "label": "Chest opened",
+            "count": 8,
+            "n": 8,
+            "rate": 1.0
+          },
+          {
+            "signal": "hazards.trap_disarmed",
+            "label": "Trap disarmed",
+            "count": 8,
+            "n": 8,
+            "rate": 1.0
+          },
+          {
+            "signal": "doors.first_door_opened",
+            "label": "Door opened",
+            "count": 8,
+            "n": 8,
+            "rate": 1.0
+          },
+          {
+            "signal": "exploration.first_room_revealed",
+            "label": "Room revealed",
+            "count": 8,
+            "n": 8,
+            "rate": 1.0
+          }
+        ],
+        "rows": [
+          {
+            "heldout_seed": 101,
+            "example_id": "ep_heldout_101",
+            "reward": 1.5100000000000002,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles",
+              "hazards.trap_disarmed",
+              "hazards.trap_revealed",
+              "treasure.first_chest_opened"
+            ]
+          },
+          {
+            "heldout_seed": 103,
+            "example_id": "ep_heldout_103",
+            "reward": 1.5100000000000002,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles",
+              "hazards.trap_disarmed",
+              "hazards.trap_revealed",
+              "treasure.first_chest_opened"
+            ]
+          },
+          {
+            "heldout_seed": 107,
+            "example_id": "ep_test_107",
+            "reward": 1.6900000000000002,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles",
+              "hazards.trap_disarmed",
+              "hazards.trap_revealed",
+              "treasure.first_chest_opened",
+              "treasure.first_treasure_collected"
+            ]
+          },
+          {
+            "heldout_seed": 109,
+            "example_id": "ep_test_109",
+            "reward": 1.5100000000000002,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles",
+              "hazards.trap_disarmed",
+              "hazards.trap_revealed",
+              "treasure.first_chest_opened"
+            ]
+          },
+          {
+            "heldout_seed": 113,
+            "example_id": "ep_test_113",
+            "reward": 1.6900000000000002,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles",
+              "hazards.trap_disarmed",
+              "hazards.trap_revealed",
+              "treasure.first_chest_opened",
+              "treasure.first_treasure_collected"
+            ]
+          },
+          {
+            "heldout_seed": 127,
+            "example_id": "ep_test_127",
+            "reward": 1.6900000000000002,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles",
+              "hazards.trap_disarmed",
+              "hazards.trap_revealed",
+              "treasure.first_chest_opened",
+              "treasure.first_treasure_collected"
+            ]
+          },
+          {
+            "heldout_seed": 131,
+            "example_id": "ep_test_131",
+            "reward": 1.4850000000000003,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles",
+              "hazards.trap_disarmed",
+              "hazards.trap_revealed",
+              "treasure.first_chest_opened"
+            ]
+          },
+          {
+            "heldout_seed": 137,
+            "example_id": "ep_test_137",
+            "reward": 1.6900000000000002,
+            "n_steps": 34,
+            "policy_calls": 30,
+            "achievements": [
+              "base:lantern_crypt:lite.open_first_lite_door",
+              "base:lantern_crypt:lite.read_lite_clue",
+              "cards.first_card_drawn",
+              "doors.first_door_opened",
+              "exploration.first_room_revealed",
+              "exploration.ten_floor_tiles",
+              "hazards.trap_disarmed",
+              "hazards.trap_revealed",
+              "treasure.first_chest_opened",
+              "treasure.first_treasure_collected"
+            ]
+          }
+        ]
+      }
+    ],
+    "signal_deltas": [
+      {
+        "signal": "objective.item_recovered",
+        "label": "Objective recovered",
+        "synth_gepa_rate": 0.625,
+        "gepa_ai_rate": 0.0,
+        "delta": 0.625,
+        "synth_gepa_count": 5,
+        "gepa_ai_count": 0,
+        "n": 8
+      },
+      {
+        "signal": "treasure.first_treasure_collected",
+        "label": "Treasure collected",
+        "synth_gepa_rate": 0.0,
+        "gepa_ai_rate": 0.5,
+        "delta": -0.5,
+        "synth_gepa_count": 0,
+        "gepa_ai_count": 4,
+        "n": 8
+      },
+      {
+        "signal": "treasure.first_chest_opened",
+        "label": "Chest opened",
+        "synth_gepa_rate": 0.125,
+        "gepa_ai_rate": 1.0,
+        "delta": -0.875,
+        "synth_gepa_count": 1,
+        "gepa_ai_count": 8,
+        "n": 8
+      },
+      {
+        "signal": "hazards.trap_disarmed",
+        "label": "Trap disarmed",
+        "synth_gepa_rate": 0.125,
+        "gepa_ai_rate": 1.0,
+        "delta": -0.875,
+        "synth_gepa_count": 1,
+        "gepa_ai_count": 8,
+        "n": 8
+      },
+      {
+        "signal": "doors.first_door_opened",
+        "label": "Door opened",
+        "synth_gepa_rate": 1.0,
+        "gepa_ai_rate": 1.0,
+        "delta": 0.0,
+        "synth_gepa_count": 8,
+        "gepa_ai_count": 8,
+        "n": 8
+      },
+      {
+        "signal": "exploration.first_room_revealed",
+        "label": "Room revealed",
+        "synth_gepa_rate": 1.0,
+        "gepa_ai_rate": 1.0,
+        "delta": 0.0,
+        "synth_gepa_count": 8,
+        "gepa_ai_count": 8,
+        "n": 8
+      }
+    ]
+  },
+  "notes": [
+    "Harvey Lab rows use the final best candidate per stack and show fractional rubric reward, not only positive-row coverage.",
+    "DungeonGrid rows use the final best candidate per stack and count reward_details.achievements on heldout episodes."
+  ]
+}
