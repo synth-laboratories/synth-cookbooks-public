@@ -295,13 +295,16 @@ coverage.
 | E17 | PaperBench JudgeEval container | EVAL | PaperBench judge | PLANNED | P3 | — | — | After current launch scope: wire SimpleJudge + JudgeEval rubrics from frontier-evals as a normal container row |
 | E18 | Harvey LAB judge eval container | EVAL | Harvey LAB judge | PLANNED | P3 | — | — | Per-criterion vs batch verifier parity; LAB rubric contract |
 
-### Summary counts
+### Launch-scope summary counts
+
+These counts cover the active A/C/D launch packet only. Post-launch roadmap
+rows still need real experiment work before they can appear in a future chart.
 
 | Status | Count | IDs / scope |
 |:------:|------:|-------------|
 | DONE | 4 | E01, E04, E05, E13 |
 | PARTIAL | 1 | E12 provenance map still needs a polished content table |
-| RERUN | 0 | no launch-scope experiment reruns remain |
+| RERUN | 0 | no active A/C/D launch-scope reruns remain |
 | MISSING | 0 | — |
 | PLANNED | 7 | E06–E09, E11, E17, E18 |
 | UI | 4 | W01–W03, W05 |

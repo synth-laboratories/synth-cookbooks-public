@@ -54,8 +54,8 @@ python cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/b
 
 | Chart | Folder | Producer | Launch | Inputs |
 |:-----:|--------|----------|:------:|--------|
-| A | [chart-a-head-to-head/](./chart-a-head-to-head/) | `build_chart.py` | headline | E01 parity summaries per task |
-| C | [chart-c-use-case-coverage/](./chart-c-use-case-coverage/) | `build_heldout_coverage.py` | headline | E01 heldout eval JSONL + summaries |
-| D | [chart-d-proposer-scaling/](./chart-d-proposer-scaling/) | `build_chart.py` | addendum | E05 proposer sweep manifests |
+| A | [chart-a-head-to-head/](./chart-a-head-to-head/) | `build_chart.py` | in post | E01 parity summaries per task |
+| C | [chart-c-use-case-coverage/](./chart-c-use-case-coverage/) | `build_heldout_coverage.py` | in post | E01 heldout eval JSONL + summaries |
+| D | [chart-d-proposer-scaling/](./chart-d-proposer-scaling/) | `build_chart.py` | in post sanity check | E05 proposer sweep manifests |
 
 Master experiment status grid: [blog README § Experiments](../README.md#experiments).

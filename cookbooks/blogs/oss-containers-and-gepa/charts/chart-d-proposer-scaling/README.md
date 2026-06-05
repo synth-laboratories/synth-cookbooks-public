@@ -15,6 +15,8 @@ best observed train/optimization reward through candidate order.
 The chart data and checked-in producer output are tracked in the public evidence
 packet. The frontend launch commit must carry the byte-matched mirror and cite
 that packet.
+The frontend chart displays proposer-call counts beside each curve so the
+variable-call caveat is visible in the post itself.
 
 ## Sweep grid
 
