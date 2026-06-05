@@ -6,11 +6,12 @@ blog post (June 2026).
 Live post: <https://usesynth.ai/blog/introducing-gepa-platform> (link
 goes live with the launch).
 
-## In-scope containers
+## Launch evidence scope
 
-All task containers that may appear in blog experiments, charts, or the broader
-GEPA platform catalog. **Scope** is what the June 2026 post targets; **status**
-is whether the public cookbook ships a reproducible container for the release.
+The June 2026 launch post cites only the launch-scope rows below. The broader
+catalog entries are included as post-launch context only; they are not evidence
+for the launch charts unless they are explicitly marked `launch A/C` or
+`launch A/C/D`.
 
 | Container | Archetype | Scope | Status | Container path |
 |-----------|-----------|-------|--------|----------------|
@@ -18,13 +19,13 @@ is whether the public cookbook ships a reproducible container for the release.
 | **tau2-bench retail** | ReAct / tool workflow | **launch A/C/D** | ✓ public | [`tau2_retail_container/`](../../optimizers/gepa/tau2_retail_container/) |
 | **Banking77** | single-step classification | **launch A/C** | ✓ public | [`banking77_container/`](../../optimizers/gepa/banking77_container/) |
 | **HotpotQA** | multistage QA | **launch A/C** | ✓ public | [`hotpotqa_container/`](../../optimizers/gepa/hotpotqa_container/) |
-| **Harvey Lab Tax** | vertical / legal agent | omit from launch / judge-eval roadmap | ✓ public | [`harvey_lab_container/`](../../optimizers/gepa/harvey_lab_container/) |
+| **Harvey Lab Tax** | vertical / legal agent | post-launch judge-eval roadmap | ✓ public | [`harvey_lab_container/`](../../optimizers/gepa/harvey_lab_container/) |
 | **TaxCalcBench** | vertical / accounting | post-launch | runner OSS · container private | `taxcalcbench_container/` (E03) |
 | **FinQA (codex)** | vertical / finance QA | post-launch | runner OSS · container private | `finqa_container/` (E14–E15) |
 | **tau2-bench airline** | ReAct / tool workflow | tier-1 extended | → public | `taubench_airline_container/` |
 | **HoVer** | multistage QA | LangProbe addendum | → public | `hover_container/` |
 | **Heart Disease (UCI)** | single-step classification | LangProbe addendum | → public | `heart_disease_container/` |
-| **TBLite micro coding smoke** | coding agent | follow-up only after real rerun | ✓ public smoke, not launch evidence | [`tblite_container/`](../../optimizers/gepa/tblite_container/) |
+| **TBLite micro coding smoke** | coding agent | post-launch only after real rerun | ✓ public smoke, not launch evidence | [`tblite_container/`](../../optimizers/gepa/tblite_container/) |
 | **Crafter** | ReAct / world env | parity / historical | ✓ public | [`crafter_container/`](../../optimizers/gepa/crafter_container/) |
 | **MiniGrid** | ReAct / grid env | catalog | → public | `minigrid_container/` |
 | **DungeonGrid** | ReAct / roguelike | **omit from launch** | ✓ public | [`dungeongrid_container/`](../../optimizers/gepa/dungeongrid_container/) |
@@ -47,25 +48,11 @@ container-contract surface, not in launch evidence · **judge eval (planned)** =
 containerized LLM-as-judge tasks that should use the same evidence and chart
 contracts once runnable · **omit** = descoped (DungeonGrid).
 
-### Future note — PaperBench JudgeEval as another container
-
-PaperBench JudgeEval should be treated as an additional GEPA container row, in
-the same family as HealthBench Pro, tau2 retail, Banking77, and HotpotQA. The
-optimized artifact is the judge/verifier prompt or rubric-grading program rather
-than a policy prompt, but the publication shape should stay the same: fixed
-container boundary, fixed split, Synth GEPA vs gepa-ai arms, Chart A-style
-head-to-head metrics, and Chart C-style cumulative coverage.
-
-When this is implemented later, add `PaperBench JudgeEval` as a fifth post tab
-or row instead of creating a separate PaperBench-only side story. Coverage should
-be defined over the judge-eval unit that the container exposes, for example
-human-graded rubric leaf nodes or judge-eval examples covered/passed by any
-candidate up to candidate K. This is intentionally P3 until the current launch
-scope is complete; do not wire producers or frontend data for it in the current
-pass.
-
-Full upstream links, dataset citations, and status notes:
-[Container catalog](#container-catalog) below.
+Post-launch catalog rows stay below so the public container surface is
+inspectable, but they must not be cited as launch coverage. In particular,
+TBLite is a local micro coding smoke, not Terminal-Bench Lite/OpenThoughts
+coverage, and Harvey/PaperBench judge-eval work is roadmap until a fresh
+evidence packet exists.
 
 ## What this folder contains
 
@@ -274,7 +261,11 @@ Chart D publication input: compact manifest snapshots under
 under `charts/chart-d-proposer-scaling/runs/` are local/gitignored and are not
 the public artifact.
 
-### Work items — launch checklist (23 rows)
+### Work items — launch record and post-launch backlog
+
+The P0/P1 DONE rows below are the launch evidence record. Planned, UI, and
+omitted rows are tracked so future work does not get confused with launch chart
+coverage.
 
 | ID | Experiment | Type | Tasks | Status | Priority | Charts | Artifact | Next step |
 |:--:|------------|:----:|-------|:------:|:--------:|--------|----------|-----------|
@@ -288,14 +279,14 @@ the public artifact.
 | E08 | Policy-model variation sweep | EVAL | TBD | PLANNED | P3 | — | — | Define grid; run sweep |
 | E09 | Program-stage scaling | EVAL | B77, HotpotQA, HoVer, Heart | PLANNED | P3 | — | — | Post-launch |
 | E10 | Prompt diff extraction | PRODUCER | historical | OMIT | P3 | — | — | Fresh runs and MDX re-add required before any future use |
-| E11 | Budget / protocol fairness table | CONTENT | all tier-1 | MISSING | P1 | — | `head_to_head_data.json` fields | Standalone N, candidates, rollouts table |
+| E11 | Budget / protocol fairness table | CONTENT | launch scope | PLANNED | P3 | — | `head_to_head_data.json` fields | Optional follow-up table; current post caveats candidate counts, rollouts, and wall-clock variance in prose and chart data |
 | E12 | Chart → producer provenance map | CONTENT | all wired | PARTIAL | P2 | — | chart READMEs + `figures/source_evidence.json` | One table: chart → producer → JSON → summary |
 | E13 | Evidence pipeline refresh + sync | PRODUCER | launch scope | DONE | P1 | A, C, D | cookbook + frontend `data/*.json` | Producers rebuilt for Chart A/C/D |
 | E14 | FinQA codex scaffold + container | IMPL | FinQA | OMIT | P3 | — | — | Omitted from launch scope; post-launch container work |
 | E15 | FinQA GEPA parity (Synth vs gepa-ai) | EVAL | FinQA | OMIT | P3 | — | — | Omitted from launch scope; post-launch parity work |
 | E16 | FinQA heldout scale (define N) | EVAL | FinQA | OMIT | P3 | — | — | Omitted from launch scope; define if FinQA is re-added |
 | W01 | Head-to-head UI redesign | UI | — | UI | P0 | A | `head-to-head-results.tsx` | Readable budget columns |
-| W02 | Coverage chart panel filter | UI | HB, tau2 (+ others) | UI | P1 | C | `pareto-coverage-chart.tsx` | Panels only when evidence exists |
+| W02 | Coverage chart panel filter | UI | launch scope | UI | P1 | C | `pareto-coverage-chart.tsx` | Panels only when evidence exists |
 | W03 | Chart D limitation copy | UI | HB, tau2 | UI | P2 | D | `index.mdx` addendum | "2-task run group" disclaimer |
 | W04 | Reward diagnostics addendum | UI | historical | OMIT | P3 | — | — | Fresh evidence and MDX re-add required before any future use |
 | W05 | Systems diagram narrative pass | UI | — | UI | P2 | React figure | `src/components/blog/posts/introducing-gepa-platform/systems-focus-modal.tsx` | Four-container launch framing |
@@ -309,15 +300,16 @@ the public artifact.
 | DONE | 4 | E01, E04, E05, E13 |
 | PARTIAL | 1 | E12 provenance map still needs a polished content table |
 | RERUN | 0 | no launch-scope experiment reruns remain |
-| MISSING | 1 | E11 standalone fairness table |
-| PLANNED | 6 | E06–E09, E17, E18 |
+| MISSING | 0 | — |
+| PLANNED | 7 | E06–E09, E11, E17, E18 |
 | UI | 4 | W01–W03, W05 |
 | OMIT | 7 | E02, E03, E10, E14, E15, E16, W04 |
 
 Launch-scope run data is present in the public evidence packet. Remaining
-non-DONE rows are roadmap, content, or UI work; the four-container post still
-needs the frontend launch commit and release checklist to cite the final public
-evidence commit before it ships.
+non-DONE rows are roadmap, optional content, or UI work; they are not launch
+evidence blockers for the four-container post. The post still needs the
+frontend launch commit and release checklist to cite the final public evidence
+commit before it ships.
 
 ## Prerequisites
 
