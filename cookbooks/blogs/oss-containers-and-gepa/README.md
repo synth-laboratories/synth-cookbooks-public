@@ -10,13 +10,14 @@ goes live with the launch).
 
 The June 2026 launch post cites only the launch-scope rows below. The broader
 catalog entries are included as post-launch context only; they are not evidence
-for the launch charts unless they are explicitly marked `launch A/C` or
-`launch A/C/D`.
+for the launch charts unless they are explicitly marked `launch A/C`. Chart D is
+post-launch/draft only after the 2026-06-05 fresh rerun failed to produce a green
+all-cell packet.
 
 | Container | Archetype | Scope | Status | Container path |
 |-----------|-----------|-------|--------|----------------|
 | **HealthBench Professional** | vertical / medical QA | **launch A/C** | ✓ public | [`healthbench_container/`](../../optimizers/gepa/healthbench_container/) |
-| **tau2-bench retail** | ReAct / tool workflow | **launch A/C/D** | ✓ public | [`tau2_retail_container/`](../../optimizers/gepa/tau2_retail_container/) |
+| **tau2-bench retail** | ReAct / tool workflow | **launch A/C** | ✓ public | [`tau2_retail_container/`](../../optimizers/gepa/tau2_retail_container/) |
 | **Banking77** | single-step classification | **launch A/C** | ✓ public | [`banking77_container/`](../../optimizers/gepa/banking77_container/) |
 | **HotpotQA** | multistage QA | **launch A/C** | ✓ public | [`hotpotqa_container/`](../../optimizers/gepa/hotpotqa_container/) |
 | **Harvey Lab Tax** | vertical / legal agent | post-launch judge-eval roadmap | ✓ public | [`harvey_lab_container/`](../../optimizers/gepa/harvey_lab_container/) |
@@ -40,7 +41,8 @@ for the launch charts unless they are explicitly marked `launch A/C` or
 | **Harvey LAB judge eval** | judge / verifier eval | judge eval (planned) | roadmap | — ([LAB verifiers](https://www.langchain.com/blog/designing-efficient-verifiers-for-legal-agents), pairs with [`harvey_lab_container/`](../../optimizers/gepa/harvey_lab_container/) judge) |
 
 **Scope legend:** **launch A/C** = current post Chart A head-to-head and Chart C
-coverage rows · **launch A/C/D** = same plus Chart D proposer sweep ·
+coverage rows · **draft D snapshot** = compact Chart D proposer-sweep manifests
+kept as post-launch/debug context only; not active launch chart evidence ·
 **LangProbe addendum** = reference parity tasks in `build_langprobe_addendum.py`
 that are not active launch rows · **parity / historical** = earlier
 head-to-head cookbooks (Crafter and the micro TBLite smoke) · **catalog** =
@@ -86,14 +88,15 @@ Eval harness (runs both stacks, posthoc heldout, builds summaries):
 
 Chart producers live under [`charts/`](./charts/). See the
 [charts README](./charts/README.md) for the active registry, data-flow diagram,
-and reproduce commands. The launch packet commits only the A/C/D chart surfaces;
-ignored local archaeology under `charts/` is not evidence authority.
+and reproduce commands. The launch packet commits the A/C chart surfaces. Chart D
+artifacts remain in the folder as draft/debug context only; ignored local
+archaeology under `charts/` is not evidence authority.
 
 | Folder | Launch status | What the chart shows |
 |---|---|---|
 | [charts/chart-a-head-to-head/](./charts/chart-a-head-to-head/) | in post | Final same-container head-to-head: Synth GEPA vs gepa-ai across launch-scope tasks. |
 | [charts/chart-c-use-case-coverage/](./charts/chart-c-use-case-coverage/) | in post | Cumulative heldout coverage for same-container parity runs. |
-| [charts/chart-d-proposer-scaling/](./charts/chart-d-proposer-scaling/) | in post | Proposer-model sweep (`gpt-5.4-nano` / `mini` / `gpt-5.4`). |
+| [charts/chart-d-proposer-scaling/](./charts/chart-d-proposer-scaling/) | post-launch draft only | Proposer-model sweep (`gpt-5.4-nano` / `mini` / `gpt-5.4`); raw rerun failed. |
 
 Historical and future chart ideas are intentionally absent from the launch
 packet. Re-add Chart B/E/F/G/H-style material only with a fresh evidence packet,
@@ -109,7 +112,7 @@ Per-cell runbooks (how we ran, raw run pointers, committed evidence, derived cha
 JSON) live under [`experiment_records/`](./experiment_records/) — one folder per
 runnable cell. These are compact provenance records that point at the shared eval
 evidence, Chart D manifest snapshots, and each chart's
-`figures/source_evidence.json`.
+    `figures/source_evidence.json`.
 
 ### Validity audit — updated 2026-06-05 (launch scope: 4 containers)
 
@@ -125,27 +128,38 @@ tables below keep them as roadmap).
 - **Chart C coverage** reads the live aggregate
   `evals/evidence/{heldout_evaluations,train_evaluations,candidate_timeline}.jsonl`,
   with `BENCHES = [healthbench, tau2_retail, banking77, hotpotqa]`.
-- **Chart D proposer sweep** reads compact proposer-sweep manifest snapshots
-  under `charts/chart-d-proposer-scaling/figures/manifest_snapshots/` and
-  reports observed optimization reward; these sweep manifests skipped heldout by
-  design.
+- **Chart D proposer sweep** is not active launch evidence. Its draft producer
+  reads compact proposer-sweep manifest snapshots under
+  `charts/chart-d-proposer-scaling/figures/manifest_snapshots/` and reports
+  observed optimization reward; these sweep manifests skipped heldout by design.
+
+**Launch provenance map:**
+
+| Chart | Active containers | Producer | Published chart JSON | Source-evidence packet |
+|---|---|---|---|---|
+| A | HealthBench Pro, tau2 retail, Banking77, HotpotQA | `charts/chart-a-head-to-head/build_chart.py` | `charts/chart-a-head-to-head/figures/head_to_head_data.json` | `charts/chart-a-head-to-head/figures/source_evidence.json` |
+| C | HealthBench Pro, tau2 retail, Banking77, HotpotQA | `charts/chart-c-use-case-coverage/build_heldout_coverage.py` | `charts/chart-c-use-case-coverage/figures/use_case_heldout_coverage_data.json` | `charts/chart-c-use-case-coverage/figures/source_evidence.json` |
+| D draft | HealthBench Pro, tau2 retail | `charts/chart-d-proposer-scaling/build_chart.py` | `charts/chart-d-proposer-scaling/figures/proposer_scaling_data.json` | `charts/chart-d-proposer-scaling/figures/source_evidence.json` |
 
 **Experiment-unit verdict:**
 
 | Container | Chart A | Chart C | Chart D | Verdict |
 |---|---|---|---|---|
-| **HealthBench Pro** | ✅ finished | ✅ finished | ✅ finished | **FINISHED** |
+| **HealthBench Pro** | ✅ finished | ✅ finished | ❌ raw evidence missing | **MISSING** |
 | **Banking77** | ✅ finished | ✅ finished | n/a | **FINISHED** |
 | **HotpotQA** | ✅ finished | ✅ finished | n/a | **FINISHED** |
-| **tau2 retail** | ✅ finished | ✅ finished | ✅ finished | **FINISHED** |
+| **tau2 retail** | ✅ finished | ✅ finished | ❌ raw evidence missing | **MISSING** |
 
-`python3 -m experiment_unit status` now reports `summary: finished=6` for run
-evidence and `publication packet: READY` for the committed A/C/D launch packet.
-TBLite and wider GEPA workspace dirt remain warning-only quarantine surfaces, not
-launch evidence. Banking77 was replumbed from the backup bundle into the live
-aggregate. HotpotQA was rebuilt from the fresh same-container rerun. tau2 retail
-was rerun on the Gemini-direct policy route with fresh A/C evidence that records
-candidate and rollout counters for the launch parity checks.
+`python3 -m experiment_unit status` currently reports `summary: finished=4
+missing=2` for run evidence and `publication packet: PENDING`.
+The A/C launch packet is covered. Chart D still has checked-in compact manifest
+snapshots for debug/post-launch review, but raw rerun evidence is missing and
+the active blog MDX no longer embeds Chart D. TBLite and wider GEPA workspace
+dirt remain warning-only quarantine surfaces, not launch evidence.
+Banking77 was replumbed from the backup bundle into the live aggregate. HotpotQA
+was rebuilt from the fresh same-container rerun. tau2 retail was rerun on the
+Gemini-direct policy route with fresh A/C evidence that records candidate and
+rollout counters for the launch parity checks.
 
 **Observed head-to-head result:** P1 is mixed, not a clean win for the
 pre-registered ordering. Synth GEPA is positive on HealthBench (+0.008 heldout),
@@ -153,10 +167,15 @@ tau2 retail (+0.030), and tied on Banking77 (+0.000), but negative on HotpotQA
 (-0.042). tau2 is the largest positive gap, but HotpotQA falsifies the predicted
 `healthbench ≈ hotpotqa > banking77` ordering.
 
-**Observed Chart D result:** tau2 retail is monotonic with proposer size
-(`0.600 → 0.600 → 0.667` observed train reward), while HealthBench is non-monotonic
-(`0.347 → 0.314 → 0.339`). This supports the tau2 interaction but weakens any
-blanket monotonic proposer-size claim.
+**Checked-in Chart D snapshot:** tau2 retail is non-decreasing in the compact
+snapshot, with nano and mini tied before full rises (`0.600 → 0.600 → 0.667`
+observed train reward). HealthBench is non-monotonic (`0.347 → 0.314 → 0.339`).
+This supports the tau2 interaction weakly, but it does not support a blanket
+monotonic proposer-size claim. Fresh reruns on 2026-06-05 did not complete
+cleanly: the parallel sweep hit OpenRouter policy 429s, Codex app-server stream
+disconnects, and an idle tau2 nano process; the follow-up serial runner produced
+HealthBench nano but hung in the HealthBench mini generation-2 ChatGPT-auth
+proposer. Chart D is therefore out of the active launch post.
 
 ### Pre-registered predictions — 2026-06-03 (judge the rerun against THESE)
 
@@ -197,7 +216,7 @@ non-decreasing in proposer
 on tau2 than on HealthBench** (HealthBench may saturate / be near-flat).
 
 **Falsification (any of these disproves the corresponding claim):**
-- Synth does **not** beat gepa-ai on tau2 under the same-container rerun → headline (P1) fails.
+- Synth does **not** beat gepa-ai on tau2 under the same-container rerun → P1 prediction fails.
 - `gap(tau2) ≤ gap(banking77)` under the same-container rerun → policy-compute scaling fails.
 - Chart D observed-reward curve flat or non-monotonic **on tau2** → proposer-size trend fails.
 - HealthBench and tau2 proposer slopes equally steep → the interaction claim weakens.
@@ -244,12 +263,12 @@ self-contained sweep under `charts/chart-d-proposer-scaling/runs/final_20260603/
 | HotpotQA | A/C | gepa-ai | DONE | P0 | heldout 0.748; 11 candidates / 796 rollouts | `experiment_records/hotpotqa__chart_a__gepa_ai/` |
 | tau2 retail | A/C | Synth GEPA | DONE | P0 | heldout 0.430; 5 candidates / 154 rollouts | `experiment_records/tau2_retail__chart_a__synth_gepa/` |
 | tau2 retail | A/C | gepa-ai | DONE | P0 | heldout 0.400; 4 candidates / 129 rollouts | `experiment_records/tau2_retail__chart_a__gepa_ai/` |
-| HealthBench Pro | D | gpt-5.4-nano | DONE | P2 | observed reward 0.347 | `experiment_records/healthbench_pro__chart_d__gpt-5.4-nano/` |
-| HealthBench Pro | D | gpt-5.4-mini | DONE | P2 | observed reward 0.314 | `experiment_records/healthbench_pro__chart_d__gpt-5.4-mini/` |
-| HealthBench Pro | D | gpt-5.4 | DONE | P2 | observed reward 0.339 | `experiment_records/healthbench_pro__chart_d__gpt-5.4/` |
-| tau2 retail | D | gpt-5.4-nano | DONE | P2 | observed reward 0.600 | `experiment_records/tau2_retail__chart_d__gpt-5.4-nano/` |
-| tau2 retail | D | gpt-5.4-mini | DONE | P2 | observed reward 0.600 | `experiment_records/tau2_retail__chart_d__gpt-5.4-mini/` |
-| tau2 retail | D | gpt-5.4 | DONE | P2 | observed reward 0.667 | `experiment_records/tau2_retail__chart_d__gpt-5.4/` |
+| HealthBench Pro | D | gpt-5.4-nano | SNAPSHOT | P3 | compact snapshot observed reward 0.347; fresh serial rerun completed but D remains post-launch because sibling cells failed/missing | `experiment_records/healthbench_pro__chart_d__gpt-5.4-nano/` |
+| HealthBench Pro | D | gpt-5.4-mini | MISSING | P3 | compact snapshot observed reward 0.314; fresh serial rerun hung in generation-2 ChatGPT-auth proposer | `experiment_records/healthbench_pro__chart_d__gpt-5.4-mini/` |
+| HealthBench Pro | D | gpt-5.4 | MISSING | P3 | compact snapshot observed reward 0.339; fresh serial rerun did not reach this cell | `experiment_records/healthbench_pro__chart_d__gpt-5.4/` |
+| tau2 retail | D | gpt-5.4-nano | MISSING | P2 | compact snapshot observed reward 0.600; raw rerun stalled after policy 429 pressure | `experiment_records/tau2_retail__chart_d__gpt-5.4-nano/` |
+| tau2 retail | D | gpt-5.4-mini | MISSING | P2 | compact snapshot observed reward 0.600; 2026-06-05 raw rerun failed under parallel sweep | `experiment_records/tau2_retail__chart_d__gpt-5.4-mini/` |
+| tau2 retail | D | gpt-5.4 | MISSING | P2 | compact snapshot observed reward 0.667; 2026-06-05 raw rerun failed app-server stream | `experiment_records/tau2_retail__chart_d__gpt-5.4/` |
 
 Chart A/C shared evidence inputs (when DONE or PARTIAL):
 
@@ -275,15 +294,15 @@ coverage.
 | E02 | Harvey heldout — larger split | EVAL | Harvey | OMIT | P3 | — | — | Omitted from launch scope; prior n=9 smoke cannot support a chart claim |
 | E03 | TaxCalcBench — container + GEPA eval | EVAL | TaxCalc | OMIT | P3 | — | — | Omitted from launch scope; post-launch parity work |
 | E04 | Head-to-head parity counters | EVAL | launch scope | DONE | P0 | A, MDX | `charts/chart-a-head-to-head/figures/head_to_head_data.json` | Candidate/rollout parity checks pass `experiment_unit status` |
-| E05 | Proposer sweep — nano / mini / full | EVAL | HB, tau2 | DONE | P2 | D | `charts/chart-d-proposer-scaling/figures/manifest_snapshots/` | HB and tau2 sweeps rebuilt; chart reports observed reward from compact manifests |
+| E05 | Proposer sweep — nano / mini / full | EVAL | HB, tau2 | MISSING | P3 | D draft | `charts/chart-d-proposer-scaling/figures/manifest_snapshots/` | Removed from active MDX; needs a new reliable proposer-auth path before re-adding |
 | E06 | Proposer sweep — broader post-launch set | EVAL | HB, Harvey, tau2, TaxCalc, FinQA | PLANNED | P3 | — | — | Only if a future post claims broader proposer-sweep coverage |
 | E07 | Proposer failure-mode table | CONTENT | HB, tau2 | PLANNED | P2 | D | — | Mine validity / mutation errors per cell before adding content |
 | E08 | Policy-model variation sweep | EVAL | TBD | PLANNED | P3 | — | — | Define grid; run sweep |
 | E09 | Program-stage scaling | EVAL | B77, HotpotQA, HoVer, Heart | PLANNED | P3 | — | — | Post-launch |
 | E10 | Prompt diff extraction | PRODUCER | historical | OMIT | P3 | — | — | Fresh runs and MDX re-add required before any future use |
 | E11 | Budget / protocol fairness table | CONTENT | launch scope | PLANNED | P3 | — | `head_to_head_data.json` fields | Optional follow-up table; current post caveats candidate counts, rollouts, and wall-clock variance in prose and chart data |
-| E12 | Chart → producer provenance map | CONTENT | all wired | PARTIAL | P2 | — | chart READMEs + `figures/source_evidence.json` | One table: chart → producer → JSON → summary |
-| E13 | Evidence pipeline refresh + sync | PRODUCER | launch scope | DONE | P1 | A, C, D | cookbook + frontend `data/*.json` | Producers rebuilt for Chart A/C/D |
+| E12 | Chart → producer provenance map | CONTENT | A/C + draft D | DONE | P2 | README | chart READMEs + `figures/source_evidence.json` | Launch provenance map lists A/C as active and marks D as post-launch draft-only |
+| E13 | Evidence pipeline refresh + sync | PRODUCER | launch A/C | DONE | P1 | A, C | cookbook + frontend `data/*.json` | A/C producers rebuilt and mirrors byte-match; D removed from active MDX |
 | E14 | FinQA codex scaffold + container | IMPL | FinQA | OMIT | P3 | — | — | Omitted from launch scope; post-launch container work |
 | E15 | FinQA GEPA parity (Synth vs gepa-ai) | EVAL | FinQA | OMIT | P3 | — | — | Omitted from launch scope; post-launch parity work |
 | E16 | FinQA heldout scale (define N) | EVAL | FinQA | OMIT | P3 | — | — | Omitted from launch scope; define if FinQA is re-added |
@@ -297,24 +316,25 @@ coverage.
 
 ### Launch-scope summary counts
 
-These counts cover the active A/C/D launch packet only. Post-launch roadmap
-rows still need real experiment work before they can appear in a future chart.
+These counts cover the active A/C launch packet. Post-launch roadmap rows still
+need real experiment work before they can appear in a future chart.
 
 | Status | Count | IDs / scope |
 |:------:|------:|-------------|
-| DONE | 4 | E01, E04, E05, E13 |
-| PARTIAL | 1 | E12 provenance map still needs a polished content table |
-| RERUN | 0 | no active A/C/D launch-scope reruns remain |
-| MISSING | 0 | — |
+| DONE | 4 | E01, E04, E12, E13 |
+| PARTIAL | 0 | — |
+| RERUN | 0 | — |
+| MISSING | 1 | E05 Chart D raw manifests/cell status |
 | PLANNED | 7 | E06–E09, E11, E17, E18 |
 | UI | 4 | W01–W03, W05 |
 | OMIT | 7 | E02, E03, E10, E14, E15, E16, W04 |
 
-Launch-scope run data is present in the public evidence packet. Remaining
-non-DONE rows are roadmap, optional content, or UI work; they are not launch
-evidence blockers for the four-container post. The post still needs the
-frontend launch commit and release checklist to cite the final public evidence
-commit before it ships.
+Launch-scope A/C run data is present in the public evidence packet. Chart D is
+currently compact-snapshot debug context only, not a green raw rerun packet, and
+is removed from the active blog MDX. Remaining non-DONE rows are roadmap,
+optional content, or UI work. The post still
+needs frontend branch review, deploy approval, and final production link checks
+before it ships.
 
 ## Prerequisites
 
@@ -439,10 +459,10 @@ proposer/reflection model, and task-specific policy or judge model in
 ### Launch parity source of truth
 
 The current post has exactly four Chart A/C containers: HealthBench Pro,
-tau2-bench retail, Banking77, and HotpotQA. Chart D is a two-task proposer sweep
-on HealthBench Pro and tau2-bench retail only. The exact splits, models,
-budgets, and evidence checksums live in the chart READMEs and generated
-`figures/source_evidence.json` files.
+tau2-bench retail, Banking77, and HotpotQA. Chart D is post-launch draft/debug
+context only until the raw rerun is green and the MDX explicitly re-adds it. The
+exact splits, models, budgets, and evidence checksums live in the chart READMEs
+and generated `figures/source_evidence.json` files.
 
 Older Harvey, TaxCalcBench, FinQA, tau2-airline, LangProbe, TBLite, Crafter,
 MiniGrid, and DungeonGrid planning notes are historical. They must not be cited

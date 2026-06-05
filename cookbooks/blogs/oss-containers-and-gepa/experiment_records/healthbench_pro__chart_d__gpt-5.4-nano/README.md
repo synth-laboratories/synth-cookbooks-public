@@ -1,6 +1,6 @@
 # HealthBench Pro - Chart D - gpt-5.4-nano
 
-Status: launch-scope run evidence is tracked in the public evidence packet; final launch still requires the frontend mirror and release checklist to cite that packet.
+Status: draft Chart D snapshot only. The compact manifest is tracked, but the raw all-cell rerun gate is not green and this record must not be cited as launch-scope run evidence.
 
 ## Result
 

@@ -57,5 +57,5 @@ python cookbooks/blogs/oss-containers-and-gepa/charts/chart-c-use-case-coverage/
 - [x] Frontend consumes the generated JSON in `ParetoCoverageChart`.
 - [x] Public evidence commit and checked-in producer output are published from
       the same commit authority.
-- [ ] Frontend launch commit cites the public evidence packet and carries the
-      byte-matched mirror.
+- [x] Current frontend review commit cites the public evidence packet and
+      carries the byte-matched mirror.

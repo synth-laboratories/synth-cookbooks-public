@@ -40,16 +40,20 @@ override is never silent.
 The footer is intentionally separate from experiment verdicts. It checks whether
 the launch packet is ready to publish:
 
-- Chart A/C/D `figures/source_evidence.json` files exist.
+- Active Chart A/C `figures/source_evidence.json` files exist.
 - Every path referenced by those `source_evidence.json` packets exists and its
   recorded `sha256` / byte count matches the current file.
-- Chart A/C/D frontend mirrors byte-match the producer JSON.
+- Active Chart A/C frontend mirrors byte-match the producer JSON.
 - Active launch docs/producers avoid stale draft or overclaim terms such as old
   source SHAs, `matched-budget`, and draft-local publication language.
-- Per-cell `experiment_records/*/README.md` records have been backfilled.
+- Active A/C per-cell `experiment_records/*/README.md` records have been
+  backfilled.
 - Launch evidence paths are committed instead of dirty local work:
-  `cookbooks/blogs/oss-containers-and-gepa/` plus the Chart A/C
-  `evals/evidence` aggregate files and launch benchmark folders.
+  the active blog evidence docs/producers, Chart A/C `experiment_records`, and
+  the Chart A/C `evals/evidence` aggregate files and launch benchmark folders.
+- Chart D draft records, metric semantics, and dirty paths are warning-only
+  until the raw all-cell rerun gate is green and the frontend MDX re-adds the
+  chart.
 - Ignored local launch-adjacent nuisance files, such as obsolete handoffs,
   local Chart A configs, or one-off sweep helpers, are reported as a warning so
   a dirty worktree cannot look cleaner than it is.
@@ -72,16 +76,25 @@ uv run python -m experiment_unit plan       # only what needs work, with command
 uv run python -m experiment_unit packet     # publication paths + full dirty list
 ```
 
+By default, frontend mirror checks read the sibling `frontend` checkout. When
+validating a launch/review worktree, set `GEPA_BLOG_FRONTEND_ROOT` explicitly:
+
+```bash
+GEPA_BLOG_FRONTEND_ROOT=/Users/joshpurtell/Documents/GitHub/frontend-gepa-blog-quality \
+  uv run python -m experiment_unit status
+```
+
 ## Running (parallel, time-boxed)
 
 ```bash
 uv run python -m experiment_unit run --dry-run            # show the plan
-uv run python -m experiment_unit run --max-parallel 4     # execute all RERUN experiments
+uv run python -m experiment_unit run --max-parallel 4     # execute active launch RERUN/MISSING experiments
 uv run python -m experiment_unit run --only tau2 --time-limit 1800
 ```
 
-`run` (see `runner.py`) executes every `RERUN` experiment arm as capped
-subprocesses:
+Without `--only`, `run` (see `runner.py`) executes only active launch
+`RERUN`/`MISSING` experiment arms as capped subprocesses. `--only` can still
+select a post-launch draft experiment such as Chart D deliberately:
 
 - **Hard time limit** (default 30 min/arm). On timeout the run's **process group**
   is killed — which takes its container child with it — so a hung run can't block
@@ -99,9 +112,9 @@ subprocesses:
   its sibling, so `budget_floor` correctly keeps it out of the published chart.
 
 Proposer sweeps (Chart D) are checked against the six manifest cells consumed by
-`charts/chart-d-proposer-scaling/build_chart.py`. The older one-off sweep helper
-scripts are local archaeology; `run_sweep.sh` plus the producer are the public
-surfaces.
+`charts/chart-d-proposer-scaling/build_chart.py`, but they are post-launch
+draft/debug evidence. The older one-off sweep helper scripts are local
+archaeology; `run_sweep.sh` plus the producer are the draft public surfaces.
 
 ## Adding / changing an experiment
 

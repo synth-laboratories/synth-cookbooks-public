@@ -430,7 +430,7 @@ def run_experiments(experiments: list[Experiment], time_limit: int, max_parallel
             run_parallel([lambda j=j: run_job(j) for j in heldout_jobs(e)], 1)
 
     if sweeps:
-        print("\nproposer sweeps done -> rebuild Chart D:")
+        print("\npost-launch proposer sweeps done -> rebuild draft Chart D:")
         print("  cd charts/chart-d-proposer-scaling && uv run python build_chart.py")
     print("\nre-check verdicts:  uv run python -m experiment_unit status")
     return 0

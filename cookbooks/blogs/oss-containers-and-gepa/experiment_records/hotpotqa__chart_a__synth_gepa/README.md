@@ -1,6 +1,6 @@
 # HotpotQA - Chart A/C - Synth GEPA
 
-Status: launch-scope run evidence is tracked in the public evidence packet; final launch still requires the frontend mirror and release checklist to cite that packet.
+Status: launch-scope A/C run evidence is tracked in the public evidence packet; final launch still requires a clean evidence commit and release checklist citation.
 
 ## Result
 

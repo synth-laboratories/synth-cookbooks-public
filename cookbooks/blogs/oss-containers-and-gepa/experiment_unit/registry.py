@@ -1,4 +1,4 @@
-"""The declared blog experiments (launch scope: 4 containers).
+"""The declared blog experiments (active launch A/C plus post-launch D draft).
 
 Each entry encodes the locked parity from the README parity tables. The verdict
 is NOT declared here — it is computed from the evidence by `Experiment.verdict()`.
@@ -50,7 +50,7 @@ REGISTRY: tuple[Experiment, ...] = (
         parity=ParityLock(policy_model="gemini/gemini-3.1-flash-lite",
                           policy_route="gemini_direct", **_MINI_CHATGPT),
     ),
-    # --- Proposer sweep (Chart D): gpt-5.4-nano / mini / gpt-5.4 --------------
+    # --- Post-launch draft proposer sweep (Chart D): nano / mini / gpt-5.4 ---
     Experiment(
         container="healthbench",
         label="HealthBench Pro",

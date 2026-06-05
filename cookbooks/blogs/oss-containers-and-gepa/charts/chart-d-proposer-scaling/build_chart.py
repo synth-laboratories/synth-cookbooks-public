@@ -455,7 +455,7 @@ def _assert_launch_ready(cells: list[dict[str, Any]]) -> None:
 
     if failures:
         joined = "\n- ".join(failures)
-        raise SystemExit(f"Chart D launch data incomplete:\n- {joined}")
+        raise SystemExit(f"Chart D draft data incomplete:\n- {joined}")
 
 
 # ---------------------------------------------------------------------------

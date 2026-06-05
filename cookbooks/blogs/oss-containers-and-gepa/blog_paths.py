@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 BLOG_ROOT = Path(__file__).resolve().parent
@@ -11,9 +12,14 @@ REPO_ROOT = BLOG_ROOT.parents[2]
 EVALS_DIR = REPO_ROOT / "cookbooks" / "optimizers" / "gepa" / "evals"
 EVIDENCE_DIR = EVALS_DIR / "evidence"
 WORKSPACE_ROOT = REPO_ROOT.parent
+_FRONTEND_ROOT_OVERRIDE = os.environ.get("GEPA_BLOG_FRONTEND_ROOT")
+FRONTEND_ROOT = (
+    Path(_FRONTEND_ROOT_OVERRIDE).expanduser().resolve()
+    if _FRONTEND_ROOT_OVERRIDE
+    else WORKSPACE_ROOT / "frontend"
+)
 FRONTEND_DATA_DIR = (
-    WORKSPACE_ROOT
-    / "frontend"
+    FRONTEND_ROOT
     / "src"
     / "components"
     / "blog"

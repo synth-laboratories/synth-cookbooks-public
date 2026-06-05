@@ -5,9 +5,11 @@ folder: container × chart × setup (for example HealthBench Pro · Chart A · S
 GEPA).
 
 Chart producers under [`../charts/`](../charts/) currently read the shared eval
-evidence and Chart D manifest snapshots, then write derived JSON to
-`charts/<chart>/figures/`. These records are the compact per-cell provenance
-index for that generated evidence.
+evidence for launch A/C and compact Chart D manifest snapshots for post-launch
+draft
+proposer view, then write derived JSON to `charts/<chart>/figures/`. These
+records are the compact per-cell provenance index for that generated evidence;
+they do not mean the Chart D raw rerun gate is green.
 
 Master status grid: [blog README § Experiments](../README.md#experiments).
 
@@ -42,7 +44,7 @@ Full run artifacts (manifests, SQLite, traces) stay in gitignored `runs/` trees:
 | Experiment type | Raw run location |
 |-----------------|------------------|
 | E01 parity (Charts A, C) | `cookbooks/optimizers/gepa/evals/runs/<stack>/<benchmark>/` |
-| E05 proposer (Chart D) | `charts/chart-d-proposer-scaling/runs/final_20260603/` |
+| E05 proposer (Chart D draft) | `charts/chart-d-proposer-scaling/runs/final_20260603/` |
 
 The current launch packet uses committed per-cell `README.md` records rather
 than copying raw run artifacts. Each README points at the authoritative
@@ -52,15 +54,17 @@ snapshot.
 ## Migration status
 
 Current launch scope is limited to HealthBench Pro, tau2-bench retail,
-Banking77, and HotpotQA for Charts A/C, plus the HealthBench Pro and tau2-bench
-retail proposer sweep for Chart D.
+Banking77, and HotpotQA for Charts A/C. The HealthBench Pro and tau2-bench
+retail Chart D proposer sweep is post-launch draft-only until the raw rerun gate
+is green and the MDX explicitly re-adds it.
 
 Backfill status:
 
 1. DONE cells: launch-scope Chart A/C rows for HealthBench Pro, tau2-bench
    retail, Banking77, and HotpotQA have per-cell README records.
-2. DONE cells: Chart D proposer sweep rows for HealthBench Pro and tau2-bench
-   retail have per-cell README records.
+2. SNAPSHOT cells: Chart D proposer sweep rows for HealthBench Pro and tau2-bench
+   retail have per-cell README records, but the raw rerun evidence is still
+   gated by `experiment_unit status`.
 3. POST-LAUNCH ONLY: Harvey, TaxCalcBench, FinQA, TBLite, Crafter, MiniGrid,
    DungeonGrid, and LangProbe-style addenda require fresh evidence packets and
    explicit MDX re-add before they can appear in any public chart.

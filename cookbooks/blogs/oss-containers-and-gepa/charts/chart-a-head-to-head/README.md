@@ -78,5 +78,5 @@ python build_chart.py
 - [x] Chart table embedded in blog MDX.
 - [x] Public evidence commit and checked-in producer output are published from
       the same commit authority.
-- [ ] Frontend launch commit cites the public evidence packet and carries the
-      byte-matched mirror.
+- [x] Current frontend review commit cites the public evidence packet and
+      carries the byte-matched mirror.

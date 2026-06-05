@@ -5,7 +5,7 @@
   uv run python -m experiment_unit show <key>   # per-check detail + reproduce command
   uv run python -m experiment_unit plan         # only what needs work, with commands
   uv run python -m experiment_unit packet       # publication paths + full dirty list
-  uv run python -m experiment_unit run [opts]   # execute RERUN experiments, parallel + 30m cap
+  uv run python -m experiment_unit run [opts]   # execute RERUN/MISSING experiments, parallel + 30m cap
       --time-limit N    hard per-arm cap in seconds (default 1800)
       --max-parallel N  concurrent arms (default 4)
       --only KEY        restrict to experiments matching KEY
@@ -21,7 +21,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from blog_paths import BLOG_ROOT, EVIDENCE_DIR, EXPERIMENTS_DIR, FRONTEND_DATA_DIR, REPO_ROOT
+from blog_paths import BLOG_ROOT, EVIDENCE_DIR, EXPERIMENTS_DIR, FRONTEND_DATA_DIR, FRONTEND_ROOT, REPO_ROOT
 from .model import CheckStatus, ExperimentKind, Verdict
 from .registry import in_scope
 
@@ -35,23 +35,52 @@ _VERDICT_MARK = {
 
 
 def _kind(exp) -> str:
-    return "D" if exp.kind is ExperimentKind.PROPOSER_SWEEP else "A/C"
+    return "D draft" if exp.kind is ExperimentKind.PROPOSER_SWEEP else "A/C"
+
+
+def _is_active_launch(exp) -> bool:
+    return exp.kind is ExperimentKind.HEAD_TO_HEAD
+
+
+def _active_launch_experiments():
+    return tuple(exp for exp in in_scope() if _is_active_launch(exp))
+
+
+def _draft_experiments():
+    return tuple(exp for exp in in_scope() if not _is_active_launch(exp))
 
 
 def cmd_status() -> int:
-    print("run evidence:")
+    print("active launch run evidence:")
     print(f"{'experiment':28} {'charts':7} {'verdict':9} note")
     print("-" * 88)
-    for exp in in_scope():
+    for exp in _active_launch_experiments():
         v = exp.verdict()
         note = exp.mandate.split(":")[0] if exp.mandate else _status_note(exp, v)
         print(f"{exp.label + ' (' + _kind(exp) + ')':28} {'/'.join(exp.charts):7} "
               f"{_VERDICT_MARK[v]} {note}")
+
+    draft = _draft_experiments()
+    if draft:
+        print()
+        print("post-launch draft/debug run evidence:")
+        print(f"{'experiment':28} {'charts':7} {'verdict':9} note")
+        print("-" * 88)
+        for exp in draft:
+            v = exp.verdict()
+            note = exp.mandate.split(":")[0] if exp.mandate else _status_note(exp, v)
+            print(f"{exp.label + ' (' + _kind(exp) + ')':28} {'/'.join(exp.charts):7} "
+                  f"{_VERDICT_MARK[v]} {note}")
     print()
     counts: dict[Verdict, int] = {}
-    for exp in in_scope():
+    for exp in _active_launch_experiments():
         counts[exp.verdict()] = counts.get(exp.verdict(), 0) + 1
-    print("summary: " + "  ".join(f"{v.value}={n}" for v, n in counts.items()))
+    print("active summary: " + "  ".join(f"{v.value}={n}" for v, n in counts.items()))
+    if draft:
+        draft_counts: dict[Verdict, int] = {}
+        for exp in draft:
+            draft_counts[exp.verdict()] = draft_counts.get(exp.verdict(), 0) + 1
+        print("draft summary: " + "  ".join(f"{v.value}={n}" for v, n in draft_counts.items()))
     _print_publication_packet()
     return 0
 
@@ -59,7 +88,7 @@ def cmd_status() -> int:
 def _status_note(exp, v: Verdict) -> str:
     if v is Verdict.FINISHED:
         if exp.kind is ExperimentKind.PROPOSER_SWEEP:
-            return "Chart D manifests present, numeric, and metric semantics checked"
+            return "post-launch Chart D manifests present, numeric, and metric semantics checked"
         return "evidence present, parity checks pass, candidate/rollout floor passes, in live aggregate"
     failed = [c.name for c in exp.checks() if c.status is CheckStatus.FAIL]
     return "failing: " + ", ".join(failed) if failed else ""
@@ -90,17 +119,28 @@ def cmd_show(key: str) -> int:
 
 
 def cmd_plan() -> int:
-    todo = [e for e in in_scope() if e.verdict() is not Verdict.FINISHED]
+    todo = [e for e in _active_launch_experiments() if e.verdict() is not Verdict.FINISHED]
     if not todo:
-        print("all in-scope run evidence FINISHED.")
+        print("all active launch run evidence FINISHED.")
         _print_publication_packet()
-        return 0
-    for exp in todo:
-        print(f"\n# {exp.label} ({'/'.join(exp.charts)}) -> {exp.verdict().value.upper()}")
-        if exp.mandate:
-            print(f"#   reason: {exp.mandate}")
-        for line in exp.reproduce():
-            print(f"  {line}")
+    else:
+        for exp in todo:
+            print(f"\n# {exp.label} ({'/'.join(exp.charts)}) -> {exp.verdict().value.upper()}")
+            if exp.mandate:
+                print(f"#   reason: {exp.mandate}")
+            for line in exp.reproduce():
+                print(f"  {line}")
+
+    draft_todo = [e for e in _draft_experiments() if e.verdict() is not Verdict.FINISHED]
+    if draft_todo:
+        print()
+        print("# Post-launch draft/debug work (not part of the launch gate)")
+        for exp in draft_todo:
+            print(f"\n# {exp.label} ({'/'.join(exp.charts)}) -> {exp.verdict().value.upper()}")
+            if exp.mandate:
+                print(f"#   reason: {exp.mandate}")
+            for line in exp.reproduce():
+                print(f"  {line}")
     return 0
 
 
@@ -108,6 +148,8 @@ def cmd_packet() -> int:
     print("publication packet required paths:")
     for path in _launch_publication_paths():
         print(f"  {_rel_path(path)}")
+    print()
+    print(f"frontend mirror root: {FRONTEND_ROOT}")
 
     refs, missing_refs, mismatched_refs = _source_evidence_refs(_source_evidence_files())
     print()
@@ -127,6 +169,13 @@ def cmd_packet() -> int:
 
     print()
     _print_dirty_paths("required dirty status", _launch_publication_paths())
+
+    print()
+    print("Chart D draft/debug paths (warning only):")
+    for path in _chart_d_draft_paths():
+        print(f"  {_rel_path(path)}")
+    print()
+    _print_dirty_paths("Chart D draft/debug dirty status", _chart_d_draft_paths())
 
     print()
     print("TBLite quarantine paths (warning only):")
@@ -168,10 +217,14 @@ def cmd_run(argv: list[str]) -> int:
         else:
             print(f"unknown run option {a!r}", file=sys.stderr)
             return 1
-    todo = [e for e in in_scope()
-            if e.verdict() is Verdict.RERUN and (not only or only in e.key or only in e.label.lower())]
+    candidates = in_scope() if only else _active_launch_experiments()
+    todo = [
+        e for e in candidates
+        if e.verdict() in {Verdict.RERUN, Verdict.MISSING}
+        and (not only or only in e.key or only in e.label.lower())
+    ]
     if not todo:
-        print("nothing to run (no matching RERUN experiments).")
+        print("nothing to run (no matching active-launch RERUN/MISSING experiments).")
         return 0
     return run_experiments(todo, time_limit, max_parallel, dry_run)
 
@@ -184,26 +237,40 @@ class PacketCheck:
     required: bool = True
 
 
-def _expected_record_readmes() -> list[Path]:
+_ACTIVE_RECORD_NAMES = (
+    "healthbench_pro__chart_a__synth_gepa",
+    "healthbench_pro__chart_a__gepa_ai",
+    "banking77__chart_a__synth_gepa",
+    "banking77__chart_a__gepa_ai",
+    "hotpotqa__chart_a__synth_gepa",
+    "hotpotqa__chart_a__gepa_ai",
+    "tau2_retail__chart_a__synth_gepa",
+    "tau2_retail__chart_a__gepa_ai",
+)
+
+_DRAFT_RECORD_NAMES = (
+    "healthbench_pro__chart_d__gpt-5.4-nano",
+    "healthbench_pro__chart_d__gpt-5.4-mini",
+    "healthbench_pro__chart_d__gpt-5.4",
+    "tau2_retail__chart_d__gpt-5.4-nano",
+    "tau2_retail__chart_d__gpt-5.4-mini",
+    "tau2_retail__chart_d__gpt-5.4",
+)
+
+
+def _record_readmes(names: tuple[str, ...]) -> list[Path]:
     return [
         EXPERIMENTS_DIR / name / "README.md"
-        for name in (
-            "healthbench_pro__chart_a__synth_gepa",
-            "healthbench_pro__chart_a__gepa_ai",
-            "banking77__chart_a__synth_gepa",
-            "banking77__chart_a__gepa_ai",
-            "hotpotqa__chart_a__synth_gepa",
-            "hotpotqa__chart_a__gepa_ai",
-            "tau2_retail__chart_a__synth_gepa",
-            "tau2_retail__chart_a__gepa_ai",
-            "healthbench_pro__chart_d__gpt-5.4-nano",
-            "healthbench_pro__chart_d__gpt-5.4-mini",
-            "healthbench_pro__chart_d__gpt-5.4",
-            "tau2_retail__chart_d__gpt-5.4-nano",
-            "tau2_retail__chart_d__gpt-5.4-mini",
-            "tau2_retail__chart_d__gpt-5.4",
-        )
+        for name in names
     ]
+
+
+def _expected_record_readmes() -> list[Path]:
+    return _record_readmes(_ACTIVE_RECORD_NAMES)
+
+
+def _draft_record_readmes() -> list[Path]:
+    return _record_readmes(_DRAFT_RECORD_NAMES)
 
 
 def _publication_packet_checks() -> list[PacketCheck]:
@@ -213,23 +280,44 @@ def _publication_packet_checks() -> list[PacketCheck]:
     checks.append(PacketCheck(
         "chart_source_evidence",
         not missing_sources,
-        "A/C/D source_evidence.json present" if not missing_sources
+        "A/C source_evidence.json present" if not missing_sources
         else "missing " + ", ".join(missing_sources),
     ))
     checks.append(_source_evidence_refs_check(source_evidence))
+
+    checks.append(PacketCheck(
+        "frontend_checkout",
+        FRONTEND_DATA_DIR.exists(),
+        f"checking {FRONTEND_ROOT}",
+    ))
 
     checks.append(_frontend_mirrors_check())
 
     checks.append(_launch_copy_guard_check())
 
-    checks.append(_chart_d_metric_semantics_check())
+    chart_d_semantics = _chart_d_metric_semantics_check()
+    checks.append(PacketCheck(
+        chart_d_semantics.name,
+        chart_d_semantics.ok,
+        chart_d_semantics.detail,
+        required=False,
+    ))
 
     record_readmes = _expected_record_readmes()
     present_records = [path for path in record_readmes if path.exists()]
     checks.append(PacketCheck(
         "experiment_records_backfill",
         len(present_records) == len(record_readmes),
-        f"{len(present_records)}/{len(record_readmes)} per-cell README records present",
+        f"{len(present_records)}/{len(record_readmes)} active A/C per-cell README records present",
+    ))
+
+    draft_record_readmes = _draft_record_readmes()
+    present_draft_records = [path for path in draft_record_readmes if path.exists()]
+    checks.append(PacketCheck(
+        "draft_chart_d_records",
+        len(present_draft_records) == len(draft_record_readmes),
+        f"{len(present_draft_records)}/{len(draft_record_readmes)} draft Chart D README records present",
+        required=False,
     ))
 
     dirty_detail = _dirty_publication_paths()
@@ -244,6 +332,14 @@ def _publication_packet_checks() -> list[PacketCheck]:
         "ignored_launch_nuisance",
         ignored_detail is None,
         "no ignored local launch-adjacent nuisance files" if ignored_detail is None else ignored_detail,
+        required=False,
+    ))
+
+    chart_d_detail = _dirty_paths_detail(_chart_d_draft_paths(), "Chart D draft/debug")
+    checks.append(PacketCheck(
+        "chart_d_draft_dirty",
+        chart_d_detail is None,
+        "clean or separately tracked" if chart_d_detail is None else chart_d_detail,
         required=False,
     ))
 
@@ -270,7 +366,6 @@ def _source_evidence_files() -> list[Path]:
     return [
         BLOG_ROOT / "charts" / "chart-a-head-to-head" / "figures" / "source_evidence.json",
         BLOG_ROOT / "charts" / "chart-c-use-case-coverage" / "figures" / "source_evidence.json",
-        BLOG_ROOT / "charts" / "chart-d-proposer-scaling" / "figures" / "source_evidence.json",
     ]
 
 
@@ -284,10 +379,6 @@ def _frontend_mirror_pairs() -> list[tuple[Path, Path]]:
             BLOG_ROOT / "charts" / "chart-c-use-case-coverage" / "figures" / "use_case_heldout_coverage_data.json",
             FRONTEND_DATA_DIR / "use_case_heldout_coverage_data.json",
         ),
-        (
-            BLOG_ROOT / "charts" / "chart-d-proposer-scaling" / "figures" / "proposer_scaling_data.json",
-            FRONTEND_DATA_DIR / "proposer_scaling_data.json",
-        ),
     ]
 
 
@@ -299,8 +390,6 @@ def _launch_copy_guard_files() -> list[Path]:
         BLOG_ROOT / "charts" / "chart-a-head-to-head" / "build_chart.py",
         BLOG_ROOT / "charts" / "chart-a-head-to-head" / "figures" / "head_to_head.svg",
         BLOG_ROOT / "charts" / "chart-c-use-case-coverage" / "README.md",
-        BLOG_ROOT / "charts" / "chart-d-proposer-scaling" / "README.md",
-        BLOG_ROOT / "charts" / "chart-d-proposer-scaling" / "build_chart.py",
     ]
 
 
@@ -361,7 +450,7 @@ def _frontend_mirrors_check() -> PacketCheck:
     return PacketCheck(
         "frontend_mirrors",
         not failures,
-        "A/C/D frontend mirrors byte-match producer output"
+        "A/C frontend mirrors byte-match producer output"
         if not failures else "; ".join(failures[:3]) + ("; ..." if len(failures) > 3 else ""),
     )
 
@@ -496,12 +585,25 @@ def _dirty_publication_paths() -> str | None:
 def _launch_publication_paths() -> list[Path]:
     launch_benchmarks = ("healthbench", "tau2_retail", "banking77", "hotpotqa")
     return [
-        BLOG_ROOT,
+        BLOG_ROOT / "README.md",
+        BLOG_ROOT / "charts" / "README.md",
+        BLOG_ROOT / "charts" / "chart-a-head-to-head",
+        BLOG_ROOT / "charts" / "chart-c-use-case-coverage",
+        BLOG_ROOT / "experiment_unit",
+        BLOG_ROOT / "experiment_records" / "README.md",
+        *_expected_record_readmes(),
         EVIDENCE_DIR / "heldout_evaluations.jsonl",
         EVIDENCE_DIR / "train_evaluations.jsonl",
         EVIDENCE_DIR / "candidate_timeline.jsonl",
         EVIDENCE_DIR / "commands.jsonl",
         *(EVIDENCE_DIR / "benchmarks" / benchmark for benchmark in launch_benchmarks),
+    ]
+
+
+def _chart_d_draft_paths() -> list[Path]:
+    return [
+        BLOG_ROOT / "charts" / "chart-d-proposer-scaling",
+        *_draft_record_readmes(),
     ]
 
 
@@ -664,7 +766,10 @@ def _print_publication_packet() -> None:
     print()
     print(f"publication packet: {'READY' if ready else 'PENDING'}")
     for check in checks:
-        mark = "ok" if check.ok else ("WARN" if not check.required else "FAIL")
+        if check.required:
+            mark = "ok" if check.ok else "FAIL"
+        else:
+            mark = "note" if check.ok else "WARN"
         print(f"  [{mark:>4}] {check.name:28} {check.detail}")
     if not ready:
         print("  do not publish: run evidence is not the same as a public launch packet.")
