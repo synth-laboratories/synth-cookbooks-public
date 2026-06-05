@@ -6,32 +6,315 @@ blog post (June 2026).
 Live post: <https://usesynth.ai/blog/introducing-gepa-platform> (link
 goes live with the launch).
 
+## In-scope containers
+
+All task containers that may appear in blog experiments, charts, or the broader
+GEPA platform catalog. **Scope** is what the June 2026 post targets; **status**
+is whether the public cookbook ships a reproducible container for the release.
+
+| Container | Archetype | Scope | Status | Container path |
+|-----------|-----------|-------|--------|----------------|
+| **HealthBench Professional** | vertical / medical QA | **launch A/C** | ✓ public | [`healthbench_container/`](../../optimizers/gepa/healthbench_container/) |
+| **tau2-bench retail** | ReAct / tool workflow | **launch A/C/D** | ✓ public | [`tau2_retail_container/`](../../optimizers/gepa/tau2_retail_container/) |
+| **Banking77** | single-step classification | **launch A/C** | ✓ public | [`banking77_container/`](../../optimizers/gepa/banking77_container/) |
+| **HotpotQA** | multistage QA | **launch A/C** | ✓ public | [`hotpotqa_container/`](../../optimizers/gepa/hotpotqa_container/) |
+| **Harvey Lab Tax** | vertical / legal agent | omit from launch / judge-eval roadmap | ✓ public | [`harvey_lab_container/`](../../optimizers/gepa/harvey_lab_container/) |
+| **TaxCalcBench** | vertical / accounting | post-launch | runner OSS · container private | `taxcalcbench_container/` (E03) |
+| **FinQA (codex)** | vertical / finance QA | post-launch | runner OSS · container private | `finqa_container/` (E14–E15) |
+| **tau2-bench airline** | ReAct / tool workflow | tier-1 extended | → public | `taubench_airline_container/` |
+| **HoVer** | multistage QA | LangProbe addendum | → public | `hover_container/` |
+| **Heart Disease (UCI)** | single-step classification | LangProbe addendum | → public | `heart_disease_container/` |
+| **TBLite micro coding smoke** | coding agent | follow-up only after real rerun | ✓ public smoke, not launch evidence | [`tblite_container/`](../../optimizers/gepa/tblite_container/) |
+| **Crafter** | ReAct / world env | parity / historical | ✓ public | [`crafter_container/`](../../optimizers/gepa/crafter_container/) |
+| **MiniGrid** | ReAct / grid env | catalog | → public | `minigrid_container/` |
+| **DungeonGrid** | ReAct / roguelike | **omit from launch** | ✓ public | [`dungeongrid_container/`](../../optimizers/gepa/dungeongrid_container/) |
+| Banking77 (MIPROv2-shaped) | single-step | catalog | → public | — |
+| Code Review | coding agent | catalog | runner OSS · private | — |
+| NGO-style | coding agent | catalog | runner OSS · private | — |
+| Legal Apex Agents | vertical / legal | catalog | roadmap | — |
+| Finance Agent Benchmark | vertical / finance research | catalog | **not ready** | — |
+| BankerToolBench | vertical / investment banking | catalog | roadmap | — |
+| BlueFin | vertical / spreadsheets | catalog | roadmap | — |
+| **PaperBench JudgeEval** | judge / verifier eval | judge eval (planned) | roadmap | — ([PaperBench](https://openai.com/index/paperbench/), [frontier-evals](https://github.com/openai/frontier-evals/tree/main/project/paperbench)) |
+| **Harvey LAB judge eval** | judge / verifier eval | judge eval (planned) | roadmap | — ([LAB verifiers](https://www.langchain.com/blog/designing-efficient-verifiers-for-legal-agents), pairs with [`harvey_lab_container/`](../../optimizers/gepa/harvey_lab_container/) judge) |
+
+**Scope legend:** **launch A/C** = current post Chart A head-to-head and Chart C
+coverage rows · **launch A/C/D** = same plus Chart D proposer sweep ·
+**LangProbe addendum** = reference parity tasks in `build_langprobe_addendum.py`
+that are not active launch rows · **parity / historical** = earlier
+head-to-head cookbooks (Crafter and the micro TBLite smoke) · **catalog** =
+container-contract surface, not in launch evidence · **judge eval (planned)** =
+containerized LLM-as-judge tasks that should use the same evidence and chart
+contracts once runnable · **omit** = descoped (DungeonGrid).
+
+### Future note — PaperBench JudgeEval as another container
+
+PaperBench JudgeEval should be treated as an additional GEPA container row, in
+the same family as HealthBench Pro, tau2 retail, Banking77, and HotpotQA. The
+optimized artifact is the judge/verifier prompt or rubric-grading program rather
+than a policy prompt, but the publication shape should stay the same: fixed
+container boundary, fixed split, Synth GEPA vs gepa-ai arms, Chart A-style
+head-to-head metrics, and Chart C-style cumulative coverage.
+
+When this is implemented later, add `PaperBench JudgeEval` as a fifth post tab
+or row instead of creating a separate PaperBench-only side story. Coverage should
+be defined over the judge-eval unit that the container exposes, for example
+human-graded rubric leaf nodes or judge-eval examples covered/passed by any
+candidate up to candidate K. This is intentionally P3 until the current launch
+scope is complete; do not wire producers or frontend data for it in the current
+pass.
+
+Full upstream links, dataset citations, and status notes:
+[Container catalog](#container-catalog) below.
+
 ## What this folder contains
 
-Every result chart in the post has a matching subfolder. Each launch subfolder
-has its own README, producer script, run commands, and tracked source evidence
-so the chart can be regenerated against the public container contract. Large
-local rerun outputs live under ignored `runs/` directories; the launch figures
-track compact evidence snapshots and checksums in committed JSON.
+This cookbook is **experiment-centric**. Eval runs and their evidence are the
+source of truth; charts are derived views built from that data.
 
-Hard rule for launch: every number, curve, table cell, and chart series in
-the post must be produced by committed code in this folder. A chart folder
-must contain the producer script that reads real run artifacts and emits the
-data JSON consumed by the frontend. Hand-typed chart numbers, ad-hoc `/tmp`
-scripts, invented curves, and unregenerable illustrative data do not ship.
+```text
+oss-containers-and-gepa/
+  README.md                 # this file — experiment grid + launch checklist
+  blog_paths.py             # shared paths for producers and runbooks
+  experiment_records/       # one folder per runnable cell (container × chart × setup)
+  charts/                   # chart producer scripts + committed figure JSON
+```
+
+- **[`experiment_records/`](./experiment_records/)** — how each experiment was
+  run, configs, committed evidence, and per-cell derived slices. Raw rollout
+  artifacts stay in gitignored `runs/`; each cell README points at them.
+- **[`charts/`](./charts/)** — producer scripts that read experiment data and
+  emit `figures/*.json` (plus frontend mirrors). No chart script invents numbers;
+  every series traces to experiment evidence.
+
+Hard rule for launch: every number, curve, table cell, and chart series in the
+post must be produced by committed code reading real experiment artifacts.
+Hand-typed chart numbers, ad-hoc `/tmp` scripts, and unregenerable illustrative
+data do not ship.
+
+Eval harness (runs both stacks, posthoc heldout, builds summaries):
+`cookbooks/optimizers/gepa/evals/`.
 
 ## Charts
 
+Chart producers live under [`charts/`](./charts/). See the
+[charts README](./charts/README.md) for the full registry, data-flow diagram,
+and reproduce commands.
+
 | Folder | Launch status | What the chart shows |
 |---|---|---|
-| [chart-a-head-to-head/](./chart-a-head-to-head/) | in post | Final same-container head-to-head: Synth GEPA vs gepa-ai across HealthBench Pro, Harvey Lab Tax, tau2-bench retail, and DungeonGrid. |
-| [chart-c-use-case-coverage/](./chart-c-use-case-coverage/) | in post | Cumulative heldout coverage for the final four same-container tasks. |
-| [chart-d-proposer-scaling/](./chart-d-proposer-scaling/) | in post | Proposer-model sweep across `gpt-5.4-nano`, `gpt-5.4-mini`, and `gpt-5.4` at fixed task container, policy model, splits, and budget. |
-| [chart-g-dungeongrid/](./chart-g-dungeongrid/) | in post addendum | DungeonGrid candidate trajectory and progress-signal frequencies from final heldout evidence. |
-| [chart-h-reward-diagnostics/](./chart-h-reward-diagnostics/) | in post | Harvey fractional row reward plus DungeonGrid reward and objective-recovery diagnostics from final heldout evidence. |
-| [chart-b-prompt-diff/](./chart-b-prompt-diff/) | support/future | Qualitative prompt-diff extraction for selected candidate fields. Not a launch result chart unless embedded by the post. |
-| [chart-e-policy-model-variation/](./chart-e-policy-model-variation/) | future | Cross-student-model transfer. Not used by the launch post. |
-| [chart-f-program-stage-scaling/](./chart-f-program-stage-scaling/) | future | Program-stage scaling. Not used by the launch post. |
+| [charts/chart-a-head-to-head/](./charts/chart-a-head-to-head/) | in post | Final same-container head-to-head: Synth GEPA vs gepa-ai across launch-scope tasks. |
+| [charts/chart-c-use-case-coverage/](./charts/chart-c-use-case-coverage/) | in post | Cumulative heldout coverage for same-container parity runs. |
+| [charts/chart-d-proposer-scaling/](./charts/chart-d-proposer-scaling/) | in post | Proposer-model sweep (`gpt-5.4-nano` / `mini` / `gpt-5.4`). |
+| [charts/chart-a-head-to-head/build_langprobe_addendum.py](./charts/chart-a-head-to-head/build_langprobe_addendum.py) | **omit** | Historical LangProbe addendum; inactive producer exits before writing. |
+| [charts/chart-g-dungeongrid/](./charts/chart-g-dungeongrid/) | **omit** | Descoped from launch. |
+| [charts/chart-h-reward-diagnostics/](./charts/chart-h-reward-diagnostics/) | **omit** | Historical Harvey/DungeonGrid diagnostics; inactive producer exits before writing. |
+| [charts/chart-b-prompt-diff/](./charts/chart-b-prompt-diff/) | **omit** | Historical prompt-diff extraction; inactive producer exits before writing. |
+| [charts/chart-e-policy-model-variation/](./charts/chart-e-policy-model-variation/) | future | Cross-student-model transfer. |
+| [charts/chart-f-program-stage-scaling/](./charts/chart-f-program-stage-scaling/) | future | Program-stage scaling. |
+
+## Experiments
+
+Every eval run, producer refresh, and frontend wiring task for the post is tracked
+here. **Runnable cells** are container × chart × setup combinations with real
+rollout data. **Work items** (E01–E16, W01–W05) are the broader launch checklist.
+
+Per-cell runbooks (how we ran, raw run pointers, committed evidence, derived chart
+JSON) live under [`experiment_records/`](./experiment_records/) — one folder per
+runnable cell. These are compact provenance records that point at the shared eval
+evidence, Chart D manifest snapshots, and each chart's
+`figures/source_evidence.json`.
+
+### Validity audit — updated 2026-06-04 (launch scope: 4 containers)
+
+Launch charts are scoped to **HealthBench Pro, Banking77, HotpotQA, tau2 retail**.
+FinQA, Harvey Lab Tax, and tau2 airline are **omitted from launch** (the broader
+tables below keep them as roadmap).
+
+**Data paths feeding the charts:**
+
+- **Chart A scatter** reads
+  `charts/chart-a-head-to-head/figures/head_to_head_data.json`, rebuilt from
+  committed summaries for HealthBench, tau2 retail, Banking77, and HotpotQA.
+- **Chart C coverage** reads the live aggregate
+  `evals/evidence/{heldout_evaluations,train_evaluations,candidate_timeline}.jsonl`,
+  with `BENCHES = [healthbench, tau2_retail, banking77, hotpotqa]`.
+- **Chart D proposer scaling** reads fresh proposer-sweep manifests under
+  `charts/chart-d-proposer-scaling/runs/final_20260603/` and reports observed
+  optimization reward; these sweep manifests skipped heldout by design.
+
+**Experiment-unit verdict:**
+
+| Container | Chart A | Chart C | Chart D | Verdict |
+|---|---|---|---|---|
+| **HealthBench Pro** | ✅ finished | ✅ finished | ✅ finished | **FINISHED** |
+| **Banking77** | ✅ finished | ✅ finished | n/a | **FINISHED** |
+| **HotpotQA** | ✅ finished | ✅ finished | n/a | **FINISHED** |
+| **tau2 retail** | ✅ finished | ✅ finished | ✅ finished | **FINISHED** |
+
+`python3 -m experiment_unit status` now reports `summary: finished=6` for run
+evidence, and `publication packet: PENDING` until the blog packet plus launch
+`evals/evidence` files are committed from the same authority as the frontend
+mirrors. Banking77 was
+replumbed from the backup bundle into the live aggregate. HotpotQA was rebuilt
+from the fresh budget-parity run. tau2 retail was rerun on the Gemini-direct
+policy route with fresh A/C evidence that passes the budget-parity floor.
+
+**Observed head-to-head result:** P1 is mixed, not a clean win for the
+pre-registered ordering. Synth GEPA is positive on HealthBench (+0.008 heldout),
+tau2 retail (+0.030), and tied on Banking77 (+0.000), but negative on HotpotQA
+(-0.042). tau2 is the largest positive gap, but HotpotQA falsifies the predicted
+`healthbench ≈ hotpotqa > banking77` ordering.
+
+**Observed Chart D result:** tau2 retail is monotonic with proposer size
+(`0.600 → 0.600 → 0.667` observed train reward), while HealthBench is non-monotonic
+(`0.347 → 0.314 → 0.339`). This supports the tau2 interaction but weakens any
+blanket monotonic proposer-scaling claim.
+
+### Pre-registered predictions — 2026-06-03 (judge the rerun against THESE)
+
+Stated **before** the rerun so results are judged against expectations, not
+rationalized after. The post's thesis is **GEPA's returns scale with the compute
+in the loop**, on two axes.
+
+**Mechanism (under the locked budget-parity protocol).** Both stacks must pass
+the candidate-count and rollout-count fairness floor, so any Synth GEPA edge is
+not from an order-of-magnitude exploration advantage. Prediction: that quality
+edge compounds more when each rollout is expensive.
+
+**Prediction 1 — head-to-head gap grows with policy compute (Charts A/C).**
+Define `gap = Synth − gepa-ai` (best heldout, and coverage rows). Predicted
+ordering by median policy tokens/rollout:
+
+| Task | ~policy tok/rollout | predicted `gap` (heldout / coverage) |
+|------|--------------------:|--------------------------------------|
+| Banking77 | ~1k | ≈ 0 (within noise; both saturate) |
+| HotpotQA | ~2k | ≈ 0 to slightly + |
+| HealthBench Pro | ~2.3k | small + |
+| tau2 retail | ~20k | **clearly +** (the load-bearing point) |
+
+Predicted: `gap(tau2) > gap(healthbench) ≈ gap(hotpotqa) > gap(banking77) ≈ 0`,
+i.e. **positive slope of gap vs log(policy tokens)**.
+Current launch evidence keeps tau2 in the table but falsifies that directional
+prediction on heldout (`heldout_gap -0.053`, `coverage_gap -17`) under the
+budget-parity protocol, so the blog should describe this as a negative result.
+
+**Prediction 2 — better proposer → better optimization, steeper where compute is
+higher (Chart D).** Per task, best-heldout is non-decreasing in proposer
+(`gpt-5.4-nano ≤ mini ≤ gpt-5.4`). Predicted interaction: the slope is **steeper
+on tau2 than on HealthBench** (HealthBench may saturate / be near-flat).
+
+**Falsification (any of these disproves the corresponding claim):**
+- Synth does **not** beat gepa-ai on tau2 under the budget-parity protocol → headline (P1) fails.
+- `gap(tau2) ≤ gap(banking77)` under the budget-parity protocol → policy-compute scaling fails.
+- Chart D proposer curve flat or non-monotonic **on tau2** → proposer scaling fails.
+- HealthBench and tau2 proposer slopes equally steep → the interaction claim weakens.
+
+**What we are NOT claiming (state these as caveats in the post):**
+- Not a controlled compute law — policy compute is **confounded with task
+  archetype** (high-compute = agentic, low = single-step). The claim is a
+  *correlation across the suite*.
+- Not a smooth curve — the x-axis is 3 low-compute points + **one** high-compute
+  anchor (tau2). Re-adding tau2-airline would give a second high-compute point;
+  until then, frame as low-vs-high contrast.
+
+### Status legend
+
+| Status | Meaning |
+|--------|---------|
+| **DONE** | Run completed; compact evidence exists locally for this cell; publication still depends on the public evidence commit gate |
+| **PARTIAL** | Data exists but claim is weak (tiny N, unfair budget, or missing sibling rows) |
+| **RERUN** | Must re-execute before citing in the post |
+| **MISSING** | No tier-1 artifact yet |
+| **PLANNED** | Scoped but not started |
+| **UI** | Frontend/doc only — no new eval run |
+| **OMIT** | Descoped from launch |
+
+**Priority:** P0 = launch blocker · P1 = headline claim · P2 = addendum/diagnostic · P3 = post-launch
+
+Publication checklist and model-parity locks:
+`Jstack/.jstack/daily_notes/2026-06-03/gepa_blog_publication_failures.md`.
+
+### Runnable cells — container × chart × setup
+
+Each row is one experiment folder target under `experiment_records/`. Chart A and C
+cells share the eval evidence pipeline
+(`cookbooks/optimizers/gepa/evals/evidence/benchmarks/`). Chart D cells use the
+self-contained sweep under `charts/chart-d-proposer-scaling/runs/final_20260603/`.
+
+| Container | Chart | Setup | Status | Priority | Headline result / artifact | Backfill record folder |
+|-----------|:-----:|-------|:------:|:--------:|----------------------------|---------------|
+| HealthBench Pro | A/C | Synth GEPA | DONE | P0 | heldout 0.361; 17 candidates / 1240 rollouts | `experiment_records/healthbench_pro__chart_a__synth_gepa/` |
+| HealthBench Pro | A/C | gepa-ai | DONE | P0 | heldout 0.353; 21 candidates / 1368 rollouts | `experiment_records/healthbench_pro__chart_a__gepa_ai/` |
+| Banking77 | A/C | Synth GEPA | DONE | P0 | heldout 0.785; 17 candidates / 1140 rollouts | `experiment_records/banking77__chart_a__synth_gepa/` |
+| Banking77 | A/C | gepa-ai | DONE | P0 | heldout 0.785; 20 candidates / 1358 rollouts | `experiment_records/banking77__chart_a__gepa_ai/` |
+| HotpotQA | A/C | Synth GEPA | DONE | P0 | heldout 0.707; 9 candidates / 840 rollouts | `experiment_records/hotpotqa__chart_a__synth_gepa/` |
+| HotpotQA | A/C | gepa-ai | DONE | P0 | heldout 0.748; 11 candidates / 796 rollouts | `experiment_records/hotpotqa__chart_a__gepa_ai/` |
+| tau2 retail | A/C | Synth GEPA | DONE | P0 | heldout 0.430; 5 candidates / 154 rollouts | `experiment_records/tau2_retail__chart_a__synth_gepa/` |
+| tau2 retail | A/C | gepa-ai | DONE | P0 | heldout 0.400; 4 candidates / 129 rollouts | `experiment_records/tau2_retail__chart_a__gepa_ai/` |
+| HealthBench Pro | D | gpt-5.4-nano | DONE | P2 | observed reward 0.347 | `experiment_records/healthbench_pro__chart_d__gpt-5.4-nano/` |
+| HealthBench Pro | D | gpt-5.4-mini | DONE | P2 | observed reward 0.314 | `experiment_records/healthbench_pro__chart_d__gpt-5.4-mini/` |
+| HealthBench Pro | D | gpt-5.4 | DONE | P2 | observed reward 0.339 | `experiment_records/healthbench_pro__chart_d__gpt-5.4/` |
+| tau2 retail | D | gpt-5.4-nano | DONE | P2 | observed reward 0.600 | `experiment_records/tau2_retail__chart_d__gpt-5.4-nano/` |
+| tau2 retail | D | gpt-5.4-mini | DONE | P2 | observed reward 0.600 | `experiment_records/tau2_retail__chart_d__gpt-5.4-mini/` |
+| tau2 retail | D | gpt-5.4 | DONE | P2 | observed reward 0.667 | `experiment_records/tau2_retail__chart_d__gpt-5.4/` |
+
+Chart A/C shared evidence inputs (when DONE or PARTIAL):
+
+```text
+cookbooks/optimizers/gepa/evals/evidence/benchmarks/<task>/summary.json
+cookbooks/optimizers/gepa/evals/evidence/benchmarks/<task>/run_manifest.json
+```
+
+Chart D publication input: compact manifest snapshots under
+`charts/chart-d-proposer-scaling/figures/manifest_snapshots/`. Raw sweep outputs
+under `charts/chart-d-proposer-scaling/runs/` are local/gitignored and are not
+the public artifact.
+
+### Work items — launch checklist (24 rows)
+
+| ID | Experiment | Type | Tasks | Status | Priority | Charts | Artifact | Next step |
+|:--:|------------|:----:|-------|:------:|:--------:|--------|----------|-----------|
+| E01 | Same-container Synth vs gepa-ai parity | EVAL | HB, Banking77, HotpotQA, tau2 | DONE | P0 | A, C, MDX | `evals/evidence/benchmarks/*/summary.json` | Launch-scope summaries rebuilt from live aggregate |
+| E02 | Harvey heldout — larger split | EVAL | Harvey | OMIT | P3 | A, C, H | `harvey_lab/summary.json` (n=9) | Omitted from launch scope; rerun only if Harvey is re-added |
+| E03 | TaxCalcBench — container + GEPA eval | EVAL | TaxCalc | OMIT | P3 | A, C | — | Omitted from launch scope; post-launch parity work |
+| E04 | Head-to-head budget-parity protocol | EVAL | launch scope | DONE | P0 | A, MDX | `charts/chart-a-head-to-head/figures/head_to_head_data.json` | Budget-parity floor passes `experiment_unit status` |
+| E05 | Proposer sweep — nano / mini / full | EVAL | HB, tau2 | DONE | P2 | D | `charts/chart-d-proposer-scaling/figures/manifest_snapshots/` | HB and tau2 sweeps rebuilt; chart reports observed reward from compact manifests |
+| E06 | Proposer sweep — full tier-1 | EVAL | HB, Harvey, tau2, TaxCalc, FinQA | PLANNED | P3 | D | — | Only if post claims 5-task scaling |
+| E07 | Proposer failure-mode table | CONTENT | HB, tau2 | PLANNED | P2 | D | `charts/chart-d/runs/...` | Mine validity / mutation errors per cell |
+| E08 | Policy-model variation sweep | EVAL | TBD | PLANNED | P3 | E | `chart-e/` README | Define grid; run sweep |
+| E09 | Program-stage scaling | EVAL | B77, HotpotQA, HoVer, Heart | PLANNED | P3 | F | `chart-f/` README | Post-launch |
+| E10 | Prompt diff extraction | PRODUCER | historical | OMIT | P3 | B | `chart-b/prompts/` | Fresh runs and MDX re-add required before any future use |
+| E11 | Budget / protocol fairness table | CONTENT | all tier-1 | MISSING | P1 | — | `head_to_head_data.json` fields | Standalone N, candidates, rollouts table |
+| E12 | Chart → producer provenance map | CONTENT | all wired | PARTIAL | P2 | — | chart READMEs + `figures/source_evidence.json` | One table: chart → producer → JSON → summary |
+| E13 | Evidence pipeline refresh + sync | PRODUCER | launch scope | DONE | P1 | A, C, D | cookbook + frontend `data/*.json` | Producers rebuilt for Chart A/C/D; Chart G omitted |
+| E14 | FinQA codex scaffold + container | IMPL | FinQA | OMIT | P3 | A, C | — | Omitted from launch scope; post-launch container work |
+| E15 | FinQA GEPA parity (Synth vs gepa-ai) | EVAL | FinQA | OMIT | P3 | A, C | — | Omitted from launch scope; post-launch parity work |
+| E16 | FinQA heldout scale (define N) | EVAL | FinQA | OMIT | P3 | C | — | Omitted from launch scope; define if FinQA is re-added |
+| W01 | Head-to-head UI redesign | UI | — | UI | P0 | A | `head-to-head-results.tsx` | Readable budget columns |
+| W02 | Coverage chart panel filter | UI | HB, tau2 (+ others) | UI | P1 | C | `pareto-coverage-chart.tsx` | Panels only when evidence exists |
+| W03 | Chart D limitation copy | UI | HB, tau2 | UI | P2 | D | `index.mdx` addendum | "2-task run group" disclaimer |
+| W04 | Reward diagnostics addendum | UI | historical | OMIT | P3 | H | `reward_diagnostics_data.json` | Fresh evidence and MDX re-add required before any future use |
+| W05 | Systems diagram narrative pass | UI | — | UI | P2 | React figure | `src/components/blog/posts/introducing-gepa-platform/systems-focus-modal.tsx` | Four-container launch framing |
+| E17 | PaperBench JudgeEval container | EVAL | PaperBench judge | PLANNED | P3 | A, C | — | After current launch scope: wire SimpleJudge + JudgeEval rubrics from frontier-evals as a normal container row |
+| E18 | Harvey LAB judge eval container | EVAL | Harvey LAB judge | PLANNED | P3 | — | — | Per-criterion vs batch verifier parity; LAB rubric contract |
+| — | Chart G DungeonGrid | — | — | OMIT | — | G | `charts/chart-g-dungeongrid/` | Out of scope — remove from MDX |
+
+### Summary counts
+
+| Status | Count | IDs / scope |
+|:------:|------:|-------------|
+| DONE | 4 | E01, E04, E05, E13 |
+| PARTIAL | 1 | E12 provenance map still needs a polished content table |
+| RERUN | 0 | no launch-scope experiment reruns remain |
+| MISSING | 1 | E11 standalone fairness table |
+| PLANNED | 6 | E06–E09, E17, E18 |
+| UI | 4 | W01–W03, W05 |
+| OMIT | 8 | E02, E03, E10, E14, E15, E16, W04, Chart G |
+
+Launch-scope run data is present. Remaining non-DONE rows are roadmap, content,
+or UI work; the publication packet still needs the public evidence commit before
+the four-container post can ship.
 
 ## Prerequisites
 
@@ -53,7 +336,7 @@ task domain.
 
 Status legend:
 
-- **✓ public** — container shipped publicly today.
+- **✓ public** — container ships publicly for the release.
 - **→ public** — container being flipped public with this release.
 - **runner OSS · container private** — the `synth-optimizers` runner that
   executes these is open-source, but the container itself stays
@@ -67,7 +350,7 @@ Status legend:
 |---|---|---|
 | Banking77 | [PolyAI/banking77](https://huggingface.co/datasets/PolyAI/banking77) | ✓ public ([container](../../optimizers/gepa/banking77_container/)) |
 | Banking77 (MIPROv2-shaped) | [PolyAI/banking77](https://huggingface.co/datasets/PolyAI/banking77) | → public |
-| HotpotQA | [hotpotqa.github.io](https://hotpotqa.github.io/) | → public |
+| HotpotQA | [hotpotqa.github.io](https://hotpotqa.github.io/) | ✓ public ([container](../../optimizers/gepa/hotpotqa_container/)) |
 | HoVer | [hover-nlp.github.io](https://hover-nlp.github.io/) | → public |
 | Heart Disease (UCI) | [UCI ML Repository](https://archive.ics.uci.edu/dataset/45/heart+disease) | → public |
 
@@ -75,7 +358,7 @@ Status legend:
 
 | Container | Upstream / dataset | Status |
 |---|---|---|
-| TBLite | [Terminal-Bench](https://www.tbench.ai/) | ✓ public ([container](../../optimizers/gepa/tblite_container/)) — uses OpenAI API key auth (no Codex bundle required) |
+| TBLite micro coding smoke | local pytest micro tasks | ✓ public ([container](../../optimizers/gepa/tblite_container/)) — not Terminal-Bench Lite and not launch evidence |
 | Code Review | (internal cookbook PR review task) | runner OSS · container private |
 | NGO-style | (internal research target) | runner OSS · container private |
 
@@ -86,6 +369,7 @@ Status legend:
 | Crafter | [danijar/crafter](https://github.com/danijar/crafter) | ✓ public ([container](../../optimizers/gepa/crafter_container/)) |
 | MiniGrid | [Farama MiniGrid](https://minigrid.farama.org/) (via OpenEnv) | → public |
 | tau2-bench retail | [sierra-research/tau2-bench](https://github.com/sierra-research/tau2-bench) | ✓ public ([container](../../optimizers/gepa/tau2_retail_container/)) |
+| tau2-bench airline | [sierra-research/tau2-bench](https://github.com/sierra-research/tau2-bench) | → public (`taubench_airline_container`) |
 | DungeonGrid | [JoshuaPurtell/DungeonGrid](https://github.com/JoshuaPurtell/DungeonGrid) | ✓ public ([container](../../optimizers/gepa/dungeongrid_container/)) |
 
 ### Vertical / domain agent (real-world professional workflows)
@@ -95,32 +379,72 @@ Status legend:
 | Harvey Labs (legal) | [harveyai/harvey-labs](https://github.com/harveyai/harvey-labs) | ✓ public ([container](../../optimizers/gepa/harvey_lab_container/)) |
 | Legal Apex Agents | [mercor/apex-agents](https://huggingface.co/datasets/mercor/apex-agents) | roadmap |
 | HealthBench Professional (medical) | [openai/healthbench-professional](https://huggingface.co/datasets/openai/healthbench-professional) ([paper](https://cdn.openai.com/dd128428-0184-4e25-b155-3a7686c7d744/HealthBench-Professional.pdf)) | ✓ public ([container](../../optimizers/gepa/healthbench_container/)) |
+| TaxCalcBench (accounting) | [column-tax/tax-calc-bench](https://github.com/column-tax/tax-calc-bench) — TY2024 return calculation + MeF-style XML grading | runner OSS · container private |
+| Finance Agent Benchmark (finance research) | [paper](https://arxiv.org/abs/2508.00828) — 537 expert-authored SEC/financial-research tasks | **not ready** (private scaffold; missing Tavily/SEC/Tiingo keys + no E2E proof) |
+| BankerToolBench (investment banking) | [paper](https://arxiv.org/abs/2604.11304) — end-to-end IB workflows (modeling, decks, reports) | roadmap |
+| BlueFin (financial spreadsheets) | [paper](https://arxiv.org/abs/2605.30907) — 131 spreadsheet tasks, 3,225 eval criteria | roadmap |
+
+### Judge / verifier evals (planned)
+
+Containerized tasks for optimizing and evaluating grading models. These measure
+judge accuracy, agreement, and cost rather than downstream policy reward, but
+they should still be handled as normal GEPA containers: rows, candidates,
+rollouts, rewards, traces, usage, and chart evidence all come through the same
+contract.
+
+When promoted into the post, PaperBench JudgeEval should be another container
+tab/row beside HealthBench Pro, tau2 retail, Banking77, and HotpotQA. It should
+not be framed as a separate PaperBench-only addendum unless the main container
+charts cannot represent the evidence.
+
+| Eval | Upstream / reference | What it measures | Status |
+|---|---|---|---|
+| **PaperBench JudgeEval** | [PaperBench](https://openai.com/index/paperbench/) ([paper](https://arxiv.org/abs/2504.01848), [frontier-evals](https://github.com/openai/frontier-evals/tree/main/project/paperbench)) | Accuracy of **SimpleJudge** (LLM rubric grader) vs human-graded leaf nodes on partial paper replications; binary classification metrics (F1) per rubric item | roadmap |
+| **Harvey LAB judge eval** | [Designing Efficient Verifiers for Legal Agents](https://www.langchain.com/blog/designing-efficient-verifiers-for-legal-agents) (LangChain × Harvey) | Verifier agreement, false-pass/fail rates, and cost for **LAB**-style per-criterion vs batch rubric judging; planned reference must be revalidated before any chart claim | roadmap |
+
+**PaperBench JudgeEval** — OpenAI's auxiliary benchmark inside the PaperBench
+pipeline. Agents replicate ICML papers; SimpleJudge grades submissions against
+author co-developed rubrics. JudgeEval validates the judge itself using manual
+human grades as ground truth ([PaperBench §4.2](https://arxiv.org/abs/2504.01848)).
+
+**Harvey LAB judge eval** — Harvey's open **LAB** benchmark scores legal-agent
+deliverables with many pass/fail criteria per task. The LangChain × Harvey study
+is useful for the verifier design shape (per-criterion vs batch, agreement,
+false-pass/fail, and cost), but the model/reference choice is **not locked** for
+this cookbook. Planned cookbook work: expose the same rubric-judge contract used
+by [`harvey_lab_container/`](../../optimizers/gepa/harvey_lab_container/) as a
+standalone judge-eval container, then choose an approved reference only after a
+spot-check proves it is a credible legal judge.
 
 ### Tally
 
-The launch evidence in the post uses four public containers:
-HealthBench Professional, Harvey Labs Tax, tau2-bench retail, and DungeonGrid.
+The launch evidence in the post uses four containers:
+HealthBench Professional, tau2-bench retail, Banking77, and HotpotQA.
+Harvey Labs Tax, tau2-bench airline, TaxCalcBench, FinQA, and DungeonGrid are
+descoped from launch charts.
+The public TBLite path is a micro coding smoke, not OpenThoughts/Terminal-Bench
+Lite result coverage; add TBLite back only after a real Harbor/OpenThoughts
+rerun has a meaningful heldout denominator.
 The broader catalog remains here to show the container-contract surface across
 classification, QA, coding, environment-control, and professional-workflow tasks.
 
 ## Compute-parity ground rules
 
-Every "vs gepa-ai" chart in this folder documents the matched conditions
-it uses. Chart A matches the public HTTP container boundary for every row;
-the final launch rows are HealthBench Pro, Harvey Lab Tax, tau2-bench retail,
-and DungeonGrid. Each row pins the task container, train/heldout split,
-coverage threshold, proposer/reflection model, and task-specific policy or
-judge model in `cookbooks/optimizers/gepa/evals/evidence/benchmarks/*/`.
-Other sweep charts should pin:
+Every "vs gepa-ai" chart in this folder documents the recorded comparison
+conditions it uses. Chart A uses the public HTTP container boundary for every row.
+Each row pins the task container, train/heldout split, coverage threshold,
+proposer/reflection model, and task-specific policy or judge model in
+`cookbooks/optimizers/gepa/evals/evidence/benchmarks/*/`.
 
-- Same `max_total_rollouts` budget per run.
-- Same proposer model (default: `gpt-5.4-mini`, unless the chart is
-  explicitly sweeping the proposer).
-- Same student/policy model (default: the cookbook's fixture policy,
-  unless the chart is explicitly sweeping policy).
-- Same minibatch size.
-- Same train/heldout seed splits.
-- Same wall-clock budget where applicable.
+### Launch parity source of truth
 
-Each chart's README documents the exact parity conditions used for the
-numbers in the post.
+The current post has exactly four Chart A/C containers: HealthBench Pro,
+tau2-bench retail, Banking77, and HotpotQA. Chart D is a two-task proposer sweep
+on HealthBench Pro and tau2-bench retail only. The exact splits, models,
+budgets, and evidence checksums live in the chart READMEs and generated
+`figures/source_evidence.json` files.
+
+Older Harvey, TaxCalcBench, FinQA, tau2-airline, LangProbe, TBLite, Crafter,
+MiniGrid, and DungeonGrid planning notes are historical. They must not be cited
+as launch coverage unless a fresh evidence packet and explicit MDX re-add land
+in the same public commit.

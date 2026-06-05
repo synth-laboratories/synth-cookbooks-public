@@ -1,0 +1,289 @@
+{
+  "chart": "proposer_scaling",
+  "generated_from": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling",
+  "source_evidence_path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/source_evidence.json",
+  "description": "Synth GEPA best observed reward vs candidate index per proposer model. HealthBench Pro and tau2-bench retail cells are backed by compact public manifest summaries. Chart D reports observed optimization reward; heldout scoring was skipped for this sweep. 3 proposer models \u00d7 2 tasks.",
+  "proposer_models": [
+    "gpt-5.4-nano",
+    "gpt-5.4-mini",
+    "gpt-5.4"
+  ],
+  "tasks": [
+    "healthbench",
+    "tau2_retail"
+  ],
+  "cells": [
+    {
+      "task": "healthbench",
+      "proposer_slug": "nano",
+      "proposer_label": "gpt-5.4-nano",
+      "proposer_auth_mode": "api_key",
+      "status": "available",
+      "comparison_heldout_seed_reward": 0.2547314326739686,
+      "initial_observed_reward": 0.2509448010317407,
+      "best_observed_reward": 0.3469341151460078,
+      "best_observed_reward_source": "train_reward",
+      "proposer_calls": 4,
+      "proposer_tokens": 3485013,
+      "total_cost_usd": 0.0,
+      "notes": "heldout skipped; observed train optimization reward shown",
+      "curve": {
+        "x": {
+          "candidate": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        },
+        "y": {
+          "best_observed_score": [
+            0.2509448010317407,
+            0.30518858975636465,
+            0.31704750241233615,
+            0.31704750241233615,
+            0.3469341151460078,
+            0.3469341151460078
+          ]
+        },
+        "initial": 0.2509448010317407,
+        "final": 0.3469341151460078,
+        "reward_source": "train_reward"
+      },
+      "run_id": "healthbench_proposer_nano",
+      "manifest_snapshot_path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/manifest_snapshots/healthbench_nano.result_manifest.json",
+      "source_ref": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/manifest_snapshots/healthbench_nano.result_manifest.json",
+        "sha256": "c5068f77fa5d2c55962e573ff515a996f697a1ba57ea4985e95641810601fe16",
+        "bytes": 3535,
+        "exists": true
+      }
+    },
+    {
+      "task": "healthbench",
+      "proposer_slug": "mini",
+      "proposer_label": "gpt-5.4-mini",
+      "proposer_auth_mode": "chatgpt",
+      "status": "available",
+      "comparison_heldout_seed_reward": 0.2547314326739686,
+      "initial_observed_reward": 0.2553621913211898,
+      "best_observed_reward": 0.3143681513570261,
+      "best_observed_reward_source": "train_reward",
+      "proposer_calls": 4,
+      "proposer_tokens": 3333536,
+      "total_cost_usd": 0.0,
+      "notes": "heldout skipped; observed train optimization reward shown",
+      "curve": {
+        "x": {
+          "candidate": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        },
+        "y": {
+          "best_observed_score": [
+            0.2553621913211898,
+            0.2553621913211898,
+            0.2798029418294124,
+            0.2798029418294124,
+            0.3143681513570261,
+            0.3143681513570261
+          ]
+        },
+        "initial": 0.2553621913211898,
+        "final": 0.3143681513570261,
+        "reward_source": "train_reward"
+      },
+      "run_id": "healthbench_proposer_mini",
+      "manifest_snapshot_path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/manifest_snapshots/healthbench_mini.result_manifest.json",
+      "source_ref": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/manifest_snapshots/healthbench_mini.result_manifest.json",
+        "sha256": "05a32c98325f8bd376637e15f333ff75f471a241c05f78d11a7ea08acfce22b4",
+        "bytes": 3529,
+        "exists": true
+      }
+    },
+    {
+      "task": "healthbench",
+      "proposer_slug": "gpt54",
+      "proposer_label": "gpt-5.4",
+      "proposer_auth_mode": "chatgpt",
+      "status": "available",
+      "comparison_heldout_seed_reward": 0.2547314326739686,
+      "initial_observed_reward": 0.25565582187364394,
+      "best_observed_reward": 0.3386648064383831,
+      "best_observed_reward_source": "train_reward",
+      "proposer_calls": 2,
+      "proposer_tokens": 2736992,
+      "total_cost_usd": 0.0,
+      "notes": "heldout skipped; observed train optimization reward shown",
+      "curve": {
+        "x": {
+          "candidate": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        "y": {
+          "best_observed_score": [
+            0.25565582187364394,
+            0.3386648064383831,
+            0.3386648064383831,
+            0.3386648064383831
+          ]
+        },
+        "initial": 0.25565582187364394,
+        "final": 0.3386648064383831,
+        "reward_source": "train_reward"
+      },
+      "run_id": "healthbench_proposer_gpt54_rerun_20260604T0555",
+      "manifest_snapshot_path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/manifest_snapshots/healthbench_gpt54.result_manifest.json",
+      "source_ref": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/manifest_snapshots/healthbench_gpt54.result_manifest.json",
+        "sha256": "34787db0577da109f134bb3010b1fa1aab72584f5794217a328200341d47351c",
+        "bytes": 3794,
+        "exists": true
+      }
+    },
+    {
+      "task": "tau2_retail",
+      "proposer_slug": "nano",
+      "proposer_label": "gpt-5.4-nano",
+      "proposer_auth_mode": "api_key",
+      "status": "available",
+      "comparison_heldout_seed_reward": 0.38,
+      "initial_observed_reward": 0.6,
+      "best_observed_reward": 0.6,
+      "best_observed_reward_source": "train_reward",
+      "proposer_calls": 3,
+      "proposer_tokens": 174503,
+      "total_cost_usd": 2.5996006749999996,
+      "notes": "heldout skipped; observed train optimization reward shown",
+      "curve": {
+        "x": {
+          "candidate": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        "y": {
+          "best_observed_score": [
+            0.6,
+            0.6,
+            0.6,
+            0.6
+          ]
+        },
+        "initial": 0.6,
+        "final": 0.6,
+        "reward_source": "train_reward"
+      },
+      "run_id": "tau2_retail_proposer_nano_rerun_20260604T0523",
+      "manifest_snapshot_path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/manifest_snapshots/tau2_retail_nano.result_manifest.json",
+      "source_ref": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/manifest_snapshots/tau2_retail_nano.result_manifest.json",
+        "sha256": "a8ea62328a99d9d69443f6bb6606fed1627d0010b8e06a55c836b2484af679f1",
+        "bytes": 1223,
+        "exists": true
+      }
+    },
+    {
+      "task": "tau2_retail",
+      "proposer_slug": "mini",
+      "proposer_label": "gpt-5.4-mini",
+      "proposer_auth_mode": "chatgpt",
+      "status": "available",
+      "comparison_heldout_seed_reward": 0.38,
+      "initial_observed_reward": 0.5666666666666667,
+      "best_observed_reward": 0.6,
+      "best_observed_reward_source": "train_reward",
+      "proposer_calls": 3,
+      "proposer_tokens": 262561,
+      "total_cost_usd": 2.6915854749999992,
+      "notes": "heldout skipped; observed train optimization reward shown",
+      "curve": {
+        "x": {
+          "candidate": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        "y": {
+          "best_observed_score": [
+            0.5666666666666667,
+            0.5666666666666667,
+            0.5666666666666667,
+            0.6
+          ]
+        },
+        "initial": 0.5666666666666667,
+        "final": 0.6,
+        "reward_source": "train_reward"
+      },
+      "run_id": "tau2_retail_proposer_mini_rerun_20260604T0523",
+      "manifest_snapshot_path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/manifest_snapshots/tau2_retail_mini.result_manifest.json",
+      "source_ref": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/manifest_snapshots/tau2_retail_mini.result_manifest.json",
+        "sha256": "b96f3976967172d17f441af8acf6ae82359562a1e1474618ee37c71b035e8e77",
+        "bytes": 3730,
+        "exists": true
+      }
+    },
+    {
+      "task": "tau2_retail",
+      "proposer_slug": "gpt54",
+      "proposer_label": "gpt-5.4",
+      "proposer_auth_mode": "chatgpt",
+      "status": "available",
+      "comparison_heldout_seed_reward": 0.38,
+      "initial_observed_reward": 0.6333333333333333,
+      "best_observed_reward": 0.6666666666666666,
+      "best_observed_reward_source": "train_reward",
+      "proposer_calls": 3,
+      "proposer_tokens": 299693,
+      "total_cost_usd": 2.696295100000001,
+      "notes": "heldout skipped; observed train optimization reward shown",
+      "curve": {
+        "x": {
+          "candidate": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        "y": {
+          "best_observed_score": [
+            0.6333333333333333,
+            0.6333333333333333,
+            0.6666666666666666,
+            0.6666666666666666
+          ]
+        },
+        "initial": 0.6333333333333333,
+        "final": 0.6666666666666666,
+        "reward_source": "train_reward"
+      },
+      "run_id": "tau2_retail_proposer_gpt54_rerun_20260604T0523",
+      "manifest_snapshot_path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/manifest_snapshots/tau2_retail_gpt54.result_manifest.json",
+      "source_ref": {
+        "path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/manifest_snapshots/tau2_retail_gpt54.result_manifest.json",
+        "sha256": "be1b9c98c11b7037478f04d61790ba2218828630342453786a3f638ce4af6236",
+        "bytes": 3781,
+        "exists": true
+      }
+    }
+  ]
+}

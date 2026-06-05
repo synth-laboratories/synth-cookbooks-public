@@ -1,0 +1,6 @@
+# Local scratch from pre-`charts/` layout and interrupted reruns.
+# Do not commit these as public launch evidence.
+/chart-*/
+RERUN_HANDOFF.md
+__pycache__/
+**/__pycache__/

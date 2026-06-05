@@ -1,0 +1,46 @@
+{
+  "schema": "chart_d_manifest_snapshot.v3",
+  "task": "tau2_retail",
+  "proposer_slug": "nano",
+  "proposer_label": "gpt-5.4-nano",
+  "run_id": "tau2_retail_proposer_nano_rerun_20260604T0523",
+  "source_manifest": {
+    "sha256": "77f784a52475368882f6ce5fd2d7eaee84318ae494809cdd8a42a6f80e0f2042",
+    "bytes": 2332053
+  },
+  "policy_models_observed": [
+    "gemini/gemini-3.1-flash-lite"
+  ],
+  "split": {
+    "heldout_count": 100,
+    "heldout_split": "test",
+    "policy_model": "gemini/gemini-3.1-flash-lite",
+    "policy_provider": "openai",
+    "proposer_model": "gpt-5.4-nano",
+    "run_id": "tau2_retail_proposer_nano_rerun_20260604T0523",
+    "train_count": 30,
+    "train_split": "train"
+  },
+  "usage": {
+    "completion_tokens": 506,
+    "prompt_tokens": 173997,
+    "proposer_calls": 3,
+    "rollout_calls": 240,
+    "total_tokens": 174503
+  },
+  "cost_usd": 2.5996006749999996,
+  "stopped_by": {
+    "kind": "max_generations",
+    "n": 3
+  },
+  "best_candidate": {
+    "candidate_id": "gepa_4e5da76f42c3",
+    "parent_id": null,
+    "source": "seed",
+    "status": "full_train_evaluated",
+    "train_reward": 0.6,
+    "heldout_reward": null,
+    "acceptance_score": null,
+    "minibatch_reward": null
+  }
+}

@@ -1,0 +1,371 @@
+{
+  "benchmark": "hotpotqa",
+  "stacks": [
+    "gepa_ai",
+    "synth_gepa"
+  ],
+  "run_commands": [
+    {
+      "command_id": "cf823f14-e484-427e-82d2-2d4b43c832c1",
+      "phase": "run",
+      "stack": "synth_gepa",
+      "benchmark": "hotpotqa",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "hotpotqa",
+        "--stack",
+        "synth_gepa"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/hotpotqa/synth_gepa_hotpotqa_20260602T023246/gepa_run.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/hotpotqa/synth_gepa_hotpotqa_20260602T023246"
+      ],
+      "started_at": "2026-06-02T02:32:46.804110+00:00",
+      "finished_at": "2026-06-02T02:47:15.972558+00:00",
+      "exit_code": 0
+    },
+    {
+      "command_id": "1863d3a4-2fe2-4ec4-a5cc-2575ded15d08",
+      "phase": "run",
+      "stack": "gepa_ai",
+      "benchmark": "hotpotqa",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        ".",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "hotpotqa",
+        "--stack",
+        "gepa_ai"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/hotpotqa.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/hotpotqa/gepa_ai_hotpotqa_20260602T024908"
+      ],
+      "started_at": "2026-06-02T02:49:08.045689+00:00",
+      "finished_at": "2026-06-02T03:04:18.908139+00:00",
+      "exit_code": 0
+    },
+    {
+      "command_id": "413090c7-f4ca-4160-9533-b384208684c3",
+      "phase": "run",
+      "stack": "gepa_ai",
+      "benchmark": "hotpotqa",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        ".",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "hotpotqa",
+        "--stack",
+        "gepa_ai"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/hotpotqa.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/hotpotqa/gepa_ai_hotpotqa_20260604T034126"
+      ],
+      "started_at": "2026-06-04T03:41:26.365407+00:00",
+      "finished_at": "2026-06-04T03:55:17.532014+00:00",
+      "exit_code": 0
+    },
+    {
+      "command_id": "819c6ba8-6092-491f-804c-ee18984a8f45",
+      "phase": "run",
+      "stack": "synth_gepa",
+      "benchmark": "hotpotqa",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "hotpotqa",
+        "--stack",
+        "synth_gepa"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/hotpotqa/synth_gepa_hotpotqa_20260604T034126/gepa_run.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/hotpotqa/synth_gepa_hotpotqa_20260604T034126"
+      ],
+      "started_at": "2026-06-04T03:41:26.589429+00:00",
+      "finished_at": "2026-06-04T04:08:21.136786+00:00",
+      "exit_code": 0
+    },
+    {
+      "command_id": "d3a992fa-1358-48b0-99ac-70d756c144d6",
+      "phase": "run",
+      "stack": "gepa_ai",
+      "benchmark": "hotpotqa",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        ".",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "hotpotqa",
+        "--stack",
+        "gepa_ai"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/hotpotqa.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/hotpotqa/gepa_ai_hotpotqa_20260604T051635"
+      ],
+      "started_at": "2026-06-04T05:16:35.282242+00:00",
+      "finished_at": "2026-06-04T05:21:21.528967+00:00",
+      "exit_code": 0
+    }
+  ],
+  "num_candidates_total": 20,
+  "per_stack": {
+    "gepa_ai": {
+      "run_commands": [
+        {
+          "command_id": "1863d3a4-2fe2-4ec4-a5cc-2575ded15d08",
+          "phase": "run",
+          "stack": "gepa_ai",
+          "benchmark": "hotpotqa",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            ".",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "hotpotqa",
+            "--stack",
+            "gepa_ai"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/hotpotqa.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/hotpotqa/gepa_ai_hotpotqa_20260602T024908"
+          ],
+          "started_at": "2026-06-02T02:49:08.045689+00:00",
+          "finished_at": "2026-06-02T03:04:18.908139+00:00",
+          "exit_code": 0
+        },
+        {
+          "command_id": "413090c7-f4ca-4160-9533-b384208684c3",
+          "phase": "run",
+          "stack": "gepa_ai",
+          "benchmark": "hotpotqa",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            ".",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "hotpotqa",
+            "--stack",
+            "gepa_ai"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/hotpotqa.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/hotpotqa/gepa_ai_hotpotqa_20260604T034126"
+          ],
+          "started_at": "2026-06-04T03:41:26.365407+00:00",
+          "finished_at": "2026-06-04T03:55:17.532014+00:00",
+          "exit_code": 0
+        },
+        {
+          "command_id": "d3a992fa-1358-48b0-99ac-70d756c144d6",
+          "phase": "run",
+          "stack": "gepa_ai",
+          "benchmark": "hotpotqa",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            ".",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "hotpotqa",
+            "--stack",
+            "gepa_ai"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/hotpotqa.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/hotpotqa/gepa_ai_hotpotqa_20260604T051635"
+          ],
+          "started_at": "2026-06-04T05:16:35.282242+00:00",
+          "finished_at": "2026-06-04T05:21:21.528967+00:00",
+          "exit_code": 0
+        }
+      ],
+      "run_ids": [
+        "gepa_ai_hotpotqa_20260604T051635"
+      ],
+      "num_candidates": 11,
+      "seed_heldout_score": 0.7009385531135531,
+      "best_heldout_score": 0.7483644827394828,
+      "mean_heldout_score": 0.7251141911119183,
+      "lift_over_seed": 0.04742592962592962,
+      "candidates_with_heldout": 11,
+      "total_rollouts": 796,
+      "total_cost_usd": 0.4770827,
+      "total_rollout_cost_usd": 0.1489907,
+      "total_proposer_cost_usd": 0.328092,
+      "total_elapsed_seconds": 284.64,
+      "cost_metered_usd": 0.4770827,
+      "cost_with_codex_subscription_usd": 0.1489907,
+      "best_candidate_id": "gepa_ai_cand_10",
+      "best_at_rollouts": 796,
+      "best_at_cost_usd": 0.4770827,
+      "best_at_elapsed_seconds": 284.64
+    },
+    "synth_gepa": {
+      "run_commands": [
+        {
+          "command_id": "cf823f14-e484-427e-82d2-2d4b43c832c1",
+          "phase": "run",
+          "stack": "synth_gepa",
+          "benchmark": "hotpotqa",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "hotpotqa",
+            "--stack",
+            "synth_gepa"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/hotpotqa/synth_gepa_hotpotqa_20260602T023246/gepa_run.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/hotpotqa/synth_gepa_hotpotqa_20260602T023246"
+          ],
+          "started_at": "2026-06-02T02:32:46.804110+00:00",
+          "finished_at": "2026-06-02T02:47:15.972558+00:00",
+          "exit_code": 0
+        },
+        {
+          "command_id": "819c6ba8-6092-491f-804c-ee18984a8f45",
+          "phase": "run",
+          "stack": "synth_gepa",
+          "benchmark": "hotpotqa",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "hotpotqa",
+            "--stack",
+            "synth_gepa"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/hotpotqa/synth_gepa_hotpotqa_20260604T034126/gepa_run.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/hotpotqa/synth_gepa_hotpotqa_20260604T034126"
+          ],
+          "started_at": "2026-06-04T03:41:26.589429+00:00",
+          "finished_at": "2026-06-04T04:08:21.136786+00:00",
+          "exit_code": 0
+        }
+      ],
+      "run_ids": [
+        "synth_gepa_hotpotqa_20260604T034126"
+      ],
+      "num_candidates": 9,
+      "seed_heldout_score": 0.7010136446886448,
+      "best_heldout_score": 0.7067596764346764,
+      "mean_heldout_score": 0.6906159208075875,
+      "lift_over_seed": 0.00574603174603161,
+      "candidates_with_heldout": 9,
+      "total_rollouts": 840,
+      "total_cost_usd": 0.35693135,
+      "total_rollout_cost_usd": 0.1391228,
+      "total_proposer_cost_usd": 0.21780855,
+      "total_elapsed_seconds": 561.843,
+      "cost_metered_usd": 0.35693135,
+      "cost_with_codex_subscription_usd": 0.1391228,
+      "best_candidate_id": "gepa_880a2d516ca3",
+      "best_at_rollouts": 840,
+      "best_at_cost_usd": 0.35693135,
+      "best_at_elapsed_seconds": 561.246
+    }
+  },
+  "parity_controls_path": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/evidence/parity_controls.json"
+}

@@ -1,0 +1,66 @@
+# Experiment records
+
+**Primary organization for this blog cookbook.** Each runnable cell gets one
+folder: container × chart × setup (for example HealthBench Pro · Chart A · Synth
+GEPA).
+
+Chart producers under [`../charts/`](../charts/) currently read the shared eval
+evidence and Chart D manifest snapshots, then write derived JSON to
+`charts/<chart>/figures/`. These records are the compact per-cell provenance
+index for that generated evidence.
+
+Master status grid: [blog README § Experiments](../README.md#experiments).
+
+## Folder layout
+
+```text
+experiment_records/
+  README.md
+  <container>__chart_<letter>__<setup>/
+    README.md           # run id, key metrics, source packets, checksums
+    config/             # optional future copy of TOML/adapter config
+    run_manifest.json   # optional future compact run manifest
+    evidence/           # optional future copied summary/checksum packet
+    derived/            # optional future chart-specific slice
+```
+
+Naming convention: lowercase container slug, double underscore separators,
+setup slug with dots preserved (`gpt-5.4-nano`).
+
+Use [`../blog_paths.py`](../blog_paths.py) helpers:
+
+```python
+from blog_paths import experiment_dir
+experiment_dir("healthbench_pro", "a", "synth_gepa")
+# → experiment_records/healthbench_pro__chart_a__synth_gepa/
+```
+
+## Where raw runs live
+
+Full run artifacts (manifests, SQLite, traces) stay in gitignored `runs/` trees:
+
+| Experiment type | Raw run location |
+|-----------------|------------------|
+| E01 parity (Charts A, C, H) | `cookbooks/optimizers/gepa/evals/runs/<stack>/<benchmark>/` |
+| E05 proposer (Chart D) | `charts/chart-d-proposer-scaling/runs/final_20260603/` |
+
+The current launch packet uses committed per-cell `README.md` records rather
+than copying raw run artifacts. Each README points at the authoritative
+checksummed summary packet, aggregate JSONL packet, or compact Chart D manifest
+snapshot.
+
+## Migration status
+
+Current launch scope is limited to HealthBench Pro, tau2-bench retail,
+Banking77, and HotpotQA for Charts A/C, plus the HealthBench Pro and tau2-bench
+retail proposer sweep for Chart D.
+
+Backfill status:
+
+1. DONE cells: launch-scope Chart A/C rows for HealthBench Pro, tau2-bench
+   retail, Banking77, and HotpotQA have per-cell README records.
+2. DONE cells: Chart D proposer sweep rows for HealthBench Pro and tau2-bench
+   retail have per-cell README records.
+3. POST-LAUNCH ONLY: Harvey, TaxCalcBench, FinQA, TBLite, Crafter, MiniGrid,
+   DungeonGrid, and LangProbe-style addenda require fresh evidence packets and
+   explicit MDX re-add before they can appear in any public chart.

@@ -1,12 +1,12 @@
-Synth GEPA vs gepa-ai — tau2_retail  (equal search-rollout budget = 400)
+Synth GEPA vs gepa-ai — tau2_retail  (equal search-rollout budget = 170)
 ========================================================================
 ── Headline ──────────────────────────────────────────────────────
-  joint Pareto frontier size (both stacks pooled): 5
-  gepa_ai              candidates= 10  seed=0.298  best=0.447  lift=+0.149  mov.avg slope=N/A/cand  rollouts=360  cost(metered)=$1.5685  cost(codex-sub)=$0.0000  time=3580s  pareto=4/5 (80%)
-  synth_gepa           candidates=  4  seed=0.298  best=0.394  lift=+0.096  mov.avg slope=N/A/cand  rollouts=75  cost(metered)=$0.7647  cost(codex-sub)=$0.0000  time=767s  pareto=1/5 (20%)
+  joint Pareto frontier size (both stacks pooled): 2
+  gepa_ai              candidates=  4  seed=0.380  best=0.400  lift=+0.020  mov.avg slope=N/A/cand  rollouts=129  cost(metered)=$0.2685  cost(codex-sub)=$0.0000  time=705s  pareto=1/2 (50%)
+  synth_gepa           candidates=  5  seed=0.380  best=0.430  lift=+0.050  mov.avg slope=N/A/cand  rollouts=154  cost(metered)=$0.6010  cost(codex-sub)=$0.0000  time=1733s  pareto=1/2 (50%)
 
 ── Cumulative seed coverage (reward >= 1 by >=1 candidate) ──
-  gepa_ai              train=19/20 (best 1 cand 14)   heldout=75/94 (best 1 cand 42)
-  synth_gepa           train=17/20 (best 1 cand 12)   heldout=58/94 (best 1 cand 37)
-  joint heldout: 81/94 ever solved  |  never solved by anyone: 13
-  joint train  : 19/20 ever solved  |  never solved by anyone: 1
+  gepa_ai              train=22/30 (best 1 cand 17)   heldout=62/100 (best 1 cand 40)
+  synth_gepa           train=26/30 (best 1 cand 19)   heldout=63/100 (best 1 cand 43)
+  joint heldout: 74/100 ever solved  |  never solved by anyone: 26
+  joint train  : 28/30 ever solved  |  never solved by anyone: 2

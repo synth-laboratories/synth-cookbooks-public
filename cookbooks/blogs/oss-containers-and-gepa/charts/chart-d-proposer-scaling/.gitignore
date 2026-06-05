@@ -1,0 +1,8 @@
+# Local one-off rerun/debug helpers. `run_sweep.sh` and `build_chart.py` are the
+# canonical public Chart D surfaces.
+gen_interim_proposer.py
+run_healthbench_sweep.sh
+run_nano_sweep.sh
+run_tau2_sweep.sh
+scale_proposer_configs.py
+watch_chartd_board.py

@@ -1,0 +1,298 @@
+{
+  "chart": "core_gepa_head_to_head",
+  "generated_from": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-a-head-to-head",
+  "source_evidence_path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-a-head-to-head/figures/source_evidence.json",
+  "definition": "Same-container Synth GEPA vs gepa-ai: best heldout, cumulative heldout coverage, available train metadata, and joint-Pareto frontier size",
+  "tasks": [
+    {
+      "key": "healthbench",
+      "label": "HealthBench Pro"
+    },
+    {
+      "key": "tau2_retail",
+      "label": "tau2-bench retail"
+    },
+    {
+      "key": "banking77",
+      "label": "Banking77"
+    },
+    {
+      "key": "hotpotqa",
+      "label": "HotpotQA"
+    }
+  ],
+  "rows": [
+    {
+      "task": "healthbench",
+      "task_label": "HealthBench Pro",
+      "stack": "gepa-ai",
+      "stack_id": "gepa_ai",
+      "heldout_reward": 0.35265410417293763,
+      "seed_heldout_reward": 0.25166131092793886,
+      "lift_over_seed": 0.10099279324499877,
+      "heldout_pct_over_seed": 40.1304,
+      "seed_heldout_cumulative_solved": 103.0,
+      "heldout_cumulative_solved": 157,
+      "coverage_pct_over_seed_baseline": 52.4272,
+      "heldout_seeds_total": 200,
+      "train_cumulative_solved": 86,
+      "train_seeds_total": 100,
+      "joint_pareto_points": 3,
+      "joint_pareto_share": 0.5,
+      "best_candidate_id": "gepa_ai_cand_4",
+      "candidate_count": 21,
+      "rollout_calls": 1368,
+      "total_cost_usd": 1.0728574,
+      "codex_subscription_cost_usd": 0.5538274,
+      "wall_clock_s": 1061.061,
+      "source": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/healthbench/summary.json",
+      "source_ref": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/healthbench/summary.json",
+        "sha256": "507c515535fe25be91f7e7b2ccfafaecf16d3074ffcf071c88d367fc32d208cb",
+        "bytes": 9253
+      },
+      "run_ids": [
+        "gepa_ai_healthbench_20260603T010401"
+      ],
+      "status": "available"
+    },
+    {
+      "task": "healthbench",
+      "task_label": "HealthBench Pro",
+      "stack": "Synth GEPA",
+      "stack_id": "synth_gepa",
+      "heldout_reward": 0.3609311821772041,
+      "seed_heldout_reward": 0.2547314326739686,
+      "lift_over_seed": 0.10619974950323552,
+      "heldout_pct_over_seed": 41.6909,
+      "seed_heldout_cumulative_solved": 105.0,
+      "heldout_cumulative_solved": 158,
+      "coverage_pct_over_seed_baseline": 50.4762,
+      "heldout_seeds_total": 200,
+      "train_cumulative_solved": 77,
+      "train_seeds_total": 100,
+      "joint_pareto_points": 3,
+      "joint_pareto_share": 0.5,
+      "best_candidate_id": "gepa_33b35da45b3d",
+      "candidate_count": 17,
+      "rollout_calls": 1240,
+      "total_cost_usd": 1.0870517,
+      "codex_subscription_cost_usd": 0.3972875,
+      "wall_clock_s": 1010.515,
+      "source": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/healthbench/summary.json",
+      "source_ref": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/healthbench/summary.json",
+        "sha256": "507c515535fe25be91f7e7b2ccfafaecf16d3074ffcf071c88d367fc32d208cb",
+        "bytes": 9253
+      },
+      "run_ids": [
+        "synth_gepa_healthbench_20260603T010401"
+      ],
+      "status": "available"
+    },
+    {
+      "task": "tau2_retail",
+      "task_label": "tau2-bench retail",
+      "stack": "gepa-ai",
+      "stack_id": "gepa_ai",
+      "heldout_reward": 0.4,
+      "seed_heldout_reward": 0.38,
+      "lift_over_seed": 0.020000000000000018,
+      "heldout_pct_over_seed": 5.2632,
+      "seed_heldout_cumulative_solved": 38.0,
+      "heldout_cumulative_solved": 62,
+      "coverage_pct_over_seed_baseline": 63.1579,
+      "heldout_seeds_total": 100,
+      "train_cumulative_solved": 22,
+      "train_seeds_total": 30,
+      "joint_pareto_points": 1,
+      "joint_pareto_share": 0.5,
+      "best_candidate_id": "gepa_ai_cand_3",
+      "candidate_count": 4,
+      "rollout_calls": 129,
+      "total_cost_usd": 0.26854815,
+      "codex_subscription_cost_usd": 0,
+      "wall_clock_s": 704.876,
+      "source": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/tau2_retail/summary.json",
+      "source_ref": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/tau2_retail/summary.json",
+        "sha256": "810c9356333cd674bd34cff472883af9207365fde74c6e3ed6f009b3dcaed188",
+        "bytes": 7090
+      },
+      "run_ids": [
+        "gepa_ai_tau2_retail_20260604T062038"
+      ],
+      "status": "available"
+    },
+    {
+      "task": "tau2_retail",
+      "task_label": "tau2-bench retail",
+      "stack": "Synth GEPA",
+      "stack_id": "synth_gepa",
+      "heldout_reward": 0.43,
+      "seed_heldout_reward": 0.38,
+      "lift_over_seed": 0.04999999999999999,
+      "heldout_pct_over_seed": 13.1579,
+      "seed_heldout_cumulative_solved": 38.0,
+      "heldout_cumulative_solved": 63,
+      "coverage_pct_over_seed_baseline": 65.7895,
+      "heldout_seeds_total": 100,
+      "train_cumulative_solved": 26,
+      "train_seeds_total": 30,
+      "joint_pareto_points": 1,
+      "joint_pareto_share": 0.5,
+      "best_candidate_id": "gepa_dc371627744d",
+      "candidate_count": 5,
+      "rollout_calls": 154,
+      "total_cost_usd": 0.6010227,
+      "codex_subscription_cost_usd": 0,
+      "wall_clock_s": 1732.639,
+      "source": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/tau2_retail/summary.json",
+      "source_ref": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/tau2_retail/summary.json",
+        "sha256": "810c9356333cd674bd34cff472883af9207365fde74c6e3ed6f009b3dcaed188",
+        "bytes": 7090
+      },
+      "run_ids": [
+        "synth_gepa_tau2_retail_20260604T054841"
+      ],
+      "status": "available"
+    },
+    {
+      "task": "banking77",
+      "task_label": "Banking77",
+      "stack": "gepa-ai",
+      "stack_id": "gepa_ai",
+      "heldout_reward": 0.785,
+      "seed_heldout_reward": 0.765,
+      "lift_over_seed": 0.020000000000000018,
+      "heldout_pct_over_seed": 2.6144,
+      "seed_heldout_cumulative_solved": 153.0,
+      "heldout_cumulative_solved": 182,
+      "coverage_pct_over_seed_baseline": 18.9542,
+      "heldout_seeds_total": 200,
+      "train_cumulative_solved": 100,
+      "train_seeds_total": 100,
+      "joint_pareto_points": 3,
+      "joint_pareto_share": 0.6,
+      "best_candidate_id": "gepa_ai_cand_12",
+      "candidate_count": 20,
+      "rollout_calls": 1358,
+      "total_cost_usd": 0.41053415,
+      "codex_subscription_cost_usd": 0.1945715,
+      "wall_clock_s": 401.258,
+      "source": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/banking77/summary.json",
+      "source_ref": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/banking77/summary.json",
+        "sha256": "81dc155842af817538e7fe22b9263264a4a316b626636c773e1f2c8e8e310429",
+        "bytes": 9276
+      },
+      "run_ids": [
+        "gepa_ai_banking77_20260602T014916"
+      ],
+      "status": "available"
+    },
+    {
+      "task": "banking77",
+      "task_label": "Banking77",
+      "stack": "Synth GEPA",
+      "stack_id": "synth_gepa",
+      "heldout_reward": 0.785,
+      "seed_heldout_reward": 0.75,
+      "lift_over_seed": 0.03500000000000003,
+      "heldout_pct_over_seed": 4.6667,
+      "seed_heldout_cumulative_solved": 150.0,
+      "heldout_cumulative_solved": 177,
+      "coverage_pct_over_seed_baseline": 18.0,
+      "heldout_seeds_total": 200,
+      "train_cumulative_solved": 97,
+      "train_seeds_total": 100,
+      "joint_pareto_points": 2,
+      "joint_pareto_share": 0.4,
+      "best_candidate_id": "gepa_c270760562a4",
+      "candidate_count": 17,
+      "rollout_calls": 1140,
+      "total_cost_usd": 1.08290545,
+      "codex_subscription_cost_usd": 0.1245763,
+      "wall_clock_s": 962.548,
+      "source": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/banking77/summary.json",
+      "source_ref": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/banking77/summary.json",
+        "sha256": "81dc155842af817538e7fe22b9263264a4a316b626636c773e1f2c8e8e310429",
+        "bytes": 9276
+      },
+      "run_ids": [
+        "synth_gepa_banking77_20260602T012632"
+      ],
+      "status": "available"
+    },
+    {
+      "task": "hotpotqa",
+      "task_label": "HotpotQA",
+      "stack": "gepa-ai",
+      "stack_id": "gepa_ai",
+      "heldout_reward": 0.7483644827394828,
+      "seed_heldout_reward": 0.7009385531135531,
+      "lift_over_seed": 0.04742592962592962,
+      "heldout_pct_over_seed": 6.7661,
+      "seed_heldout_cumulative_solved": 116.0,
+      "heldout_cumulative_solved": 145,
+      "coverage_pct_over_seed_baseline": 25.0,
+      "heldout_seeds_total": 200,
+      "train_cumulative_solved": 0,
+      "train_seeds_total": 0,
+      "joint_pareto_points": 5,
+      "joint_pareto_share": 0.8333333333333334,
+      "best_candidate_id": "gepa_ai_cand_10",
+      "candidate_count": 11,
+      "rollout_calls": 796,
+      "total_cost_usd": 0.4770827,
+      "codex_subscription_cost_usd": 0.1489907,
+      "wall_clock_s": 284.64,
+      "source": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/hotpotqa/summary.json",
+      "source_ref": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/hotpotqa/summary.json",
+        "sha256": "4dbb2357d51a571d7bd00c3e141d64aec5b30eb40877ae61ea406d538176f555",
+        "bytes": 9392
+      },
+      "run_ids": [
+        "gepa_ai_hotpotqa_20260604T051635"
+      ],
+      "status": "available"
+    },
+    {
+      "task": "hotpotqa",
+      "task_label": "HotpotQA",
+      "stack": "Synth GEPA",
+      "stack_id": "synth_gepa",
+      "heldout_reward": 0.7067596764346764,
+      "seed_heldout_reward": 0.7010136446886448,
+      "lift_over_seed": 0.00574603174603161,
+      "heldout_pct_over_seed": 0.8197,
+      "seed_heldout_cumulative_solved": 116.0,
+      "heldout_cumulative_solved": 142,
+      "coverage_pct_over_seed_baseline": 22.4138,
+      "heldout_seeds_total": 200,
+      "train_cumulative_solved": 0,
+      "train_seeds_total": 0,
+      "joint_pareto_points": 1,
+      "joint_pareto_share": 0.16666666666666666,
+      "best_candidate_id": "gepa_880a2d516ca3",
+      "candidate_count": 9,
+      "rollout_calls": 840,
+      "total_cost_usd": 0.35693135,
+      "codex_subscription_cost_usd": 0.1391228,
+      "wall_clock_s": 561.843,
+      "source": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/hotpotqa/summary.json",
+      "source_ref": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/hotpotqa/summary.json",
+        "sha256": "4dbb2357d51a571d7bd00c3e141d64aec5b30eb40877ae61ea406d538176f555",
+        "bytes": 9392
+      },
+      "run_ids": [
+        "synth_gepa_hotpotqa_20260604T034126"
+      ],
+      "status": "available"
+    }
+  ]
+}

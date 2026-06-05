@@ -1,0 +1,70 @@
+{
+  "chart": "core_gepa_head_to_head",
+  "generated_from": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-a-head-to-head",
+  "evidence": [
+    {
+      "task": "healthbench",
+      "summary": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/healthbench/summary.json",
+        "sha256": "507c515535fe25be91f7e7b2ccfafaecf16d3074ffcf071c88d367fc32d208cb",
+        "bytes": 9253
+      },
+      "run_ids": {
+        "gepa_ai": [
+          "gepa_ai_healthbench_20260603T010401"
+        ],
+        "synth_gepa": [
+          "synth_gepa_healthbench_20260603T010401"
+        ]
+      }
+    },
+    {
+      "task": "tau2_retail",
+      "summary": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/tau2_retail/summary.json",
+        "sha256": "810c9356333cd674bd34cff472883af9207365fde74c6e3ed6f009b3dcaed188",
+        "bytes": 7090
+      },
+      "run_ids": {
+        "gepa_ai": [
+          "gepa_ai_tau2_retail_20260604T062038"
+        ],
+        "synth_gepa": [
+          "synth_gepa_tau2_retail_20260604T054841"
+        ]
+      }
+    },
+    {
+      "task": "banking77",
+      "summary": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/banking77/summary.json",
+        "sha256": "81dc155842af817538e7fe22b9263264a4a316b626636c773e1f2c8e8e310429",
+        "bytes": 9276
+      },
+      "run_ids": {
+        "gepa_ai": [
+          "gepa_ai_banking77_20260602T014916"
+        ],
+        "synth_gepa": [
+          "synth_gepa_banking77_20260602T012632"
+        ]
+      }
+    },
+    {
+      "task": "hotpotqa",
+      "summary": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/hotpotqa/summary.json",
+        "sha256": "4dbb2357d51a571d7bd00c3e141d64aec5b30eb40877ae61ea406d538176f555",
+        "bytes": 9392
+      },
+      "run_ids": {
+        "gepa_ai": [
+          "gepa_ai_hotpotqa_20260604T051635"
+        ],
+        "synth_gepa": [
+          "synth_gepa_hotpotqa_20260604T034126"
+        ]
+      }
+    }
+  ]
+}

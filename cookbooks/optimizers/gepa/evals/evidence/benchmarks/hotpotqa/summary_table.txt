@@ -1,0 +1,12 @@
+Synth GEPA vs gepa-ai — hotpotqa  (equal search-rollout budget = 840)
+========================================================================
+── Headline ──────────────────────────────────────────────────────
+  joint Pareto frontier size (both stacks pooled): 6
+  gepa_ai              candidates= 11  seed=0.701  best=0.748  lift=+0.047  mov.avg slope=N/A/cand  rollouts=796  cost(metered)=$0.4771  cost(codex-sub)=$0.1490  time=285s  pareto=5/6 (83%)
+  synth_gepa           candidates=  9  seed=0.701  best=0.707  lift=+0.006  mov.avg slope=N/A/cand  rollouts=840  cost(metered)=$0.3569  cost(codex-sub)=$0.1391  time=562s  pareto=1/6 (17%)
+
+── Cumulative seed coverage (reward >= 1 by >=1 candidate) ──
+  gepa_ai              train=0/0 (best 1 cand 0)   heldout=145/200 (best 1 cand 125)
+  synth_gepa           train=0/0 (best 1 cand 0)   heldout=142/200 (best 1 cand 116)
+  joint heldout: 149/200 ever solved  |  never solved by anyone: 51
+  joint train  : 0/0 ever solved  |  never solved by anyone: 0

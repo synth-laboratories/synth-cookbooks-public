@@ -1,0 +1,4 @@
+# Runner-expanded configs are generated scratch. Keep only canonical sweep TOML.
+*.sdk.toml
+*.sdk.toml.stale_*
+*.runner_*.sdk.toml

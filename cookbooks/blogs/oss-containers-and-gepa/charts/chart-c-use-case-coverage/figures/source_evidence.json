@@ -1,0 +1,94 @@
+{
+  "chart": "use_case_heldout_coverage",
+  "generated_from": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-c-use-case-coverage",
+  "evidence": [
+    {
+      "source": "heldout_evaluations",
+      "ref": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/heldout_evaluations.jsonl",
+        "sha256": "50626f095145bf1ab1e8334ddfd95132f409ff714ae833a8597d476199a9ae4e",
+        "bytes": 8013074
+      }
+    },
+    {
+      "source": "train_evaluations",
+      "ref": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/train_evaluations.jsonl",
+        "sha256": "7b15b16775ebc1d981ace67831bb382e48cdfc997efbda699e621ad2e99a6e73",
+        "bytes": 2956982
+      }
+    },
+    {
+      "source": "candidate_timeline",
+      "ref": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/candidate_timeline.jsonl",
+        "sha256": "3c426a874a736ff9d4ede88c6055e59ea3637ebdd4377e03b4f037f1772991ee",
+        "bytes": 447992
+      }
+    },
+    {
+      "benchmark": "healthbench",
+      "summary": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/healthbench/summary.json",
+        "sha256": "507c515535fe25be91f7e7b2ccfafaecf16d3074ffcf071c88d367fc32d208cb",
+        "bytes": 9253
+      },
+      "run_ids": {
+        "synth_gepa": [
+          "synth_gepa_healthbench_20260603T010401"
+        ],
+        "gepa_ai": [
+          "gepa_ai_healthbench_20260603T010401"
+        ]
+      }
+    },
+    {
+      "benchmark": "tau2_retail",
+      "summary": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/tau2_retail/summary.json",
+        "sha256": "810c9356333cd674bd34cff472883af9207365fde74c6e3ed6f009b3dcaed188",
+        "bytes": 7090
+      },
+      "run_ids": {
+        "synth_gepa": [
+          "synth_gepa_tau2_retail_20260604T054841"
+        ],
+        "gepa_ai": [
+          "gepa_ai_tau2_retail_20260604T062038"
+        ]
+      }
+    },
+    {
+      "benchmark": "banking77",
+      "summary": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/banking77/summary.json",
+        "sha256": "81dc155842af817538e7fe22b9263264a4a316b626636c773e1f2c8e8e310429",
+        "bytes": 9276
+      },
+      "run_ids": {
+        "synth_gepa": [
+          "synth_gepa_banking77_20260602T012632"
+        ],
+        "gepa_ai": [
+          "gepa_ai_banking77_20260602T014916"
+        ]
+      }
+    },
+    {
+      "benchmark": "hotpotqa",
+      "summary": {
+        "path": "cookbooks/optimizers/gepa/evals/evidence/benchmarks/hotpotqa/summary.json",
+        "sha256": "4dbb2357d51a571d7bd00c3e141d64aec5b30eb40877ae61ea406d538176f555",
+        "bytes": 9392
+      },
+      "run_ids": {
+        "synth_gepa": [
+          "synth_gepa_hotpotqa_20260604T034126"
+        ],
+        "gepa_ai": [
+          "gepa_ai_hotpotqa_20260604T051635"
+        ]
+      }
+    }
+  ]
+}

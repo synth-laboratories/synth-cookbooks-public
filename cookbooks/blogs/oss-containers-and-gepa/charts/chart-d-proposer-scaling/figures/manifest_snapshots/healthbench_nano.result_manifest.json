@@ -1,0 +1,99 @@
+{
+  "schema": "chart_d_manifest_snapshot.v3",
+  "task": "healthbench",
+  "proposer_slug": "nano",
+  "proposer_label": "gpt-5.4-nano",
+  "run_id": "healthbench_proposer_nano",
+  "source_manifest": {
+    "sha256": "c750e887724a641546afbe87140d0272f432a3dee291e2f3d65fe7e166b3dd31",
+    "bytes": 5079659
+  },
+  "policy_models_observed": [
+    "google/gemini-2.5-flash-lite"
+  ],
+  "split": {
+    "run_id": "healthbench_proposer_nano"
+  },
+  "usage": {
+    "completion_tokens": 543444,
+    "prompt_tokens": 2941569,
+    "proposer_calls": 4,
+    "rollout_calls": 1400,
+    "total_tokens": 3485013
+  },
+  "cost_usd": 0.0,
+  "stopped_by": {
+    "kind": "max_rollouts",
+    "n": 1600
+  },
+  "best_candidate": {
+    "candidate_id": "gepa_cc8c01d5586a",
+    "parent_id": "gepa_af3cbfa9e748",
+    "source": "reflector:frontier_variation",
+    "status": "accepted",
+    "train_reward": 0.3469341151460078,
+    "heldout_reward": null,
+    "acceptance_score": {
+      "acceptance_criterion": "primary_improvement",
+      "acceptance_reason": "primary_improvement",
+      "accepted": true,
+      "candidate_objectives": {
+        "rubric_score": 0.3469341151460078
+      },
+      "challenger_score_vector_id": "scorevector_7ffb36a73d6b1ad7",
+      "challenger_selection_score": 0.3469341151460078,
+      "comparison": {
+        "challenger_candidate_id": "gepa_cc8c01d5586a",
+        "challenger_score_vector_id": "scorevector_7ffb36a73d6b1ad7",
+        "dominance": {
+          "better_objectives": [
+            "rubric_score"
+          ],
+          "challenger_selection_score": 0.3469341151460078,
+          "equal_objectives": [],
+          "incumbent_selection_score": 0.31704750241233615,
+          "missing_objectives": [],
+          "worse_objectives": []
+        },
+        "evaluation_stage": "candidate_full_train",
+        "frontier_type": "per_example",
+        "incumbent_candidate_id": "gepa_af3cbfa9e748",
+        "incumbent_score_vector_id": "scorevector_40f0aec658e3d7d1",
+        "metadata": {
+          "source": "gepa.decision_bridge"
+        },
+        "objective_set_hash": "46217c40a53b78f0816bc8ed5747e94c152b3e2b2a24c74103bedf37c3c4ac64",
+        "objective_set_id": "objective_set_46217c40a53b78f0",
+        "pareto_comparison_id": "pareto_1a3d30c90bf7f81a",
+        "rationale": "challenger is at least as good on all comparable objectives and better on at least one",
+        "result": "challenger_dominates",
+        "schema_version": "pareto_comparison.v1",
+        "split": "train"
+      },
+      "comparison_result": "challenger_dominates",
+      "decision_source": "acceptance_criterion",
+      "evaluation_stage": "candidate_full_train",
+      "frontier_type": "per_example",
+      "incumbent_score_vector_id": "scorevector_40f0aec658e3d7d1",
+      "incumbent_selection_score": 0.31704750241233615,
+      "margin": 0.0,
+      "objective_acceptance": {
+        "min_objective_delta": 0.05,
+        "objective_regression_tolerance": 0.1,
+        "protected_objectives": []
+      },
+      "objective_deltas": {},
+      "objective_set_hash": "46217c40a53b78f0816bc8ed5747e94c152b3e2b2a24c74103bedf37c3c4ac64",
+      "objective_set_id": "objective_set_46217c40a53b78f0",
+      "parent_objectives": {
+        "rubric_score": 0.31704750241233615
+      },
+      "primary_delta": 0.029886612733671655,
+      "schema_version": "gepa_decision_score.v1",
+      "selection_delta": 0.029886612733671655,
+      "selection_objective": "rubric_score",
+      "split": "train"
+    },
+    "minibatch_reward": 0.4152915870893813
+  }
+}

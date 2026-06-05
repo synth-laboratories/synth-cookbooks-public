@@ -1,0 +1,185 @@
+{
+  "benchmark": "banking77",
+  "stacks": [
+    "gepa_ai",
+    "synth_gepa"
+  ],
+  "run_commands": [
+    {
+      "command_id": "cd24256f-0986-4499-bb79-0c074558e1e3",
+      "phase": "run",
+      "stack": "synth_gepa",
+      "benchmark": "banking77",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "banking77",
+        "--stack",
+        "synth_gepa"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/banking77/synth_gepa_banking77_20260602T012632/gepa_run.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/banking77/synth_gepa_banking77_20260602T012632"
+      ],
+      "started_at": "2026-06-02T01:26:32.140977+00:00",
+      "finished_at": "2026-06-02T01:43:18.542973+00:00",
+      "exit_code": 0
+    },
+    {
+      "command_id": "fc0c8ba7-f906-46cc-85e5-7745ae1a6935",
+      "phase": "run",
+      "stack": "gepa_ai",
+      "benchmark": "banking77",
+      "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+      "argv": [
+        "uv",
+        "run",
+        "--project",
+        ".",
+        "python",
+        "scripts/run_stack.py",
+        "--benchmark",
+        "banking77",
+        "--stack",
+        "gepa_ai"
+      ],
+      "env_keys": [
+        "OPENAI_API_KEY"
+      ],
+      "inputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/banking77.toml"
+      ],
+      "outputs": [
+        "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/banking77/gepa_ai_banking77_20260602T014916"
+      ],
+      "started_at": "2026-06-02T01:49:16.155947+00:00",
+      "finished_at": "2026-06-02T01:55:58.984599+00:00",
+      "exit_code": 0
+    }
+  ],
+  "num_candidates_total": 37,
+  "per_stack": {
+    "gepa_ai": {
+      "run_commands": [
+        {
+          "command_id": "fc0c8ba7-f906-46cc-85e5-7745ae1a6935",
+          "phase": "run",
+          "stack": "gepa_ai",
+          "benchmark": "banking77",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            ".",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "banking77",
+            "--stack",
+            "gepa_ai"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/configs/banking77.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/gepa_ai/banking77/gepa_ai_banking77_20260602T014916"
+          ],
+          "started_at": "2026-06-02T01:49:16.155947+00:00",
+          "finished_at": "2026-06-02T01:55:58.984599+00:00",
+          "exit_code": 0
+        }
+      ],
+      "run_ids": [
+        "gepa_ai_banking77_20260602T014916"
+      ],
+      "num_candidates": 20,
+      "seed_heldout_score": 0.765,
+      "best_heldout_score": 0.785,
+      "mean_heldout_score": 0.7595,
+      "lift_over_seed": 0.020000000000000018,
+      "candidates_with_heldout": 20,
+      "total_rollouts": 1358,
+      "total_cost_usd": 0.41053415,
+      "total_rollout_cost_usd": 0.1945715,
+      "total_proposer_cost_usd": 0.21596265,
+      "total_elapsed_seconds": 401.258,
+      "cost_metered_usd": 0.41053415,
+      "cost_with_codex_subscription_usd": 0.1945715,
+      "best_candidate_id": "gepa_ai_cand_12",
+      "best_at_rollouts": 864,
+      "best_at_cost_usd": 0.26461285,
+      "best_at_elapsed_seconds": 258.613
+    },
+    "synth_gepa": {
+      "run_commands": [
+        {
+          "command_id": "cd24256f-0986-4499-bb79-0c074558e1e3",
+          "phase": "run",
+          "stack": "synth_gepa",
+          "benchmark": "banking77",
+          "cwd": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public",
+          "argv": [
+            "uv",
+            "run",
+            "--project",
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals",
+            "python",
+            "scripts/run_stack.py",
+            "--benchmark",
+            "banking77",
+            "--stack",
+            "synth_gepa"
+          ],
+          "env_keys": [
+            "OPENAI_API_KEY"
+          ],
+          "inputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/banking77/synth_gepa_banking77_20260602T012632/gepa_run.toml"
+          ],
+          "outputs": [
+            "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/runs/synth_gepa/banking77/synth_gepa_banking77_20260602T012632"
+          ],
+          "started_at": "2026-06-02T01:26:32.140977+00:00",
+          "finished_at": "2026-06-02T01:43:18.542973+00:00",
+          "exit_code": 0
+        }
+      ],
+      "run_ids": [
+        "synth_gepa_banking77_20260602T012632"
+      ],
+      "num_candidates": 17,
+      "seed_heldout_score": 0.75,
+      "best_heldout_score": 0.785,
+      "mean_heldout_score": 0.756764705882353,
+      "lift_over_seed": 0.03500000000000003,
+      "candidates_with_heldout": 17,
+      "total_rollouts": 1140,
+      "total_cost_usd": 1.08290545,
+      "total_rollout_cost_usd": 0.1245763,
+      "total_proposer_cost_usd": 0.95832915,
+      "total_elapsed_seconds": 962.548,
+      "cost_metered_usd": 1.08290545,
+      "cost_with_codex_subscription_usd": 0.1245763,
+      "best_candidate_id": "gepa_c270760562a4",
+      "best_at_rollouts": 1140,
+      "best_at_cost_usd": 1.08290545,
+      "best_at_elapsed_seconds": 962.548
+    }
+  },
+  "parity_controls_path": "/Users/joshpurtell/Documents/GitHub/synth-cookbooks-public/cookbooks/optimizers/gepa/evals/evidence/parity_controls.json"
+}
