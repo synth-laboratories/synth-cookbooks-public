@@ -328,9 +328,9 @@ appear in a future chart.
 | DONE | 4 | E01, E04, E12, E13 |
 | PARTIAL | 0 | — |
 | RERUN | 0 | — |
-| MISSING | 1 | E05 Chart D raw manifests/cell status; post-launch only |
-| PLANNED | 7 | E06–E09, E11, E17, E18 |
-| UI | 4 | W01–W03, W05 |
+| MISSING | 1 | E05 Chart D raw manifests/cell status; post-launch only. The status unit reports this as two draft experiment groups with missing D cells. |
+| PLANNED | 8 | E06–E09, E11, W03, E17, E18 |
+| UI | 3 | W01, W02, W05 |
 | OMIT | 7 | E02, E03, E10, E14, E15, E16, W04 |
 
 Launch-scope A/C run data is present in the public evidence packet. Chart D is
