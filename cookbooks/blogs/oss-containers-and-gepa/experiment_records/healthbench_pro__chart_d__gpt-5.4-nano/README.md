@@ -18,7 +18,7 @@ Status: launch-scope run evidence is tracked in the public evidence packet; fina
 - Run id: `healthbench_proposer_nano`
 - Task: `healthbench`
 - Proposer: `gpt-5.4-nano`
-- Chart: D proposer scaling
+- Chart: D proposer sweep
 
 ## Evidence
 

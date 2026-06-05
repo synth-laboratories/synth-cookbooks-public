@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Generate the Chart D proposer-scaling sweep configs.
+"""Generate the Chart D proposer-sweep configs.
 
 One source of truth for the sweep matrix: TASKS x PROPOSERS. Proposer SIZE is the
-only variable (all gpt-5.4 class — emphasizes size, not model generation); policy,
-container, splits, and budget are held fixed per task.
+only intended variable (all gpt-5.4 class — emphasizes size, not model
+generation); policy, container, splits, and run caps are held fixed per task.
+The final chart reports observed optimization reward from manifests, not
+posthoc heldout reward or an equal-compute law.
 
 Scope: HealthBench (rubric medical QA) and tau2-bench retail (tool-using
 customer-service episodes).

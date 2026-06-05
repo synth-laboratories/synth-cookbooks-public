@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Chart D: proposer scaling figures from run manifests.
+"""Build Chart D: proposer sweep figures from run manifests.
 
 Scans runs/ for result_manifest.json files, groups by task × proposer model,
 and emits:
@@ -10,7 +10,7 @@ and emits:
   figures/source_evidence.json        - checksums for each public manifest snapshot used
   figures/manifest_snapshots/*.json   - compact public chart-audit summaries
 
-The draft build fails if any cell is missing core evidence.
+The launch build fails if any cell is missing core evidence.
 
 Expected run directory layout:
   runs/<task>_<model_slug>/<run_id>/result_manifest.json

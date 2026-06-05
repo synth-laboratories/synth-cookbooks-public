@@ -14,7 +14,7 @@ can be `FINISHED` while publication remains `PENDING`.
 
 | Verdict | Meaning | Cost to resolve |
 |---|---|---|
-| `FINISHED` | run evidence is present, parity checks pass, the budget floor passes, and the rows are in the chart authority | no rerun |
+| `FINISHED` | run evidence is present, parity checks pass, the candidate/rollout floor passes, and the rows are in the chart authority | no rerun |
 | `REPLUMB` | evidence valid but not in the live aggregate | file merge, **no rollouts** |
 | `RERUN` | present but invalid (unfair budget / parity drift) **or** mandated | rollouts |
 | `MISSING` | no evidence at all | rollouts |
@@ -25,7 +25,7 @@ can be `FINISHED` while publication remains `PENDING`.
 - `in_live_aggregate` — container rows in `evals/evidence/heldout_evaluations.jsonl`
   (a backup bundle does **not** count — that's what `REPLUMB` catches)
 - `budget_floor` — per-arm candidate counts and rollout counts both pass the
-  budget-parity floor (`arm_ratio >= 0.8`); it does not prove identical budgets
+  parity-counter floor (`arm_ratio >= 0.8`); it does not prove identical budgets
 - `parity_proposer` / `parity_policy` / `parity_route` — recorded `parity_controls`
   match the declared `ParityLock`
 - `chart_d_manifest_*` / `chart_d_cell_*` — proposer-sweep cells are verified
@@ -50,6 +50,9 @@ the launch packet is ready to publish:
 - Launch evidence paths are committed instead of dirty local work:
   `cookbooks/blogs/oss-containers-and-gepa/` plus the Chart A/C
   `evals/evidence` aggregate files and launch benchmark folders.
+- Ignored local launch-adjacent nuisance files, such as obsolete handoffs,
+  local Chart A configs, or one-off sweep helpers, are reported as a warning so
+  a dirty worktree cannot look cleaner than it is.
 - TBLite container dirt is reported separately as a nonblocking quarantine
   warning because TBLite is not launch evidence.
 - Other dirty GEPA workspace paths are reported separately as a nonblocking

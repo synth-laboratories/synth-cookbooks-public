@@ -2,19 +2,20 @@
 
 Public GEPA examples for `synth-optimizers`.
 
-The current public launch examples include **HealthBench Professional**,
-**Harvey Lab Tax**, **tau2-bench retail**, and **DungeonGrid** for the GEPA
-platform blog evidence, plus the earlier **Banking77**, **HotpotQA**,
-**TBLite**, **Crafter**, and **MiniGrid** cookbook containers. Every rollout
-exercises real models and real task containers. Each container declares its own
-deps in a per-container `pyproject.toml` so installing one cookbook does not
-pull deps for the others.
+The June 2026 GEPA platform post compares **HealthBench Professional**,
+**tau2-bench retail**, **Banking77**, and **HotpotQA**. The launch evidence
+packet lives under `cookbooks/blogs/oss-containers-and-gepa` and is tracked on
+the `gepa-blog-public-evidence-20260605` branch. **Harvey Lab Tax** and
+**DungeonGrid** are historical/follow-up surfaces, not current launch evidence.
+The local `tblite_container` is a small pytest-verifier coding micro-container;
+it is not Terminal-Bench Lite, Harbor/OpenThoughts evidence, or a launch TBLite
+result. Each container declares its own deps in a per-container
+`pyproject.toml` so installing one cookbook does not pull deps for the others.
 
-- https://prompt-opt.com
-- https://prompt-opt.com/gepa
-- https://prompt-opt.com/docs
-- https://prompt-opt.com/docs/examples
-- https://prompt-opt.com/blog/oss-containers-and-gepa
+- https://www.usesynth.ai
+- https://www.usesynth.ai/blog/introducing-gepa-platform
+- https://docs.usesynth.ai/prompt-optimization/overview
+- https://github.com/synth-laboratories/synth-cookbooks-public/tree/gepa-blog-public-evidence-20260605/cookbooks/blogs/oss-containers-and-gepa
 
 ## Directory Map
 
@@ -29,14 +30,14 @@ cookbooks/optimizers/gepa/
 	  harvey_lab_container/
 	    README.md
 	    pyproject.toml
-	    synth_service_app.py     # Harvey Lab Tax matter scorer
+	    synth_service_app.py     # Harvey Lab Tax matter scorer; follow-up evidence only
 	  tau2_retail_container/
 	    pyproject.toml
 	    synth_service_app.py     # tau2-bench retail tool-use episodes
 	  dungeongrid_container/
 	    README.md
 	    pyproject.toml
-	    synth_service_app.py     # two-hero DungeonGrid episodes
+	    synth_service_app.py     # two-hero DungeonGrid episodes; not current launch evidence
 	  banking77_container/
 	    README.md
 	    gepa.toml
@@ -48,9 +49,9 @@ cookbooks/optimizers/gepa/
     synth_service_app.py     # HotpotQA token-F1 verifier
   tblite_container/
     README.md
-    pyproject.toml           # openai, pytest
+    pyproject.toml           # OpenAI, pytest; micro-container, not Terminal-Bench Lite
     gepa.toml
-    synth_service_app.py     # real pytest subprocess verifier
+    synth_service_app.py     # Python function tasks with hidden pytest verifier
   minigrid_container/
     README.md
     pyproject.toml           # gymnasium, minigrid, openai
@@ -95,12 +96,12 @@ Canonical base configs are also runnable directly:
 
 - `cookbooks/optimizers/gepa/banking77_container/gepa.toml` — live Banking77 classifier
 - `cookbooks/optimizers/gepa/hotpotqa_container/gepa.toml` — HotpotQA multi-hop QA
-- `cookbooks/optimizers/gepa/tblite_container/gepa.toml` — real pytest verifier
+- `cookbooks/optimizers/gepa/tblite_container/gepa.toml` — Python pytest micro-container
 - `cookbooks/optimizers/gepa/minigrid_container/gepa.toml` — real MiniGrid policy-control episodes
 - `cookbooks/optimizers/gepa/evals/configs/healthbench.toml` — HealthBench Professional final evidence config
-- `cookbooks/optimizers/gepa/evals/configs/harvey_lab.toml` — Harvey Lab Tax final evidence config
+- `cookbooks/optimizers/gepa/evals/configs/harvey_lab.toml` — Harvey Lab Tax follow-up config
 - `cookbooks/optimizers/gepa/evals/configs/tau2_retail.toml` — tau2-bench retail final evidence config
-- `cookbooks/optimizers/gepa/evals/configs/dungeongrid.toml` — DungeonGrid final evidence config
+- `cookbooks/optimizers/gepa/evals/configs/dungeongrid.toml` — DungeonGrid historical/follow-up config
 
 ## Codex Proposer Auth
 
@@ -226,7 +227,8 @@ Each accepted run writes:
 - The container owns dataset access and rollout execution.
 - The optimizer talks to the container over HTTP only.
 - The cookbook does not depend on private backend services.
-- Every container ships with a real env or real verifier and a live OpenAI
-  policy — no fixture scoring, no string-matching rewards.
+- Every current comparison container ships with a real environment, scorer, or
+  verifier and a configured live policy provider; no fixture scoring or
+  string-matching rewards should be used as launch evidence.
 - Cached replay proves the run can be inspected without spending more model or
   rollout calls.

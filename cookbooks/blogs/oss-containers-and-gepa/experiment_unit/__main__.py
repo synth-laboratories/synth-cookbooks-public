@@ -60,7 +60,7 @@ def _status_note(exp, v: Verdict) -> str:
     if v is Verdict.FINISHED:
         if exp.kind is ExperimentKind.PROPOSER_SWEEP:
             return "Chart D manifests present, numeric, and metric semantics checked"
-        return "evidence present, parity checks pass, budget floor passes, in live aggregate"
+        return "evidence present, parity checks pass, candidate/rollout floor passes, in live aggregate"
     failed = [c.name for c in exp.checks() if c.status is CheckStatus.FAIL]
     return "failing: " + ", ".join(failed) if failed else ""
 
@@ -237,6 +237,14 @@ def _publication_packet_checks() -> list[PacketCheck]:
         "public_evidence_commit",
         dirty_detail is None,
         "tracked in current commit" if dirty_detail is None else dirty_detail,
+    ))
+
+    ignored_detail = _ignored_paths_detail(_ignored_launch_nuisance_paths(), "launch-adjacent")
+    checks.append(PacketCheck(
+        "ignored_launch_nuisance",
+        ignored_detail is None,
+        "no ignored local launch-adjacent nuisance files" if ignored_detail is None else ignored_detail,
+        required=False,
     ))
 
     tblite_detail = _dirty_paths_detail(_tblite_quarantine_paths(), "TBLite quarantine")
@@ -538,6 +546,29 @@ def _residual_gepa_dirty_detail() -> str | None:
     )
 
 
+def _ignored_launch_nuisance_paths() -> list[Path]:
+    chart_a_configs = BLOG_ROOT / "charts" / "chart-a-head-to-head" / "configs"
+    chart_d = BLOG_ROOT / "charts" / "chart-d-proposer-scaling"
+    candidates = [
+        BLOG_ROOT / "RERUN_HANDOFF.md",
+        *chart_a_configs.glob("**/*"),
+        *chart_d.glob("run_*_sweep.sh"),
+        chart_d / "watch_chartd_board.py",
+    ]
+    return [path for path in candidates if path.exists()]
+
+
+def _ignored_paths_detail(paths: list[Path], label: str) -> str | None:
+    ignored, error = _ignored_status(paths)
+    if error:
+        return error
+    if not ignored:
+        return None
+    sample = "; ".join(ignored[:6])
+    suffix = "; ..." if len(ignored) > 6 else ""
+    return f"{len(ignored)} ignored local {label} paths (examples: {sample}{suffix})"
+
+
 def _residual_gepa_dirty_status() -> tuple[list[str], str | None]:
     dirty, error = _dirty_status(_gepa_workspace_paths())
     if error:
@@ -568,6 +599,25 @@ def _dirty_status(paths: list[Path]) -> tuple[list[str], str | None]:
         return [], (proc.stderr or proc.stdout or "git status failed").strip()
     dirty = [line for line in proc.stdout.splitlines() if line.strip()]
     return dirty, None
+
+
+def _ignored_status(paths: list[Path]) -> tuple[list[str], str | None]:
+    if not paths:
+        return [], None
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain", "--ignored", "--", *(_rel_path(path) for path in paths)],
+            cwd=REPO_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        return [], f"git status unavailable: {exc}"
+    if proc.returncode != 0:
+        return [], (proc.stderr or proc.stdout or "git status failed").strip()
+    ignored = [line for line in proc.stdout.splitlines() if line.startswith("!!")]
+    return ignored, None
 
 
 def _print_dirty_paths(title: str, paths: list[Path]) -> None:

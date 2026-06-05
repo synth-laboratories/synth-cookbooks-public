@@ -125,7 +125,7 @@ tables below keep them as roadmap).
 - **Chart C coverage** reads the live aggregate
   `evals/evidence/{heldout_evaluations,train_evaluations,candidate_timeline}.jsonl`,
   with `BENCHES = [healthbench, tau2_retail, banking77, hotpotqa]`.
-- **Chart D proposer scaling** reads compact proposer-sweep manifest snapshots
+- **Chart D proposer sweep** reads compact proposer-sweep manifest snapshots
   under `charts/chart-d-proposer-scaling/figures/manifest_snapshots/` and
   reports observed optimization reward; these sweep manifests skipped heldout by
   design.
@@ -143,9 +143,9 @@ tables below keep them as roadmap).
 evidence and `publication packet: READY` for the committed A/C/D launch packet.
 TBLite and wider GEPA workspace dirt remain warning-only quarantine surfaces, not
 launch evidence. Banking77 was replumbed from the backup bundle into the live
-aggregate. HotpotQA was rebuilt from the fresh budget-parity run. tau2 retail
-was rerun on the Gemini-direct policy route with fresh A/C evidence that passes
-the budget-parity floor.
+aggregate. HotpotQA was rebuilt from the fresh same-container rerun. tau2 retail
+was rerun on the Gemini-direct policy route with fresh A/C evidence that records
+candidate and rollout counters for the launch parity checks.
 
 **Observed head-to-head result:** P1 is mixed, not a clean win for the
 pre-registered ordering. Synth GEPA is positive on HealthBench (+0.008 heldout),
@@ -156,18 +156,19 @@ tau2 retail (+0.030), and tied on Banking77 (+0.000), but negative on HotpotQA
 **Observed Chart D result:** tau2 retail is monotonic with proposer size
 (`0.600 → 0.600 → 0.667` observed train reward), while HealthBench is non-monotonic
 (`0.347 → 0.314 → 0.339`). This supports the tau2 interaction but weakens any
-blanket monotonic proposer-scaling claim.
+blanket monotonic proposer-size claim.
 
 ### Pre-registered predictions — 2026-06-03 (judge the rerun against THESE)
 
 Stated **before** the rerun so results are judged against expectations, not
-rationalized after. The post's thesis is **GEPA's returns scale with the compute
-in the loop**, on two axes.
+rationalized after. The initial pre-registered thesis was **GEPA's returns scale
+with the compute in the loop**, on two axes; the launch post now treats the
+result as mixed same-container evidence with an honest negative.
 
-**Mechanism (under the locked budget-parity protocol).** Both stacks must pass
-the candidate-count and rollout-count fairness floor, so any Synth GEPA edge is
-not from an order-of-magnitude exploration advantage. Prediction: that quality
-edge compounds more when each rollout is expensive.
+**Mechanism (under the locked same-container protocol).** Both stacks record
+candidate-count and rollout-count counters against fairness floors, so any Synth
+GEPA edge is not from an order-of-magnitude exploration advantage. Prediction:
+that quality edge compounds more when each rollout is expensive.
 
 **Prediction 1 — head-to-head gap grows with policy compute (Charts A/C).**
 Define `gap = Synth − gepa-ai` (best heldout, and coverage rows). Predicted
@@ -190,14 +191,15 @@ coverage (`-5`). The blog should describe this as partial support with an honest
 negative, not a smooth policy-compute scaling result.
 
 **Prediction 2 — better proposer → better optimization, steeper where compute is
-higher (Chart D).** Per task, best-heldout is non-decreasing in proposer
+higher (Chart D).** Per task, best observed optimization reward is
+non-decreasing in proposer
 (`gpt-5.4-nano ≤ mini ≤ gpt-5.4`). Predicted interaction: the slope is **steeper
 on tau2 than on HealthBench** (HealthBench may saturate / be near-flat).
 
 **Falsification (any of these disproves the corresponding claim):**
-- Synth does **not** beat gepa-ai on tau2 under the budget-parity protocol → headline (P1) fails.
-- `gap(tau2) ≤ gap(banking77)` under the budget-parity protocol → policy-compute scaling fails.
-- Chart D proposer curve flat or non-monotonic **on tau2** → proposer scaling fails.
+- Synth does **not** beat gepa-ai on tau2 under the same-container rerun → headline (P1) fails.
+- `gap(tau2) ≤ gap(banking77)` under the same-container rerun → policy-compute scaling fails.
+- Chart D observed-reward curve flat or non-monotonic **on tau2** → proposer-size trend fails.
 - HealthBench and tau2 proposer slopes equally steep → the interaction claim weakens.
 
 **What we are NOT claiming (state these as caveats in the post):**
@@ -272,7 +274,7 @@ coverage.
 | E01 | Same-container Synth vs gepa-ai parity | EVAL | HB, Banking77, HotpotQA, tau2 | DONE | P0 | A, C, MDX | `evals/evidence/benchmarks/*/summary.json` | Launch-scope summaries rebuilt from live aggregate |
 | E02 | Harvey heldout — larger split | EVAL | Harvey | OMIT | P3 | — | — | Omitted from launch scope; prior n=9 smoke cannot support a chart claim |
 | E03 | TaxCalcBench — container + GEPA eval | EVAL | TaxCalc | OMIT | P3 | — | — | Omitted from launch scope; post-launch parity work |
-| E04 | Head-to-head budget-parity protocol | EVAL | launch scope | DONE | P0 | A, MDX | `charts/chart-a-head-to-head/figures/head_to_head_data.json` | Budget-parity floor passes `experiment_unit status` |
+| E04 | Head-to-head parity counters | EVAL | launch scope | DONE | P0 | A, MDX | `charts/chart-a-head-to-head/figures/head_to_head_data.json` | Candidate/rollout parity checks pass `experiment_unit status` |
 | E05 | Proposer sweep — nano / mini / full | EVAL | HB, tau2 | DONE | P2 | D | `charts/chart-d-proposer-scaling/figures/manifest_snapshots/` | HB and tau2 sweeps rebuilt; chart reports observed reward from compact manifests |
 | E06 | Proposer sweep — full tier-1 | EVAL | HB, Harvey, tau2, TaxCalc, FinQA | PLANNED | P3 | — | — | Only if post claims 5-task scaling |
 | E07 | Proposer failure-mode table | CONTENT | HB, tau2 | PLANNED | P2 | D | — | Mine validity / mutation errors per cell before adding content |

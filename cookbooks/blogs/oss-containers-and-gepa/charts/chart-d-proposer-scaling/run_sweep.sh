@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# run_sweep.sh — Chart D proposer scaling sweep (HealthBench + tau2 retail size ladder)
+# run_sweep.sh — Chart D proposer sweep (HealthBench + tau2 retail size ladder)
 #
 # Boots the HealthBench (:8815) and tau2 retail (:8775) containers and runs the
 # proposer size ladder (gpt-5.4-nano -> gpt-5.4-mini -> gpt-5.4) on each, so the
-# chart shows what changes as the proposer scales in SIZE within one model
+# chart shows what changes as the proposer tier changes within one model
 # generation. Policy model is held fixed per task. Then builds figures.
 #
 # Usage:

@@ -18,7 +18,7 @@ Status: launch-scope run evidence is tracked in the public evidence packet; fina
 - Run id: `tau2_retail_proposer_nano_rerun_20260604T0523`
 - Task: `tau2_retail`
 - Proposer: `gpt-5.4-nano`
-- Chart: D proposer scaling
+- Chart: D proposer sweep
 
 ## Evidence
 
