@@ -117,7 +117,7 @@ uv run python build_chart.py
 - [ ] Sweep launched and completed cleanly.
 - [x] `figures/proposer_scaling.svg` rendered as compact draft context.
 - [ ] Chart D raw all-cell rerun gate is green.
-- [ ] Active frontend MDX embeds chart.
+- [ ] Future frontend MDX deliberately re-adds Chart D after the raw rerun gate is green.
 
 Current blocker: the 2026-06-05 all-cell reruns failed. The parallel sweep hit
 ChatGPT Codex app-server stream disconnects and OpenRouter

@@ -143,15 +143,17 @@ tables below keep them as roadmap).
 
 **Experiment-unit verdict:**
 
-| Container | Chart A | Chart C | Chart D | Verdict |
+| Container | Chart A | Chart C | Active A/C verdict | Chart D draft/debug |
 |---|---|---|---|---|
-| **HealthBench Pro** | ✅ finished | ✅ finished | ❌ raw evidence missing | **MISSING** |
-| **Banking77** | ✅ finished | ✅ finished | n/a | **FINISHED** |
-| **HotpotQA** | ✅ finished | ✅ finished | n/a | **FINISHED** |
-| **tau2 retail** | ✅ finished | ✅ finished | ❌ raw evidence missing | **MISSING** |
+| **HealthBench Pro** | ✅ finished | ✅ finished | **FINISHED** | ❌ raw evidence missing |
+| **Banking77** | ✅ finished | ✅ finished | **FINISHED** | n/a |
+| **HotpotQA** | ✅ finished | ✅ finished | **FINISHED** | n/a |
+| **tau2 retail** | ✅ finished | ✅ finished | **FINISHED** | ❌ raw evidence missing |
 
-`python3 -m experiment_unit status` currently reports `summary: finished=4
-missing=2` for run evidence and `publication packet: PENDING`.
+`python3 -m experiment_unit status`, with `GEPA_BLOG_FRONTEND_ROOT` pointed at
+the frontend launch/review checkout, currently reports active launch run
+evidence as `finished=4` and `publication packet: READY`. The same command
+reports post-launch draft/debug Chart D evidence as `missing=2`.
 The A/C launch packet is covered. Chart D still has checked-in compact manifest
 snapshots for debug/post-launch review, but raw rerun evidence is missing and
 the active blog MDX no longer embeds Chart D. TBLite and wider GEPA workspace
@@ -235,6 +237,7 @@ on tau2 than on HealthBench** (HealthBench may saturate / be near-flat).
 |--------|---------|
 | **DONE** | Run completed; compact evidence is tracked in the public evidence packet |
 | **PARTIAL** | Data exists but claim is weak (tiny N, unfair budget, or missing sibling rows) |
+| **SNAPSHOT** | Draft/debug compact snapshot exists, but raw rerun evidence is not green |
 | **RERUN** | Must re-execute before citing in the post |
 | **MISSING** | No runnable/public artifact yet |
 | **PLANNED** | Scoped but not started |
@@ -308,23 +311,24 @@ coverage.
 | E16 | FinQA heldout scale (define N) | EVAL | FinQA | OMIT | P3 | — | — | Omitted from launch scope; define if FinQA is re-added |
 | W01 | Head-to-head UI redesign | UI | — | UI | P0 | A | `head-to-head-results.tsx` | Readable budget columns |
 | W02 | Coverage chart panel filter | UI | launch scope | UI | P1 | C | `pareto-coverage-chart.tsx` | Panels only when evidence exists |
-| W03 | Chart D limitation copy | UI | HB, tau2 | UI | P2 | D | `index.mdx` addendum | "2-task run group" disclaimer |
+| W03 | Chart D limitation copy | UI | HB, tau2 | PLANNED | P3 | D draft | — | Only if Chart D raw rerun greens and MDX re-adds it |
 | W04 | Reward diagnostics addendum | UI | historical | OMIT | P3 | — | — | Fresh evidence and MDX re-add required before any future use |
 | W05 | Systems diagram narrative pass | UI | — | UI | P2 | React figure | `src/components/blog/posts/introducing-gepa-platform/systems-focus-modal.tsx` | Four-container launch framing |
 | E17 | PaperBench JudgeEval container | EVAL | PaperBench judge | PLANNED | P3 | — | — | After current launch scope: wire SimpleJudge + JudgeEval rubrics from frontier-evals as a normal container row |
 | E18 | Harvey LAB judge eval container | EVAL | Harvey LAB judge | PLANNED | P3 | — | — | Per-criterion vs batch verifier parity; LAB rubric contract |
 
-### Launch-scope summary counts
+### Launch-scope and backlog summary counts
 
-These counts cover the active A/C launch packet. Post-launch roadmap rows still
-need real experiment work before they can appear in a future chart.
+These counts separate the active A/C launch packet from post-launch backlog
+work. Post-launch roadmap rows still need real experiment work before they can
+appear in a future chart.
 
 | Status | Count | IDs / scope |
 |:------:|------:|-------------|
 | DONE | 4 | E01, E04, E12, E13 |
 | PARTIAL | 0 | — |
 | RERUN | 0 | — |
-| MISSING | 1 | E05 Chart D raw manifests/cell status |
+| MISSING | 1 | E05 Chart D raw manifests/cell status; post-launch only |
 | PLANNED | 7 | E06–E09, E11, E17, E18 |
 | UI | 4 | W01–W03, W05 |
 | OMIT | 7 | E02, E03, E10, E14, E15, E16, W04 |

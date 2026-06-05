@@ -10,7 +10,7 @@ and emits:
   figures/source_evidence.json        - checksums for each public manifest snapshot used
   figures/manifest_snapshots/*.json   - compact public chart-audit summaries
 
-The launch build fails if any cell is missing core evidence.
+The draft build fails if any cell is missing core evidence.
 
 Expected run directory layout:
   runs/<task>_<model_slug>/<run_id>/result_manifest.json
@@ -37,6 +37,10 @@ FRONTEND_OUT = FRONTEND_DATA_DIR / "proposer_scaling_data.json"
 MANIFEST_SNAPSHOT_DIR = ROOT / "figures" / "manifest_snapshots"
 HOME_PREFIX = str(Path.home())
 WORKSPACE_PREFIX = str(Path.home() / "Documents" / "GitHub")
+DRAFT_WARNING = (
+    "Post-launch draft/debug only: raw all-cell rerun evidence is not green, "
+    "heldout scoring was skipped for this sweep, and active launch MDX does not embed Chart D."
+)
 
 # ---------------------------------------------------------------------------
 # Experiment matrix (locked)
@@ -465,6 +469,8 @@ def _assert_launch_ready(cells: list[dict[str, Any]]) -> None:
 def render_markdown(cells: list[dict[str, Any]]) -> str:
     by_key = {(c["task"], c["proposer_slug"]): c for c in cells}
     lines = [
+        f"> {DRAFT_WARNING}",
+        "",
         "| task | proposer | initial observed reward | best observed reward | A/C heldout seed context | reward source | proposer calls | total tokens | notes |",
         "|---|---|---:|---:|---:|---|---:|---:|---|",
     ]
@@ -522,7 +528,7 @@ def render_svg(cells: list[dict[str, Any]]) -> str:
     svg: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{total_w}" height="{height}" viewBox="0 0 {total_w} {height}">',
         '<rect width="100%" height="100%" fill="#fffaf4"/>',
-        f'<text x="24" y="32" fill="#2b2118" font-family="Inter, sans-serif" font-size="16" font-weight="600">Chart D — Proposer Sweep: observed reward vs proposer model</text>',
+        f'<text x="24" y="32" fill="#2b2118" font-family="Inter, sans-serif" font-size="16" font-weight="600">Draft Chart D — observed reward vs proposer model</text>',
     ]
 
     # Y-axis tick lines (shared across panels)
@@ -649,9 +655,12 @@ def main() -> int:
 
     data = {
         "chart": "proposer_scaling",
+        "launch_status": "post_launch_draft_debug_only",
+        "warning": DRAFT_WARNING,
         "generated_from": str(ROOT.relative_to(REPO_ROOT)),
         "source_evidence_path": str((ROOT / "figures" / "source_evidence.json").relative_to(REPO_ROOT)),
         "description": (
+            "Post-launch draft/debug data only; not active launch evidence. "
             "Synth GEPA best observed reward vs candidate index per proposer model. "
             "HealthBench Pro and tau2-bench retail cells are backed by compact public manifest summaries. "
             "Chart D reports observed optimization reward; heldout scoring was skipped for this sweep. "

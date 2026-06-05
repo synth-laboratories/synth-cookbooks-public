@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="840" height="360" viewBox="0 0 840 360">
 <rect width="100%" height="100%" fill="#fffaf4"/>
-<text x="24" y="32" fill="#2b2118" font-family="Inter, sans-serif" font-size="16" font-weight="600">Chart D — Proposer Sweep: observed reward vs proposer model</text>
+<text x="24" y="32" fill="#2b2118" font-family="Inter, sans-serif" font-size="16" font-weight="600">Draft Chart D — observed reward vs proposer model</text>
 <text x="158" y="46" fill="#4b3a2d" font-family="Inter, sans-serif" font-size="13" text-anchor="middle">HealthBench Pro</text>
 <line x1="54" x2="276" y1="266.0" y2="266.0" stroke="#eadfd3" stroke-width="1"/>
 <text x="50" y="270.0" fill="#7c6f65" font-family="Inter, sans-serif" font-size="10" text-anchor="end">0.00</text>

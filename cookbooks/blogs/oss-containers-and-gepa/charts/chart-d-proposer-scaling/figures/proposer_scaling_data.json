@@ -1,8 +1,10 @@
 {
   "chart": "proposer_scaling",
+  "launch_status": "post_launch_draft_debug_only",
+  "warning": "Post-launch draft/debug only: raw all-cell rerun evidence is not green, heldout scoring was skipped for this sweep, and active launch MDX does not embed Chart D.",
   "generated_from": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling",
   "source_evidence_path": "cookbooks/blogs/oss-containers-and-gepa/charts/chart-d-proposer-scaling/figures/source_evidence.json",
-  "description": "Synth GEPA best observed reward vs candidate index per proposer model. HealthBench Pro and tau2-bench retail cells are backed by compact public manifest summaries. Chart D reports observed optimization reward; heldout scoring was skipped for this sweep. 3 proposer models \u00d7 2 tasks.",
+  "description": "Post-launch draft/debug data only; not active launch evidence. Synth GEPA best observed reward vs candidate index per proposer model. HealthBench Pro and tau2-bench retail cells are backed by compact public manifest summaries. Chart D reports observed optimization reward; heldout scoring was skipped for this sweep. 3 proposer models \u00d7 2 tasks.",
   "proposer_models": [
     "gpt-5.4-nano",
     "gpt-5.4-mini",

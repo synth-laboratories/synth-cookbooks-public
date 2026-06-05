@@ -1,3 +1,5 @@
+> Post-launch draft/debug only: raw all-cell rerun evidence is not green, heldout scoring was skipped for this sweep, and active launch MDX does not embed Chart D.
+
 | task | proposer | initial observed reward | best observed reward | A/C heldout seed context | reward source | proposer calls | total tokens | notes |
 |---|---|---:|---:|---:|---|---:|---:|---|
 | healthbench | gpt-5.4-nano | 0.251 | 0.347 | 0.255 | train_reward | 4 | 3485013 | heldout skipped; observed train optimization reward shown |
