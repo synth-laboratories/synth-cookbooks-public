@@ -41,7 +41,7 @@ Full run artifacts (manifests, SQLite, traces) stay in gitignored `runs/` trees:
 
 | Experiment type | Raw run location |
 |-----------------|------------------|
-| E01 parity (Charts A, C, H) | `cookbooks/optimizers/gepa/evals/runs/<stack>/<benchmark>/` |
+| E01 parity (Charts A, C) | `cookbooks/optimizers/gepa/evals/runs/<stack>/<benchmark>/` |
 | E05 proposer (Chart D) | `charts/chart-d-proposer-scaling/runs/final_20260603/` |
 
 The current launch packet uses committed per-cell `README.md` records rather

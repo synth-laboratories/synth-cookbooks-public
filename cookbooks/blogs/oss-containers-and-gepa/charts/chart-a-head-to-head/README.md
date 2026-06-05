@@ -5,9 +5,9 @@ same-container comparison tasks: HealthBench Pro, tau2-bench retail, Banking77,
 and HotpotQA. Columns show each stack's seed baseline, best posthoc heldout
 reward, the `Synth - gepa-ai` best-heldout delta, and the winner.
 
-The current frontend mirror is generated from local launch evidence. Publication requires the
-public evidence commit and checked-in producer output to land from the same
-commit authority.
+The current frontend mirror is generated from launch evidence. The chart data
+and checked-in producer output are tracked in the public evidence packet; the
+frontend launch commit must carry the byte-matched mirror and cite that packet.
 
 ## Parity conditions
 
@@ -76,5 +76,7 @@ python build_chart.py
 - [x] `figures/source_evidence.json` preserves a tracked compact snapshot
       of the final summary inputs.
 - [x] Chart table embedded in blog MDX.
-- [ ] Public evidence commit and checked-in producer output are published from
+- [x] Public evidence commit and checked-in producer output are published from
       the same commit authority.
+- [ ] Frontend launch commit cites the public evidence packet and carries the
+      byte-matched mirror.

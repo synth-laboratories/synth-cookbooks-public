@@ -13,8 +13,9 @@ threshold:
   (`>= 1.0`).
 
 The producer asserts each curve's final value against the `summary.json` packet
-emitted by the shared GEPA eval evidence pipeline. Publication requires the
-public evidence commit, producer output, and frontend mirror to land together.
+emitted by the shared GEPA eval evidence pipeline. The chart data and checked-in
+producer output are tracked in the public evidence packet; the frontend launch
+commit must carry the byte-matched mirror and cite that packet.
 
 ## Final Coverage Counts
 
@@ -54,5 +55,7 @@ python cookbooks/blogs/oss-containers-and-gepa/charts/chart-c-use-case-coverage/
 - [x] Producer emits checksums for the JSONL aggregate and per-benchmark
       summaries in `figures/source_evidence.json`.
 - [x] Frontend consumes the generated JSON in `ParetoCoverageChart`.
-- [ ] Public evidence commit and checked-in producer output are published from
+- [x] Public evidence commit and checked-in producer output are published from
       the same commit authority.
+- [ ] Frontend launch commit cites the public evidence packet and carries the
+      byte-matched mirror.

@@ -98,20 +98,19 @@ Eval harness (runs both stacks, posthoc heldout, builds summaries):
 ## Charts
 
 Chart producers live under [`charts/`](./charts/). See the
-[charts README](./charts/README.md) for the full registry, data-flow diagram,
-and reproduce commands.
+[charts README](./charts/README.md) for the active registry, data-flow diagram,
+and reproduce commands. The launch packet commits only the A/C/D chart surfaces;
+ignored local archaeology under `charts/` is not evidence authority.
 
 | Folder | Launch status | What the chart shows |
 |---|---|---|
 | [charts/chart-a-head-to-head/](./charts/chart-a-head-to-head/) | in post | Final same-container head-to-head: Synth GEPA vs gepa-ai across launch-scope tasks. |
 | [charts/chart-c-use-case-coverage/](./charts/chart-c-use-case-coverage/) | in post | Cumulative heldout coverage for same-container parity runs. |
 | [charts/chart-d-proposer-scaling/](./charts/chart-d-proposer-scaling/) | in post | Proposer-model sweep (`gpt-5.4-nano` / `mini` / `gpt-5.4`). |
-| [charts/chart-a-head-to-head/build_langprobe_addendum.py](./charts/chart-a-head-to-head/build_langprobe_addendum.py) | **omit** | Historical LangProbe addendum; inactive producer exits before writing. |
-| [charts/chart-g-dungeongrid/](./charts/chart-g-dungeongrid/) | **omit** | Descoped from launch. |
-| [charts/chart-h-reward-diagnostics/](./charts/chart-h-reward-diagnostics/) | **omit** | Historical Harvey/DungeonGrid diagnostics; inactive producer exits before writing. |
-| [charts/chart-b-prompt-diff/](./charts/chart-b-prompt-diff/) | **omit** | Historical prompt-diff extraction; inactive producer exits before writing. |
-| [charts/chart-e-policy-model-variation/](./charts/chart-e-policy-model-variation/) | future | Cross-student-model transfer. |
-| [charts/chart-f-program-stage-scaling/](./charts/chart-f-program-stage-scaling/) | future | Program-stage scaling. |
+
+Historical and future chart ideas are intentionally absent from the launch
+packet. Re-add Chart B/E/F/G/H-style material only with a fresh evidence packet,
+producer output, frontend mirror, and explicit MDX section in the same commit.
 
 ## Experiments
 
@@ -125,7 +124,7 @@ runnable cell. These are compact provenance records that point at the shared eva
 evidence, Chart D manifest snapshots, and each chart's
 `figures/source_evidence.json`.
 
-### Validity audit — updated 2026-06-04 (launch scope: 4 containers)
+### Validity audit — updated 2026-06-05 (launch scope: 4 containers)
 
 Launch charts are scoped to **HealthBench Pro, Banking77, HotpotQA, tau2 retail**.
 FinQA, Harvey Lab Tax, and tau2 airline are **omitted from launch** (the broader
@@ -139,9 +138,10 @@ tables below keep them as roadmap).
 - **Chart C coverage** reads the live aggregate
   `evals/evidence/{heldout_evaluations,train_evaluations,candidate_timeline}.jsonl`,
   with `BENCHES = [healthbench, tau2_retail, banking77, hotpotqa]`.
-- **Chart D proposer scaling** reads fresh proposer-sweep manifests under
-  `charts/chart-d-proposer-scaling/runs/final_20260603/` and reports observed
-  optimization reward; these sweep manifests skipped heldout by design.
+- **Chart D proposer scaling** reads compact proposer-sweep manifest snapshots
+  under `charts/chart-d-proposer-scaling/figures/manifest_snapshots/` and
+  reports observed optimization reward; these sweep manifests skipped heldout by
+  design.
 
 **Experiment-unit verdict:**
 
@@ -153,12 +153,12 @@ tables below keep them as roadmap).
 | **tau2 retail** | ✅ finished | ✅ finished | ✅ finished | **FINISHED** |
 
 `python3 -m experiment_unit status` now reports `summary: finished=6` for run
-evidence, and `publication packet: PENDING` until the blog packet plus launch
-`evals/evidence` files are committed from the same authority as the frontend
-mirrors. Banking77 was
-replumbed from the backup bundle into the live aggregate. HotpotQA was rebuilt
-from the fresh budget-parity run. tau2 retail was rerun on the Gemini-direct
-policy route with fresh A/C evidence that passes the budget-parity floor.
+evidence and `publication packet: READY` for the committed A/C/D launch packet.
+TBLite and wider GEPA workspace dirt remain warning-only quarantine surfaces, not
+launch evidence. Banking77 was replumbed from the backup bundle into the live
+aggregate. HotpotQA was rebuilt from the fresh budget-parity run. tau2 retail
+was rerun on the Gemini-direct policy route with fresh A/C evidence that passes
+the budget-parity floor.
 
 **Observed head-to-head result:** P1 is mixed, not a clean win for the
 pre-registered ordering. Synth GEPA is positive on HealthBench (+0.008 heldout),
@@ -195,9 +195,12 @@ ordering by median policy tokens/rollout:
 
 Predicted: `gap(tau2) > gap(healthbench) ≈ gap(hotpotqa) > gap(banking77) ≈ 0`,
 i.e. **positive slope of gap vs log(policy tokens)**.
-Current launch evidence keeps tau2 in the table but falsifies that directional
-prediction on heldout (`heldout_gap -0.053`, `coverage_gap -17`) under the
-budget-parity protocol, so the blog should describe this as a negative result.
+Current launch evidence is mixed rather than a clean slope law. tau2 has the
+largest positive heldout gap (`+0.030`) and ties HealthBench on coverage gap
+(`+1`), which supports the high-compute anchor; HotpotQA is negative
+(`-0.042` heldout, `-3` coverage), and Banking77 ties on heldout while losing
+coverage (`-5`). The blog should describe this as partial support with an honest
+negative, not a smooth policy-compute scaling result.
 
 **Prediction 2 — better proposer → better optimization, steeper where compute is
 higher (Chart D).** Per task, best-heldout is non-decreasing in proposer
@@ -222,7 +225,7 @@ on tau2 than on HealthBench** (HealthBench may saturate / be near-flat).
 
 | Status | Meaning |
 |--------|---------|
-| **DONE** | Run completed; compact evidence exists locally for this cell; publication still depends on the public evidence commit gate |
+| **DONE** | Run completed; compact evidence is tracked in the public evidence packet |
 | **PARTIAL** | Data exists but claim is weak (tiny N, unfair budget, or missing sibling rows) |
 | **RERUN** | Must re-execute before citing in the post |
 | **MISSING** | No tier-1 artifact yet |
@@ -271,34 +274,33 @@ Chart D publication input: compact manifest snapshots under
 under `charts/chart-d-proposer-scaling/runs/` are local/gitignored and are not
 the public artifact.
 
-### Work items — launch checklist (24 rows)
+### Work items — launch checklist (23 rows)
 
 | ID | Experiment | Type | Tasks | Status | Priority | Charts | Artifact | Next step |
 |:--:|------------|:----:|-------|:------:|:--------:|--------|----------|-----------|
 | E01 | Same-container Synth vs gepa-ai parity | EVAL | HB, Banking77, HotpotQA, tau2 | DONE | P0 | A, C, MDX | `evals/evidence/benchmarks/*/summary.json` | Launch-scope summaries rebuilt from live aggregate |
-| E02 | Harvey heldout — larger split | EVAL | Harvey | OMIT | P3 | A, C, H | `harvey_lab/summary.json` (n=9) | Omitted from launch scope; rerun only if Harvey is re-added |
-| E03 | TaxCalcBench — container + GEPA eval | EVAL | TaxCalc | OMIT | P3 | A, C | — | Omitted from launch scope; post-launch parity work |
+| E02 | Harvey heldout — larger split | EVAL | Harvey | OMIT | P3 | — | — | Omitted from launch scope; prior n=9 smoke cannot support a chart claim |
+| E03 | TaxCalcBench — container + GEPA eval | EVAL | TaxCalc | OMIT | P3 | — | — | Omitted from launch scope; post-launch parity work |
 | E04 | Head-to-head budget-parity protocol | EVAL | launch scope | DONE | P0 | A, MDX | `charts/chart-a-head-to-head/figures/head_to_head_data.json` | Budget-parity floor passes `experiment_unit status` |
 | E05 | Proposer sweep — nano / mini / full | EVAL | HB, tau2 | DONE | P2 | D | `charts/chart-d-proposer-scaling/figures/manifest_snapshots/` | HB and tau2 sweeps rebuilt; chart reports observed reward from compact manifests |
-| E06 | Proposer sweep — full tier-1 | EVAL | HB, Harvey, tau2, TaxCalc, FinQA | PLANNED | P3 | D | — | Only if post claims 5-task scaling |
-| E07 | Proposer failure-mode table | CONTENT | HB, tau2 | PLANNED | P2 | D | `charts/chart-d/runs/...` | Mine validity / mutation errors per cell |
-| E08 | Policy-model variation sweep | EVAL | TBD | PLANNED | P3 | E | `chart-e/` README | Define grid; run sweep |
-| E09 | Program-stage scaling | EVAL | B77, HotpotQA, HoVer, Heart | PLANNED | P3 | F | `chart-f/` README | Post-launch |
-| E10 | Prompt diff extraction | PRODUCER | historical | OMIT | P3 | B | `chart-b/prompts/` | Fresh runs and MDX re-add required before any future use |
+| E06 | Proposer sweep — full tier-1 | EVAL | HB, Harvey, tau2, TaxCalc, FinQA | PLANNED | P3 | — | — | Only if post claims 5-task scaling |
+| E07 | Proposer failure-mode table | CONTENT | HB, tau2 | PLANNED | P2 | D | — | Mine validity / mutation errors per cell before adding content |
+| E08 | Policy-model variation sweep | EVAL | TBD | PLANNED | P3 | — | — | Define grid; run sweep |
+| E09 | Program-stage scaling | EVAL | B77, HotpotQA, HoVer, Heart | PLANNED | P3 | — | — | Post-launch |
+| E10 | Prompt diff extraction | PRODUCER | historical | OMIT | P3 | — | — | Fresh runs and MDX re-add required before any future use |
 | E11 | Budget / protocol fairness table | CONTENT | all tier-1 | MISSING | P1 | — | `head_to_head_data.json` fields | Standalone N, candidates, rollouts table |
 | E12 | Chart → producer provenance map | CONTENT | all wired | PARTIAL | P2 | — | chart READMEs + `figures/source_evidence.json` | One table: chart → producer → JSON → summary |
-| E13 | Evidence pipeline refresh + sync | PRODUCER | launch scope | DONE | P1 | A, C, D | cookbook + frontend `data/*.json` | Producers rebuilt for Chart A/C/D; Chart G omitted |
-| E14 | FinQA codex scaffold + container | IMPL | FinQA | OMIT | P3 | A, C | — | Omitted from launch scope; post-launch container work |
-| E15 | FinQA GEPA parity (Synth vs gepa-ai) | EVAL | FinQA | OMIT | P3 | A, C | — | Omitted from launch scope; post-launch parity work |
-| E16 | FinQA heldout scale (define N) | EVAL | FinQA | OMIT | P3 | C | — | Omitted from launch scope; define if FinQA is re-added |
+| E13 | Evidence pipeline refresh + sync | PRODUCER | launch scope | DONE | P1 | A, C, D | cookbook + frontend `data/*.json` | Producers rebuilt for Chart A/C/D |
+| E14 | FinQA codex scaffold + container | IMPL | FinQA | OMIT | P3 | — | — | Omitted from launch scope; post-launch container work |
+| E15 | FinQA GEPA parity (Synth vs gepa-ai) | EVAL | FinQA | OMIT | P3 | — | — | Omitted from launch scope; post-launch parity work |
+| E16 | FinQA heldout scale (define N) | EVAL | FinQA | OMIT | P3 | — | — | Omitted from launch scope; define if FinQA is re-added |
 | W01 | Head-to-head UI redesign | UI | — | UI | P0 | A | `head-to-head-results.tsx` | Readable budget columns |
 | W02 | Coverage chart panel filter | UI | HB, tau2 (+ others) | UI | P1 | C | `pareto-coverage-chart.tsx` | Panels only when evidence exists |
 | W03 | Chart D limitation copy | UI | HB, tau2 | UI | P2 | D | `index.mdx` addendum | "2-task run group" disclaimer |
-| W04 | Reward diagnostics addendum | UI | historical | OMIT | P3 | H | `reward_diagnostics_data.json` | Fresh evidence and MDX re-add required before any future use |
+| W04 | Reward diagnostics addendum | UI | historical | OMIT | P3 | — | — | Fresh evidence and MDX re-add required before any future use |
 | W05 | Systems diagram narrative pass | UI | — | UI | P2 | React figure | `src/components/blog/posts/introducing-gepa-platform/systems-focus-modal.tsx` | Four-container launch framing |
-| E17 | PaperBench JudgeEval container | EVAL | PaperBench judge | PLANNED | P3 | A, C | — | After current launch scope: wire SimpleJudge + JudgeEval rubrics from frontier-evals as a normal container row |
+| E17 | PaperBench JudgeEval container | EVAL | PaperBench judge | PLANNED | P3 | — | — | After current launch scope: wire SimpleJudge + JudgeEval rubrics from frontier-evals as a normal container row |
 | E18 | Harvey LAB judge eval container | EVAL | Harvey LAB judge | PLANNED | P3 | — | — | Per-criterion vs batch verifier parity; LAB rubric contract |
-| — | Chart G DungeonGrid | — | — | OMIT | — | G | `charts/chart-g-dungeongrid/` | Out of scope — remove from MDX |
 
 ### Summary counts
 
@@ -310,11 +312,12 @@ the public artifact.
 | MISSING | 1 | E11 standalone fairness table |
 | PLANNED | 6 | E06–E09, E17, E18 |
 | UI | 4 | W01–W03, W05 |
-| OMIT | 8 | E02, E03, E10, E14, E15, E16, W04, Chart G |
+| OMIT | 7 | E02, E03, E10, E14, E15, E16, W04 |
 
-Launch-scope run data is present. Remaining non-DONE rows are roadmap, content,
-or UI work; the publication packet still needs the public evidence commit before
-the four-container post can ship.
+Launch-scope run data is present in the public evidence packet. Remaining
+non-DONE rows are roadmap, content, or UI work; the four-container post still
+needs the frontend launch commit and release checklist to cite the final public
+evidence commit before it ships.
 
 ## Prerequisites
 

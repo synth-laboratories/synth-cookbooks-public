@@ -12,8 +12,9 @@ from the separate Chart A/C heldout comparison and is not the metric plotted by
 Chart D. The plotted curve starts at `initial_observed_reward` and advances by
 best observed train/optimization reward through candidate order.
 
-The frontend mirror must be regenerated from this producer and committed from
-the same evidence authority as the chart data.
+The chart data and checked-in producer output are tracked in the public evidence
+packet. The frontend launch commit must carry the byte-matched mirror and cite
+that packet.
 
 ## Sweep grid
 
@@ -111,8 +112,10 @@ uv run python build_chart.py
 - [x] Sweep launched and completed.
 - [x] `figures/proposer_scaling.svg` rendered.
 - [x] Section in blog MDX embeds chart.
-- [ ] Public evidence commit, checked-in producer output, and frontend mirror
-      are published from the same commit authority.
+- [x] Public evidence commit and checked-in producer output are published from
+      the same commit authority.
+- [ ] Frontend launch commit cites the public evidence packet and carries the
+      byte-matched mirror.
 
 ## Design notes
 
