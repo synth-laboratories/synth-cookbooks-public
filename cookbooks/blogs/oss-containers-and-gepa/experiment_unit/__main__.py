@@ -522,14 +522,24 @@ def _is_number(value) -> bool:
 
 def _chart_d_metric_semantics_check() -> PacketCheck:
     paths = [
-        BLOG_ROOT / "charts" / "chart-d-proposer-scaling" / "figures" / "proposer_scaling_data.json",
-        FRONTEND_DATA_DIR / "proposer_scaling_data.json",
+        (
+            BLOG_ROOT / "charts" / "chart-d-proposer-scaling" / "figures" / "proposer_scaling_data.json",
+            True,
+        ),
+        (
+            FRONTEND_DATA_DIR / "proposer_scaling_data.json",
+            False,
+        ),
     ]
     failures: list[str] = []
-    for path in paths:
+    notes: list[str] = []
+    for path, required in paths:
         label = str(path.relative_to(REPO_ROOT)) if path.is_relative_to(REPO_ROOT) else str(path)
         if not path.exists():
-            failures.append(f"{label}: missing")
+            if required:
+                failures.append(f"{label}: missing")
+            else:
+                notes.append(f"{label}: absent because Chart D is removed from the active frontend")
             continue
         try:
             data = json.loads(path.read_text())
@@ -574,6 +584,7 @@ def _chart_d_metric_semantics_check() -> PacketCheck:
         "chart_d_metric_semantics",
         not failures,
         "Chart D separates observed reward from heldout seed context"
+        + (f"; {'; '.join(notes)}" if notes else "")
         if not failures else "; ".join(failures[:3]) + ("; ..." if len(failures) > 3 else ""),
     )
 
