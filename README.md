@@ -50,7 +50,9 @@ metadata, README, version, build command, and publish command.
 The public GEPA examples live under `cookbooks/optimizers/gepa/`. They use the
 Rust `synth-optimizers` GEPA runtime with a Codex app-server proposer and
 HTTP task containers. Current cookbook containers include Banking77, HotpotQA,
-TBLite, Crafter, and MiniGrid.
+Crafter, MiniGrid, and a small pytest-based `tblite_container` micro smoke. That
+`tblite_container` is not Terminal-Bench Lite, Harbor/OpenThoughts evidence, or
+current launch evidence.
 
 Related reusable agent skills:
 
@@ -72,7 +74,7 @@ Equivalent local runs:
 
 ```bash
 cd cookbooks/optimizers/gepa/hotpotqa_container && bash run_fresh_gepa.sh --profile long
-cd cookbooks/optimizers/gepa/tblite_container && bash run_fresh_gepa.sh --profile long
+cd cookbooks/optimizers/gepa/tblite_container && bash run_fresh_gepa.sh --profile long  # micro smoke only
 cd cookbooks/optimizers/gepa/crafter_container && bash run_fresh_gepa.sh --profile long
 cd cookbooks/optimizers/gepa/minigrid_container && bash run_fresh_gepa.sh --profile long
 ```

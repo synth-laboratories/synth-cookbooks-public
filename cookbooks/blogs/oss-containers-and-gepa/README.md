@@ -22,7 +22,7 @@ for the launch charts unless they are explicitly marked `launch A/C` or
 | **Harvey Lab Tax** | vertical / legal agent | post-launch judge-eval roadmap | ✓ public | [`harvey_lab_container/`](../../optimizers/gepa/harvey_lab_container/) |
 | **TaxCalcBench** | vertical / accounting | post-launch | runner OSS · container private | `taxcalcbench_container/` (E03) |
 | **FinQA (codex)** | vertical / finance QA | post-launch | runner OSS · container private | `finqa_container/` (E14–E15) |
-| **tau2-bench airline** | ReAct / tool workflow | tier-1 extended | → public | `taubench_airline_container/` |
+| **tau2-bench airline** | ReAct / tool workflow | post-launch extended | → public | `taubench_airline_container/` |
 | **HoVer** | multistage QA | LangProbe addendum | → public | `hover_container/` |
 | **Heart Disease (UCI)** | single-step classification | LangProbe addendum | → public | `heart_disease_container/` |
 | **TBLite micro coding smoke** | coding agent | post-launch only after real rerun | ✓ public smoke, not launch evidence | [`tblite_container/`](../../optimizers/gepa/tblite_container/) |
@@ -217,12 +217,12 @@ on tau2 than on HealthBench** (HealthBench may saturate / be near-flat).
 | **DONE** | Run completed; compact evidence is tracked in the public evidence packet |
 | **PARTIAL** | Data exists but claim is weak (tiny N, unfair budget, or missing sibling rows) |
 | **RERUN** | Must re-execute before citing in the post |
-| **MISSING** | No tier-1 artifact yet |
+| **MISSING** | No runnable/public artifact yet |
 | **PLANNED** | Scoped but not started |
 | **UI** | Frontend/doc only — no new eval run |
 | **OMIT** | Descoped from launch |
 
-**Priority:** P0 = launch blocker · P1 = headline claim · P2 = addendum/diagnostic · P3 = post-launch
+**Priority:** P0 = launch blocker · P1 = primary launch claim · P2 = addendum/diagnostic · P3 = post-launch
 
 Publication checklist and model-parity locks:
 `Jstack/.jstack/daily_notes/2026-06-03/gepa_blog_publication_failures.md`.
@@ -276,7 +276,7 @@ coverage.
 | E03 | TaxCalcBench — container + GEPA eval | EVAL | TaxCalc | OMIT | P3 | — | — | Omitted from launch scope; post-launch parity work |
 | E04 | Head-to-head parity counters | EVAL | launch scope | DONE | P0 | A, MDX | `charts/chart-a-head-to-head/figures/head_to_head_data.json` | Candidate/rollout parity checks pass `experiment_unit status` |
 | E05 | Proposer sweep — nano / mini / full | EVAL | HB, tau2 | DONE | P2 | D | `charts/chart-d-proposer-scaling/figures/manifest_snapshots/` | HB and tau2 sweeps rebuilt; chart reports observed reward from compact manifests |
-| E06 | Proposer sweep — full tier-1 | EVAL | HB, Harvey, tau2, TaxCalc, FinQA | PLANNED | P3 | — | — | Only if post claims 5-task scaling |
+| E06 | Proposer sweep — broader post-launch set | EVAL | HB, Harvey, tau2, TaxCalc, FinQA | PLANNED | P3 | — | — | Only if a future post claims broader proposer-sweep coverage |
 | E07 | Proposer failure-mode table | CONTENT | HB, tau2 | PLANNED | P2 | D | — | Mine validity / mutation errors per cell before adding content |
 | E08 | Policy-model variation sweep | EVAL | TBD | PLANNED | P3 | — | — | Define grid; run sweep |
 | E09 | Program-stage scaling | EVAL | B77, HotpotQA, HoVer, Heart | PLANNED | P3 | — | — | Post-launch |
