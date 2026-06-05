@@ -1,4 +1,4 @@
-# Chart D - Proposer Scaling
+# Chart D - Proposer Sweep
 
 Does optimizer quality ride the proposer-model curve? Sweep the
 proposer model across three tiers and measure observed optimization reward at a

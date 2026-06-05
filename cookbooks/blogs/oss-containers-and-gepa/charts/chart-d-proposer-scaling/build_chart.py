@@ -522,7 +522,7 @@ def render_svg(cells: list[dict[str, Any]]) -> str:
     svg: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{total_w}" height="{height}" viewBox="0 0 {total_w} {height}">',
         '<rect width="100%" height="100%" fill="#fffaf4"/>',
-        f'<text x="24" y="32" fill="#2b2118" font-family="Inter, sans-serif" font-size="16" font-weight="600">Chart D — Proposer Scaling: observed reward vs proposer model</text>',
+        f'<text x="24" y="32" fill="#2b2118" font-family="Inter, sans-serif" font-size="16" font-weight="600">Chart D — Proposer Sweep: observed reward vs proposer model</text>',
     ]
 
     # Y-axis tick lines (shared across panels)
