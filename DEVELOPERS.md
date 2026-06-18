@@ -53,8 +53,7 @@ surface should stay framework-neutral:
 
 - Put public nouns, protocols, resource references, capability declarations, and
   HTTP contract helpers in `src/synth_containers/`.
-- Put Harbor, OpenEnv, Archipelago, or other framework-specific translation
-  code in `src/synth_containers/compat/`.
+- Put framework-specific translation code in `src/synth_containers/compat/`.
 - Keep compat adapters thin. They should wrap caller-owned services, task
   registries, and rollout handlers; they should not own Docker lifecycle,
   native environment implementations, or private service internals.

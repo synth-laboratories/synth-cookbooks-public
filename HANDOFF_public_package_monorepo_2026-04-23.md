@@ -4,9 +4,9 @@ Date: 2026-04-23
 
 Audience: the next engineer setting up the public-facing Synth package layout for cookbooks and containers.
 
-2026-05-18 update: optimizer code was cut from this public repo and moved to
-`synth-cookbooks-private`. This handoff now reflects the public-safe package
-layout after that cut.
+2026-05-18 update: optimizer code was cut from this public repo and moved out
+of the current public package layout. This handoff now reflects the public-safe
+package layout after that cut.
 
 ## Decision
 

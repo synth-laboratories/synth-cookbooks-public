@@ -19,7 +19,7 @@ directories; Chart A tracks the launch evidence compactly in
 
 | Folder | What the chart shows |
 |---|---|
-| [chart-a-head-to-head/](./chart-a-head-to-head/) | Head-to-head: Synth GEPA vs gepa-ai on the three public launch cookbooks. Code Review stays runner-OSS/container-private. |
+| [chart-a-head-to-head/](./chart-a-head-to-head/) | Head-to-head: Synth GEPA vs gepa-ai on the public launch cookbooks. Non-public task rows are omitted from this cookbook release. |
 | [chart-b-prompt-diff/](./chart-b-prompt-diff/) | Qualitative side-by-side of best candidate prompts from both implementations on Banking77, TBLite, and Crafter. |
 | [chart-c-use-case-coverage/](./chart-c-use-case-coverage/) | Honest capability matrix: what each implementation can target today (incl. `optimize_anything` gap). |
 | [chart-d-proposer-scaling/](./chart-d-proposer-scaling/) | Does optimizer quality ride the proposer-model curve? Sweep across `gpt-5` → `gpt-5.5`. |
@@ -48,10 +48,7 @@ Status legend:
 
 - **✓ public** — container shipped publicly today.
 - **→ public** — container being flipped public with this release.
-- **runner OSS · container private** — the `synth-optimizers` runner that
-  executes these is open-source, but the container itself stays
-  internal (typically because the underlying task is proprietary or
-  service-coupled and impossible to reproduce DIY).
+- **omitted** — not part of this public cookbook release.
 - **roadmap** — upstream task identified; container build in progress.
 
 ### Single / multistage programs (DSPy-style stage chains)
@@ -59,7 +56,7 @@ Status legend:
 | Container | Upstream / dataset | Status |
 |---|---|---|
 | Banking77 | [PolyAI/banking77](https://huggingface.co/datasets/PolyAI/banking77) | ✓ public ([container](../../optimizers/gepa/banking77_container/)) |
-| Banking77 (MIPROv2-shaped) | [PolyAI/banking77](https://huggingface.co/datasets/PolyAI/banking77) | → public |
+| Banking77 multistage | [PolyAI/banking77](https://huggingface.co/datasets/PolyAI/banking77) | → public |
 | HotpotQA | [hotpotqa.github.io](https://hotpotqa.github.io/) | → public |
 | HoVer | [hover-nlp.github.io](https://hover-nlp.github.io/) | → public |
 | Heart Disease (UCI) | [UCI ML Repository](https://archive.ics.uci.edu/dataset/45/heart+disease) | → public |
@@ -68,9 +65,9 @@ Status legend:
 
 | Container | Upstream / dataset | Status |
 |---|---|---|
-| TBLite | [Terminal-Bench](https://www.tbench.ai/) | ✓ public ([container](../../optimizers/gepa/tblite_container/)) — uses OpenAI API key auth (no Codex bundle required) |
-| Code Review | (internal cookbook PR review task) | runner OSS · container private |
-| NGO-style | (internal research target) | runner OSS · container private |
+| TBLite coding micro-container | pytest-verified Python tasks | ✓ public ([container](../../optimizers/gepa/tblite_container/)) — uses OpenAI API key auth (no Codex bundle required) |
+| Code Review | — | omitted |
+| NGO-style | — | omitted |
 
 ### ReAct environments (long-horizon, game / world)
 
@@ -91,15 +88,14 @@ Status legend:
 ### Tally
 
 - **Public today:** 3 (Banking77, TBLite, Crafter).
-- **Going public with this release:** 6 (Banking77-MIPROv2, HotpotQA,
+- **Going public with this release:** 6 (Banking77 multistage, HotpotQA,
   HoVer, Heart Disease, MiniGrid, Tau-Bench 3).
-- **Runner OSS · container private:** 2 (Code Review, NGO-style).
+- **Omitted from this public cookbook release:** 2 (Code Review, NGO-style).
 - **Vertical roadmap:** 3 (Harvey Labs, Legal Apex Agents, HealthBench
   Professional).
 
 That's **9 public containers** after the flip across four lever-shape
-categories, with the optimizer runner open-source for every category
-including the rows where the container stays internal.
+categories.
 
 ## Compute-parity ground rules
 

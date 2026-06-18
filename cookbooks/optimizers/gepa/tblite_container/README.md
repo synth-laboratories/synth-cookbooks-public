@@ -1,4 +1,4 @@
-# Terminal-Bench-Lite GEPA Container
+# TBLite Coding GEPA Container
 
 Real Python coding tasks verified by real pytest. No fixture, no string
 matching, no Docker.
