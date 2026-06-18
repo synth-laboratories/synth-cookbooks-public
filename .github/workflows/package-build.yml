@@ -15,35 +15,52 @@ on:
 
 jobs:
   build:
-    name: Build ${{ matrix.package }}
+    name: Build ${{ matrix.package.name }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         package:
-          - synth-containers
-          - synth-optimizers
+          - name: synth-containers
+            path: packages/synth-containers
+          - name: synth-optimizers
+            path: packages/synth-optimizers
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Detect package path
+        id: package
+        run: |
+          if [ -d "${{ matrix.package.path }}" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping removed package path: ${{ matrix.package.path }}"
+          fi
+
       - name: Set up Python
+        if: steps.package.outputs.exists == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install uv
+        if: steps.package.outputs.exists == 'true'
         run: python -m pip install --upgrade uv
 
       - name: Lint package
-        working-directory: packages/${{ matrix.package }}
+        if: steps.package.outputs.exists == 'true'
+        working-directory: ${{ matrix.package.path }}
         run: uv run --group dev ruff check src
 
       - name: Type check package
-        working-directory: packages/${{ matrix.package }}
+        if: steps.package.outputs.exists == 'true'
+        working-directory: ${{ matrix.package.path }}
         run: uv run --group dev ty check src
 
       - name: Build package
-        working-directory: packages/${{ matrix.package }}
+        if: steps.package.outputs.exists == 'true'
+        working-directory: ${{ matrix.package.path }}
         run: uv build
