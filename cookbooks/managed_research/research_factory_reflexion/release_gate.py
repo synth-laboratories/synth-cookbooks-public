@@ -60,6 +60,34 @@ def _git_sha(value: Any, *, field: str) -> str:
     return commit_sha
 
 
+def _reflexion_instance(value: Any, *, field: str) -> dict[str, Any]:
+    instance = _mapping(value, field=field)
+    if (
+        instance.get("created_from_scratch") is not True
+        or _text(
+            instance.get("implementation_root"),
+            field=f"{field}.implementation_root",
+        )
+        != "reflexion_instance"
+    ):
+        raise _error(f"{field} is not a Factory-built Reflexion instance")
+    cookbook = _mapping(
+        instance.get("cookbook_reference"), field=f"{field}.cookbook_reference"
+    )
+    if (
+        cookbook.get("role") != "reference_design_only"
+        or cookbook.get("source_mounted") is not False
+        or cookbook.get("source_copied") is not False
+    ):
+        raise _error(f"{field} treats the cookbook as runtime source")
+    source_files = _sequence(
+        instance.get("source_files"), field=f"{field}.source_files"
+    )
+    if not source_files:
+        raise _error(f"{field}.source_files must not be empty")
+    return instance
+
+
 def _source_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
     source = _mapping(packet.get("source"), field="source")
     manifest_digest = _sha256(
@@ -183,6 +211,14 @@ def _experiment_evidence(
         zip(expected_experiment_ids, expected_run_ids, strict=True)
     ):
         bundle = bundle_by_id[experiment_id]
+        experiment = _mapping(
+            bundle.get("experiment"),
+            field=f"experiments.bundles.{experiment_id}.experiment",
+        )
+        if experiment.get("status") != "accepted" or str(
+            experiment.get("verdict") or ""
+        ).lower() not in {"accept", "promote"}:
+            raise _error(f"{REQUIRED_CYCLES[index]} experiment is not accepted")
         integrity = _mapping(
             bundle.get("integrity"),
             field=f"experiments.bundles.{experiment_id}.integrity",
@@ -199,7 +235,7 @@ def _experiment_evidence(
             candidate.get("snapshot"),
             field=f"experiments.bundles.{experiment_id}.candidate.snapshot",
         )
-        instance = _mapping(
+        instance = _reflexion_instance(
             snapshot.get("reflexion_instance"),
             field=f"experiments.bundles.{experiment_id}.reflexion_instance",
         )
@@ -433,6 +469,13 @@ def _release_and_artifacts(
     if len(audit_bundles) != 1:
         raise _error("release audit must have exactly one experiment bundle")
     audit_bundle = audit_bundles[0]
+    audit_experiment = _mapping(
+        audit_bundle.get("experiment"), field="release_audit.bundle.experiment"
+    )
+    if audit_experiment.get("status") != "accepted" or str(
+        audit_experiment.get("verdict") or ""
+    ).lower() not in {"accept", "promote"}:
+        raise _error("release audit experiment is not accepted")
     audit_bundle_run_ids = {
         _text(item, field="release_audit.bundle.run_ids[]")
         for item in _sequence(
@@ -455,7 +498,7 @@ def _release_and_artifacts(
         audit_candidate.get("snapshot"),
         field="release_audit.bundle.candidate.snapshot",
     )
-    audit_instance = _mapping(
+    audit_instance = _reflexion_instance(
         audit_snapshot.get("reflexion_instance"),
         field="release_audit.bundle.reflexion_instance",
     )
@@ -495,6 +538,8 @@ def _release_and_artifacts(
                 field="release_audit.bundle.evaluation.seed_set",
             )
         }
+        evaluation_value = float(audit_evaluation.get("value"))
+        evaluation_baseline = float(audit_evaluation.get("baseline_value"))
         evaluation_delta = float(audit_evaluation.get("delta"))
     except (TypeError, ValueError) as exc:
         raise _error("release audit evaluation has invalid seed or delta data") from exc
@@ -503,7 +548,20 @@ def _release_and_artifacts(
         or len(audit_seed_set) != 64
         or audit_evaluation.get("evidence_grade") != "release_evidence"
         or audit_evaluation.get("truth_status") not in {"attested", "verified"}
+        or not all(
+            math.isfinite(value)
+            for value in (evaluation_value, evaluation_baseline, evaluation_delta)
+        )
+        or not math.isclose(
+            evaluation_value - evaluation_baseline,
+            evaluation_delta,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
         or evaluation_delta != statistics["mean_delta"]
+        or not audit_evaluation.get("result_id")
+        or not audit_evaluation.get("scorer_id")
+        or not audit_evaluation.get("per_example_artifact_id")
         or not audit_evaluation.get("summary_artifact_id")
     ):
         raise _error("release audit evaluation is not 64-seed release evidence")
@@ -568,10 +626,17 @@ def _release_and_artifacts(
         and str(raw.get("run_id") or "").strip() == audit_run_id
         and str(raw.get("container_run_id") or "").strip() == container_run_id
     ]
-    if len(audit_executions) != 1 or audit_executions[0].get("status") not in {
-        "completed",
-        "done",
-    }:
+    audit_execution = audit_executions[0] if len(audit_executions) == 1 else {}
+    if (
+        audit_execution.get("status") not in {"completed", "done"}
+        or _sha256(
+            audit_execution.get("container_digest"),
+            field="release_audit.bundle.execution.container_digest",
+        )
+        == ""
+        or audit_execution.get("scorer_id") != audit_evaluation.get("scorer_id")
+        or not list(audit_execution.get("task_ids") or [])
+    ):
         raise _error("release audit evaluation has no completed matching execution")
     provenance = _mapping(
         audit_bundle.get("provenance"), field="release_audit.bundle.provenance"
@@ -857,7 +922,7 @@ def _infrastructure(
     }
 
 
-def validate_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
+def validate_predeployment_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
     source_packet = dict(packet)
     if source_packet.get("schema_version") != PACKET_SCHEMA:
         raise _error(f"schema_version must be {PACKET_SCHEMA}")
@@ -887,6 +952,27 @@ def validate_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
     )
     knowledge_git["cycle_evidence_commit"] = knowledge_git["evidence_commit"]
     knowledge_git["evidence_commit"] = release["evidence_commit"]
+    return {
+        "source": source,
+        "factory": factory,
+        "experiments": experiments,
+        "knowledge_git": knowledge_git,
+        "release": release,
+    }
+
+
+def validate_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
+    source_packet = dict(packet)
+    predeployment = validate_predeployment_evidence(source_packet)
+    source = _mapping(predeployment.get("source"), field="predeployment.source")
+    factory = _mapping(predeployment.get("factory"), field="predeployment.factory")
+    experiments = _mapping(
+        predeployment.get("experiments"), field="predeployment.experiments"
+    )
+    knowledge_git = _mapping(
+        predeployment.get("knowledge_git"), field="predeployment.knowledge_git"
+    )
+    release = _mapping(predeployment.get("release"), field="predeployment.release")
     infrastructure = _infrastructure(
         source_packet,
         source_manifest_digest=source["manifest_digest"],
