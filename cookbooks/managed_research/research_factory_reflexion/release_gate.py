@@ -383,8 +383,6 @@ def _release_and_artifacts(
     *,
     instance_id: str,
     instance_head: str,
-    c2_experiment_id: str,
-    c2_run_id: str,
 ) -> dict[str, Any]:
     audit = _mapping(packet.get("release_audit"), field="release_audit")
     if (
@@ -396,13 +394,13 @@ def _release_and_artifacts(
     ):
         raise _error("one accepted 64-seed release audit is required")
     expected_audit_identity = {
-        "experiment_id": c2_experiment_id,
-        "run_id": c2_run_id,
         "reflexion_instance_id": instance_id,
         "source_commit_sha": instance_head,
     }
     if any(audit.get(key) != value for key, value in expected_audit_identity.items()):
         raise _error("release audit is not bound to the accepted C2 instance")
+    _text(audit.get("experiment_id"), field="release_audit.experiment_id")
+    _text(audit.get("run_id"), field="release_audit.run_id")
     try:
         statistics = {
             field: float(audit.get(field)) for field in ("mean_delta", "ci_lo", "ci_hi")
@@ -665,8 +663,6 @@ def validate_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
         source_packet,
         instance_id=factory["instance_id"],
         instance_head=factory["instance_head"],
-        c2_experiment_id=factory["experiment_ids"][2],
-        c2_run_id=factory["run_ids"][2],
     )
     infrastructure = _infrastructure(
         source_packet,

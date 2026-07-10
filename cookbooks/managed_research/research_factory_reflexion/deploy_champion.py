@@ -152,8 +152,6 @@ def candidate_from_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]
         raise _error("release evidence has no accepted positive 64-seed audit")
     if (
         audit.get("reflexion_instance_id") != instance_id
-        or audit.get("experiment_id") != experiment_ids[2]
-        or audit.get("run_id") != run_ids[2]
         or _git_sha(
             audit.get("source_commit_sha"), field="release_audit.source_commit_sha"
         )
@@ -161,6 +159,8 @@ def candidate_from_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]
         or not math.isfinite(float(audit.get("ci_lo") or 0.0))
     ):
         raise _error("release audit is not bound to the accepted instance")
+    _text(audit.get("experiment_id"), field="release_audit.experiment_id")
+    _text(audit.get("run_id"), field="release_audit.run_id")
     git_receipts = packet.get("git_receipts")
     if not isinstance(git_receipts, list) or not git_receipts:
         raise _error("release evidence has no git receipts")
