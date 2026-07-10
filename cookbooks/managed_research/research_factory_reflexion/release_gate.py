@@ -729,6 +729,8 @@ def _infrastructure(
     instance_id: str,
     instance_head: str,
     evidence_commit: str,
+    remote_repo: str,
+    branch: str,
     cycle_run_ids: Sequence[str],
     cycle_source_commits: Sequence[str],
 ) -> dict[str, Any]:
@@ -906,14 +908,19 @@ def _infrastructure(
         resolved_source.get("repo_id"),
         field="infrastructure.exe_dev.resolved_source.repo_id",
     )
-    _text(
-        resolved_source.get("remote_repo"),
-        field="infrastructure.exe_dev.resolved_source.remote_repo",
-    )
-    _text(
-        resolved_source.get("branch"),
-        field="infrastructure.exe_dev.resolved_source.branch",
-    )
+    if (
+        _text(
+            resolved_source.get("remote_repo"),
+            field="infrastructure.exe_dev.resolved_source.remote_repo",
+        )
+        != remote_repo
+        or _text(
+            resolved_source.get("branch"),
+            field="infrastructure.exe_dev.resolved_source.branch",
+        )
+        != branch
+    ):
+        raise _error("exe.dev resolved source crosses the accepted git lineage")
     return {
         "railway_deployment_ids": railway_ids,
         "daytona_cycle_labels": list(REQUIRED_CYCLES),
@@ -991,6 +998,8 @@ def validate_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
         instance_id=factory["instance_id"],
         instance_head=factory["instance_head"],
         evidence_commit=release["evidence_commit"],
+        remote_repo=knowledge_git["remote_repo"],
+        branch=knowledge_git["branch"],
         cycle_run_ids=experiments["run_ids"],
         cycle_source_commits=experiments["source_commits"],
     )
