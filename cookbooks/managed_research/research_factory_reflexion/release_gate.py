@@ -115,7 +115,9 @@ def _source_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _factory_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
+def _factory_evidence(
+    packet: Mapping[str, Any], *, require_operating_proof: bool
+) -> dict[str, Any]:
     factory = _mapping(packet.get("factory"), field="factory")
     factory_id = _text(factory.get("factory_id"), field="factory.factory_id")
     project_id = _text(factory.get("project_id"), field="factory.project_id")
@@ -152,25 +154,29 @@ def _factory_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
         acceptance.get("reflexion_instance_head"),
         field="factory.b0_c1_c2_acceptance.reflexion_instance_head",
     )
-    operating = _mapping(
-        factory.get("operating_proof"), field="factory.operating_proof"
+    operating_raw = factory.get("operating_proof")
+    operating = (
+        _mapping(operating_raw, field="factory.operating_proof")
+        if operating_raw is not None
+        else {}
     )
-    if operating.get("accepted") is not True:
-        raise _error("operating proof is not accepted")
-    if int(operating.get("accepted_cycles") or 0) < 12:
-        raise _error("operating proof contains fewer than 12 accepted cycles")
-    if int(operating.get("window_days") or 0) != 30:
-        raise _error("operating proof must use the 30-day window")
-    if operating.get("health_status") != "healthy":
-        raise _error("Factory health is not healthy")
+    if require_operating_proof:
+        if operating.get("accepted") is not True:
+            raise _error("operating proof is not accepted")
+        if int(operating.get("accepted_cycles") or 0) < 12:
+            raise _error("operating proof contains fewer than 12 accepted cycles")
+        if int(operating.get("window_days") or 0) != 30:
+            raise _error("operating proof must use the 30-day window")
+        if operating.get("health_status") != "healthy":
+            raise _error("Factory health is not healthy")
     return {
         "factory_id": factory_id,
         "project_id": project_id,
         "effort_id": effort_id,
         "instance_id": instance_id,
         "instance_head": instance_head,
-        "accepted_cycles": int(operating["accepted_cycles"]),
-        "window_days": int(operating["window_days"]),
+        "accepted_cycles": int(operating.get("accepted_cycles") or 0),
+        "window_days": int(operating.get("window_days") or 0),
         "experiment_ids": experiment_ids,
         "run_ids": run_ids,
     }
@@ -922,12 +928,16 @@ def _infrastructure(
     }
 
 
-def validate_predeployment_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
+def validate_predeployment_evidence(
+    packet: Mapping[str, Any], *, require_operating_proof: bool = True
+) -> dict[str, Any]:
     source_packet = dict(packet)
     if source_packet.get("schema_version") != PACKET_SCHEMA:
         raise _error(f"schema_version must be {PACKET_SCHEMA}")
     source = _source_evidence(source_packet)
-    factory = _factory_evidence(source_packet)
+    factory = _factory_evidence(
+        source_packet, require_operating_proof=require_operating_proof
+    )
     experiments = _experiment_evidence(
         source_packet,
         instance_id=factory["instance_id"],

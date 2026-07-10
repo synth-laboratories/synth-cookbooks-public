@@ -165,7 +165,9 @@ def build_request(candidate: Mapping[str, Any]) -> dict[str, Any]:
 
 def candidate_from_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
     try:
-        predeployment = validate_predeployment_evidence(packet)
+        predeployment = validate_predeployment_evidence(
+            packet, require_operating_proof=False
+        )
     except ValueError as exc:
         raise _error(
             f"release evidence failed predeployment validation: {exc}"
