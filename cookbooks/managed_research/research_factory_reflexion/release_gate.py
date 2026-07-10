@@ -294,43 +294,86 @@ def _experiment_evidence(
 
 
 def _knowledge_and_git(
-    packet: Mapping[str, Any], *, instance_head: str
+    packet: Mapping[str, Any],
+    *,
+    expected_experiment_ids: Sequence[str],
+    expected_run_ids: Sequence[str],
+    expected_source_commits: Sequence[str],
 ) -> dict[str, Any]:
     wiki = _sequence(packet.get("wiki_receipts"), field="wiki_receipts")
-    if len(wiki) < 3:
-        raise _error("B0/C1/C2 Wiki receipts are required")
-    wiki_urls: list[str] = []
+    wiki_by_experiment: dict[str, dict[str, Any]] = {}
     for index, raw in enumerate(wiki):
         receipt = _mapping(raw, field=f"wiki_receipts[{index}]")
+        experiment_id = _text(
+            receipt.get("source_experiment_id"),
+            field=f"wiki_receipts[{index}].source_experiment_id",
+        )
+        if experiment_id in wiki_by_experiment:
+            raise _error(f"duplicate Wiki receipt: {experiment_id}")
+        wiki_by_experiment[experiment_id] = receipt
+    wiki_urls: list[str] = []
+    for index, (experiment_id, run_id) in enumerate(
+        zip(expected_experiment_ids, expected_run_ids, strict=True)
+    ):
+        receipt = _mapping(
+            wiki_by_experiment.get(experiment_id),
+            field=f"wiki_receipts.{experiment_id}",
+        )
         if str(receipt.get("review_state") or "").lower() not in {
             "accepted",
             "applied",
         }:
             raise _error(f"Wiki receipt {index} is not accepted/applied truth")
+        if receipt.get("source_run_id") != run_id:
+            raise _error(f"Wiki receipt {index} is not bound to its B0/C1/C2 run")
         wiki_urls.append(_text(receipt.get("url"), field=f"wiki_receipts[{index}].url"))
 
     git_receipts = _sequence(packet.get("git_receipts"), field="git_receipts")
-    if len(git_receipts) < 3:
-        raise _error("B0/C1/C2 git-server receipts are required")
-    last = _mapping(git_receipts[-1], field="git_receipts[-1]")
-    if last.get("repo_state_advanced") is not True:
-        raise _error("latest project git-server receipt did not advance")
-    if (
-        _git_sha(
-            last.get("source_commit_sha"), field="git_receipts[-1].source_commit_sha"
+    git_by_run: dict[str, dict[str, Any]] = {}
+    for index, raw in enumerate(git_receipts):
+        receipt = _mapping(raw, field=f"git_receipts[{index}]")
+        run_id = _text(
+            receipt.get("source_run_id"), field=f"git_receipts[{index}].source_run_id"
         )
-        != instance_head
+        if run_id in git_by_run:
+            raise _error(f"duplicate git-server receipt: {run_id}")
+        git_by_run[run_id] = receipt
+    ordered_git: list[dict[str, Any]] = []
+    remote_repo = ""
+    branch = ""
+    for index, (run_id, source_commit) in enumerate(
+        zip(expected_run_ids, expected_source_commits, strict=True)
     ):
-        raise _error("latest git-server receipt does not contain the instance head")
+        receipt = _mapping(git_by_run.get(run_id), field=f"git_receipts.{run_id}")
+        if (
+            receipt.get("repo_state_advanced") is not True
+            or _git_sha(
+                receipt.get("source_commit_sha"),
+                field=f"git_receipts.{run_id}.source_commit_sha",
+            )
+            != source_commit
+        ):
+            raise _error(f"git-server receipt {index} is not source-bound")
+        current_remote = _text(
+            receipt.get("remote_repo"), field=f"git_receipts.{run_id}.remote_repo"
+        )
+        current_branch = _text(
+            receipt.get("branch"), field=f"git_receipts.{run_id}.branch"
+        )
+        if index == 0:
+            remote_repo = current_remote
+            branch = current_branch
+        elif current_remote != remote_repo or current_branch != branch:
+            raise _error("B0/C1/C2 git receipts cross a repo or branch boundary")
+        ordered_git.append(receipt)
+    last = ordered_git[-1]
     evidence_commit = _git_sha(
         last.get("commit_sha"), field="git_receipts[-1].commit_sha"
     )
     return {
         "wiki_urls": wiki_urls,
-        "remote_repo": _text(
-            last.get("remote_repo"), field="git_receipts[-1].remote_repo"
-        ),
-        "branch": _text(last.get("branch"), field="git_receipts[-1].branch"),
+        "remote_repo": remote_repo,
+        "branch": branch,
         "evidence_commit": evidence_commit,
     }
 
@@ -613,7 +656,10 @@ def validate_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
         expected_run_ids=factory["run_ids"],
     )
     knowledge_git = _knowledge_and_git(
-        source_packet, instance_head=factory["instance_head"]
+        source_packet,
+        expected_experiment_ids=experiments["experiment_ids"],
+        expected_run_ids=experiments["run_ids"],
+        expected_source_commits=experiments["source_commits"],
     )
     release = _release_and_artifacts(
         source_packet,
