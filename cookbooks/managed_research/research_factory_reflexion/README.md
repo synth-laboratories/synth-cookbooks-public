@@ -82,7 +82,8 @@ accepts the non-secret `champion_candidate.schema.json` shape via `--candidate`.
 
 The backend derives the git remote and branch from the candidate's Managed
 Research project. The caller supplies no remote URL or credential. Launching a
-retained VM requires both an explicit flag and an exact commit confirmation:
+retained VM requires an explicit flag, an exact commit confirmation, and the
+final observed receipt produced by mandatory `--wait`:
 
 ```bash
 python cookbooks/managed_research/research_factory_reflexion/deploy_champion.py \

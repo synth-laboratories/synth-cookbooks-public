@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,6 +98,23 @@ def _factory_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
         raise _error("B0/C1/C2 acceptance is not accepted")
     if tuple(acceptance.get("cycle_labels") or ()) != REQUIRED_CYCLES:
         raise _error("accepted cycle chain must be exactly B0, C1, C2")
+    experiment_ids = [
+        _text(item, field="factory.b0_c1_c2_acceptance.experiment_ids[]")
+        for item in _sequence(
+            acceptance.get("experiment_ids"),
+            field="factory.b0_c1_c2_acceptance.experiment_ids",
+        )
+    ]
+    run_ids = [
+        _text(item, field="factory.b0_c1_c2_acceptance.run_ids[]")
+        for item in _sequence(
+            acceptance.get("run_ids"), field="factory.b0_c1_c2_acceptance.run_ids"
+        )
+    ]
+    if len(experiment_ids) != 3 or len(set(experiment_ids)) != 3:
+        raise _error("B0/C1/C2 experiment IDs must be three unique values")
+    if len(run_ids) != 3 or len(set(run_ids)) != 3:
+        raise _error("B0/C1/C2 run IDs must be three unique values")
     instance_id = _text(
         acceptance.get("reflexion_instance_id"),
         field="factory.b0_c1_c2_acceptance.reflexion_instance_id",
@@ -124,63 +142,155 @@ def _factory_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
         "instance_head": instance_head,
         "accepted_cycles": int(operating["accepted_cycles"]),
         "window_days": int(operating["window_days"]),
+        "experiment_ids": experiment_ids,
+        "run_ids": run_ids,
     }
 
 
 def _experiment_evidence(
-    packet: Mapping[str, Any], *, instance_id: str, instance_head: str
+    packet: Mapping[str, Any],
+    *,
+    instance_id: str,
+    instance_head: str,
+    expected_experiment_ids: Sequence[str],
+    expected_run_ids: Sequence[str],
 ) -> dict[str, Any]:
     experiments = _mapping(packet.get("experiments"), field="experiments")
     bundles = _sequence(experiments.get("bundles"), field="experiments.bundles")
-    if len(bundles) < 3:
-        raise _error("at least B0, C1, and C2 experiment bundles are required")
-    accepted_ids: list[str] = []
-    observed_head = ""
+    bundle_by_id: dict[str, dict[str, Any]] = {}
     for index, raw in enumerate(bundles):
         bundle = _mapping(raw, field=f"experiments.bundles[{index}]")
+        experiment_id = _text(
+            bundle.get("experiment_id"),
+            field=f"experiments.bundles[{index}].experiment_id",
+        )
+        if experiment_id in bundle_by_id:
+            raise _error(f"duplicate experiment bundle: {experiment_id}")
+        bundle_by_id[experiment_id] = bundle
+    missing_ids = [
+        experiment_id
+        for experiment_id in expected_experiment_ids
+        if experiment_id not in bundle_by_id
+    ]
+    if missing_ids:
+        raise _error("B0/C1/C2 bundles missing: " + ", ".join(missing_ids))
+
+    observed_origin_run_id = ""
+    previous_commit = ""
+    source_commits: list[str] = []
+    for index, (experiment_id, run_id) in enumerate(
+        zip(expected_experiment_ids, expected_run_ids, strict=True)
+    ):
+        bundle = bundle_by_id[experiment_id]
         integrity = _mapping(
-            bundle.get("integrity"), field=f"experiments.bundles[{index}].integrity"
+            bundle.get("integrity"),
+            field=f"experiments.bundles.{experiment_id}.integrity",
         )
         if integrity.get("accepted_cycle") is not True or integrity.get(
             "missing"
-        ) not in (
-            None,
-            [],
-        ):
-            raise _error(f"experiment bundle {index} is not evidence-complete")
+        ) not in (None, []):
+            raise _error(f"{REQUIRED_CYCLES[index]} bundle is not evidence-complete")
         candidate = _mapping(
-            bundle.get("candidate"), field=f"experiments.bundles[{index}].candidate"
+            bundle.get("candidate"),
+            field=f"experiments.bundles.{experiment_id}.candidate",
         )
         snapshot = _mapping(
             candidate.get("snapshot"),
-            field=f"experiments.bundles[{index}].candidate.snapshot",
+            field=f"experiments.bundles.{experiment_id}.candidate.snapshot",
         )
         instance = _mapping(
             snapshot.get("reflexion_instance"),
-            field=f"experiments.bundles[{index}].candidate.snapshot.reflexion_instance",
+            field=f"experiments.bundles.{experiment_id}.reflexion_instance",
         )
         if (
             _text(instance.get("instance_id"), field="reflexion_instance.instance_id")
             != instance_id
         ):
             raise _error("experiment bundle replaced the accepted Reflexion instance")
-        observed_head = _git_sha(
+        bundle_run_ids = {
+            _text(item, field=f"experiments.bundles.{experiment_id}.run_ids[]")
+            for item in _sequence(
+                bundle.get("run_ids"),
+                field=f"experiments.bundles.{experiment_id}.run_ids",
+            )
+        }
+        if run_id not in bundle_run_ids:
+            raise _error(f"{REQUIRED_CYCLES[index]} bundle is not bound to its run")
+        origin_run_id = _text(
+            instance.get("origin_run_id"),
+            field=f"experiments.bundles.{experiment_id}.origin_run_id",
+        )
+        created_in_run_id = _text(
+            instance.get("created_in_run_id"),
+            field=f"experiments.bundles.{experiment_id}.created_in_run_id",
+        )
+        if index == 0:
+            if origin_run_id != run_id or created_in_run_id != run_id:
+                raise _error("B0 bundle did not originate the Reflexion instance")
+            observed_origin_run_id = origin_run_id
+        elif (
+            origin_run_id != observed_origin_run_id
+            or created_in_run_id != observed_origin_run_id
+        ):
+            raise _error(f"{REQUIRED_CYCLES[index]} changed the instance origin")
+        commit_sha = _git_sha(
             instance.get("git_commit_sha"), field="reflexion_instance.git_commit_sha"
         )
-        accepted_ids.append(
-            _text(
-                bundle.get("experiment_id"),
-                field=f"experiments.bundles[{index}].experiment_id",
-            )
+        parent_commit = str(instance.get("parent_git_commit_sha") or "").strip().lower()
+        if (index == 0 and parent_commit) or (
+            index > 0 and parent_commit != previous_commit
+        ):
+            raise _error(f"{REQUIRED_CYCLES[index]} source parent is not canonical")
+        if commit_sha == previous_commit:
+            raise _error(f"{REQUIRED_CYCLES[index]} did not advance source")
+        provenance = _mapping(
+            bundle.get("provenance"),
+            field=f"experiments.bundles.{experiment_id}.provenance",
         )
-    if observed_head != instance_head:
+        git_receipt = _mapping(
+            provenance.get("git_server"),
+            field=f"experiments.bundles.{experiment_id}.provenance.git_server",
+        )
+        if (
+            _git_sha(
+                git_receipt.get("source_commit_sha"),
+                field=f"experiments.bundles.{experiment_id}.git_server.source_commit_sha",
+            )
+            != commit_sha
+            or git_receipt.get("repo_state_advanced") is not True
+        ):
+            raise _error(f"{REQUIRED_CYCLES[index]} git receipt is not source-bound")
+        if index == 0:
+            if provenance.get("prior_findings_consumed") not in (None, {}):
+                raise _error("B0 bundle cannot consume prior experiment findings")
+        else:
+            prior = _mapping(
+                provenance.get("prior_findings_consumed"),
+                field=f"experiments.bundles.{experiment_id}.prior_findings_consumed",
+            )
+            if prior.get("source_experiment_id") != expected_experiment_ids[index - 1]:
+                raise _error(
+                    f"{REQUIRED_CYCLES[index]} did not consume the prior experiment"
+                )
+        previous_commit = commit_sha
+        source_commits.append(commit_sha)
+    if previous_commit != instance_head:
         raise _error(
             "latest experiment source commit is not the accepted instance head"
         )
     comparison = _mapping(experiments.get("comparison"), field="experiments.comparison")
     if comparison.get("comparable") is not True:
         raise _error("experiment history is not comparable")
-    return {"experiment_ids": accepted_ids, "bundle_count": len(bundles)}
+    if not set(expected_experiment_ids).issubset(
+        set(comparison.get("experiment_ids") or [])
+    ):
+        raise _error("experiment comparison omits the B0/C1/C2 chain")
+    return {
+        "experiment_ids": list(expected_experiment_ids),
+        "run_ids": list(expected_run_ids),
+        "source_commits": source_commits,
+        "bundle_count": 3,
+    }
 
 
 def _knowledge_and_git(
@@ -225,12 +335,40 @@ def _knowledge_and_git(
     }
 
 
-def _release_and_artifacts(packet: Mapping[str, Any]) -> dict[str, Any]:
+def _release_and_artifacts(
+    packet: Mapping[str, Any],
+    *,
+    instance_id: str,
+    instance_head: str,
+    c2_experiment_id: str,
+    c2_run_id: str,
+) -> dict[str, Any]:
     audit = _mapping(packet.get("release_audit"), field="release_audit")
-    if audit.get("accepted") is not True or int(audit.get("seed_count") or 0) != 64:
+    if (
+        audit.get("accepted") is not True
+        or audit.get("consumed") is not True
+        or int(audit.get("use_index") or 0) != 1
+        or audit.get("seed_role") != "release_audit"
+        or int(audit.get("seed_count") or 0) != 64
+    ):
         raise _error("one accepted 64-seed release audit is required")
-    ci_lo = float(audit.get("ci_lo") or 0.0)
-    if ci_lo <= 0.0:
+    expected_audit_identity = {
+        "experiment_id": c2_experiment_id,
+        "run_id": c2_run_id,
+        "reflexion_instance_id": instance_id,
+        "source_commit_sha": instance_head,
+    }
+    if any(audit.get(key) != value for key, value in expected_audit_identity.items()):
+        raise _error("release audit is not bound to the accepted C2 instance")
+    try:
+        statistics = {
+            field: float(audit.get(field)) for field in ("mean_delta", "ci_lo", "ci_hi")
+        }
+    except (TypeError, ValueError) as exc:
+        raise _error("release audit statistics must be numeric") from exc
+    if any(not math.isfinite(value) for value in statistics.values()):
+        raise _error("release audit statistics must be finite")
+    if statistics["ci_lo"] <= 0.0:
         raise _error("release audit lower confidence bound must be positive")
     artifacts = _mapping(packet.get("artifacts"), field="artifacts")
     hosted = _mapping(artifacts.get("hosted_site"), field="artifacts.hosted_site")
@@ -242,12 +380,12 @@ def _release_and_artifacts(packet: Mapping[str, Any]) -> dict[str, Any]:
         hosted.get("hosted_url"), field="artifacts.hosted_site.hosted_url"
     )
     _sha256(hosted.get("sha256"), field="artifacts.hosted_site.sha256")
+    if hosted.get("visibility") != "org":
+        raise _error("hosted Artifact Site must be org-visible")
     if "craftax_release_audit_v1_64" not in list(hosted.get("splits_cited") or []):
         raise _error("hosted Artifact Site does not cite the release-audit split")
     return {
-        "mean_delta": float(audit.get("mean_delta") or 0.0),
-        "ci_lo": ci_lo,
-        "ci_hi": float(audit.get("ci_hi") or 0.0),
+        **statistics,
         "hosted_artifact_id": hosted_id,
         "hosted_url": hosted_url,
     }
@@ -257,10 +395,13 @@ def _infrastructure(
     packet: Mapping[str, Any],
     *,
     source_manifest_digest: str,
+    runtime_image_digest: str,
     project_id: str,
     instance_id: str,
     instance_head: str,
     evidence_commit: str,
+    cycle_run_ids: Sequence[str],
+    cycle_source_commits: Sequence[str],
 ) -> dict[str, Any]:
     infra = _mapping(packet.get("infrastructure"), field="infrastructure")
     railway = _mapping(infra.get("railway"), field="infrastructure.railway")
@@ -289,16 +430,34 @@ def _infrastructure(
         )
 
     daytona = _sequence(infra.get("daytona_runs"), field="infrastructure.daytona_runs")
-    labels = {
-        _text(item.get("cycle_label"), field="daytona_runs[].cycle_label")
-        for item in daytona
-        if isinstance(item, Mapping)
-        and item.get("terminal_state") == "done"
-        and item.get("cleanup_passed") is True
-        and item.get("sandbox_id")
-    }
-    if not set(REQUIRED_CYCLES).issubset(labels):
-        raise _error("Daytona does not prove terminal cleanup for B0, C1, and C2")
+    daytona_by_label: dict[str, dict[str, Any]] = {}
+    for raw in daytona:
+        item = _mapping(raw, field="infrastructure.daytona_runs[]")
+        label = _text(item.get("cycle_label"), field="daytona_runs[].cycle_label")
+        if label in daytona_by_label:
+            raise _error(f"duplicate Daytona cycle receipt: {label}")
+        daytona_by_label[label] = item
+    for index, label in enumerate(REQUIRED_CYCLES):
+        item = _mapping(
+            daytona_by_label.get(label), field=f"infrastructure.daytona_runs.{label}"
+        )
+        if (
+            item.get("terminal_state") != "done"
+            or item.get("cleanup_passed") is not True
+            or not item.get("sandbox_id")
+            or item.get("run_id") != cycle_run_ids[index]
+            or _sha256(
+                item.get("runtime_image"),
+                field=f"infrastructure.daytona_runs.{label}.runtime_image",
+            )
+            != runtime_image_digest
+            or _git_sha(
+                item.get("source_commit_sha"),
+                field=f"infrastructure.daytona_runs.{label}.source_commit_sha",
+            )
+            != cycle_source_commits[index]
+        ):
+            raise _error(f"Daytona {label} receipt is not runtime/source bound")
 
     champion_receipt = _mapping(infra.get("exe_dev"), field="infrastructure.exe_dev")
     if champion_receipt.get("schema_version") != (
@@ -428,7 +587,7 @@ def _infrastructure(
     )
     return {
         "railway_deployment_ids": railway_ids,
-        "daytona_cycle_labels": sorted(labels),
+        "daytona_cycle_labels": list(REQUIRED_CYCLES),
         "exe_deployment_id": _text(
             exe.get("deployment_id"), field="infrastructure.exe_dev.deployment_id"
         ),
@@ -450,18 +609,29 @@ def validate_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
         source_packet,
         instance_id=factory["instance_id"],
         instance_head=factory["instance_head"],
+        expected_experiment_ids=factory["experiment_ids"],
+        expected_run_ids=factory["run_ids"],
     )
     knowledge_git = _knowledge_and_git(
         source_packet, instance_head=factory["instance_head"]
     )
-    release = _release_and_artifacts(source_packet)
+    release = _release_and_artifacts(
+        source_packet,
+        instance_id=factory["instance_id"],
+        instance_head=factory["instance_head"],
+        c2_experiment_id=factory["experiment_ids"][2],
+        c2_run_id=factory["run_ids"][2],
+    )
     infrastructure = _infrastructure(
         source_packet,
         source_manifest_digest=source["manifest_digest"],
+        runtime_image_digest=source["runtime_image_digest"],
         project_id=factory["project_id"],
         instance_id=factory["instance_id"],
         instance_head=factory["instance_head"],
         evidence_commit=knowledge_git["evidence_commit"],
+        cycle_run_ids=experiments["run_ids"],
+        cycle_source_commits=experiments["source_commits"],
     )
     return {
         "schema_version": RECEIPT_SCHEMA,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -130,13 +131,36 @@ def candidate_from_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]
         acceptance.get("reflexion_instance_head"),
         field="factory.b0_c1_c2_acceptance.reflexion_instance_head",
     )
+    experiment_ids = list(acceptance.get("experiment_ids") or [])
+    run_ids = list(acceptance.get("run_ids") or [])
+    if (
+        len(experiment_ids) != 3
+        or len(set(experiment_ids)) != 3
+        or len(run_ids) != 3
+        or len(set(run_ids)) != 3
+    ):
+        raise _error("release evidence has no exact B0/C1/C2 IDs")
     audit = _mapping(packet.get("release_audit"), field="release_audit")
     if (
         audit.get("accepted") is not True
+        or audit.get("consumed") is not True
+        or int(audit.get("use_index") or 0) != 1
+        or audit.get("seed_role") != "release_audit"
         or int(audit.get("seed_count") or 0) != 64
         or float(audit.get("ci_lo") or 0.0) <= 0.0
     ):
         raise _error("release evidence has no accepted positive 64-seed audit")
+    if (
+        audit.get("reflexion_instance_id") != instance_id
+        or audit.get("experiment_id") != experiment_ids[2]
+        or audit.get("run_id") != run_ids[2]
+        or _git_sha(
+            audit.get("source_commit_sha"), field="release_audit.source_commit_sha"
+        )
+        != instance_head
+        or not math.isfinite(float(audit.get("ci_lo") or 0.0))
+    ):
+        raise _error("release audit is not bound to the accepted instance")
     git_receipts = packet.get("git_receipts")
     if not isinstance(git_receipts, list) or not git_receipts:
         raise _error("release evidence has no git receipts")
@@ -184,6 +208,8 @@ def deploy_champion(
         return receipt
     if client is None:
         raise _error("a ManagedResearchClient is required for --launch")
+    if not wait:
+        raise _error("--launch requires a final --wait observation receipt")
     created = client.cloud_deployments.create(**request_payload)
     receipt["deployment"] = created
     if wait:
@@ -242,6 +268,8 @@ def main() -> int:
     source = _mapping(request.get("source"), field="request.source")
     if args.wait and not args.launch:
         raise _error("--wait requires --launch")
+    if args.launch and not args.wait:
+        raise _error("--launch requires --wait")
     if args.launch:
         confirmed = _git_sha(
             args.confirm_source_commit,
