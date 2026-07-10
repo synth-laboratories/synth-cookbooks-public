@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://usesynth.ai/schemas/research_factory_reflexion.champion_candidate.v1.json",
+  "title": "Accepted Reflexion champion deployment candidate",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "factory_id",
+    "effort_id",
+    "instance_id",
+    "source_commit_sha",
+    "evidence_commit_sha"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "research_factory_reflexion.champion_candidate.v1"
+    },
+    "project_id": {"type": "string", "minLength": 1},
+    "factory_id": {"type": "string", "minLength": 1},
+    "effort_id": {"type": "string", "minLength": 1},
+    "instance_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$"
+    },
+    "source_commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "evidence_commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "deployment_name": {"type": "string", "minLength": 1, "maxLength": 120}
+  },
+  "additionalProperties": false
+}

@@ -254,7 +254,13 @@ def _release_and_artifacts(packet: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _infrastructure(
-    packet: Mapping[str, Any], *, source_manifest_digest: str, instance_head: str
+    packet: Mapping[str, Any],
+    *,
+    source_manifest_digest: str,
+    project_id: str,
+    instance_id: str,
+    instance_head: str,
+    evidence_commit: str,
 ) -> dict[str, Any]:
     infra = _mapping(packet.get("infrastructure"), field="infrastructure")
     railway = _mapping(infra.get("railway"), field="infrastructure.railway")
@@ -294,20 +300,132 @@ def _infrastructure(
     if not set(REQUIRED_CYCLES).issubset(labels):
         raise _error("Daytona does not prove terminal cleanup for B0, C1, and C2")
 
-    exe = _mapping(infra.get("exe_dev"), field="infrastructure.exe_dev")
-    if exe.get("host_kind") != "exe_dev" or exe.get("state") != "running":
+    champion_receipt = _mapping(infra.get("exe_dev"), field="infrastructure.exe_dev")
+    if champion_receipt.get("schema_version") != (
+        "research_factory_reflexion.champion_deployment_receipt.v1"
+    ):
+        raise _error("exe.dev champion deployment receipt schema mismatch")
+    if champion_receipt.get("dry_run") is not False:
+        raise _error("exe.dev champion evidence is a dry-run")
+    requested = _mapping(
+        champion_receipt.get("request"),
+        field="infrastructure.exe_dev.request",
+    )
+    deployment = _mapping(
+        champion_receipt.get("deployment"),
+        field="infrastructure.exe_dev.deployment",
+    )
+    exe = _mapping(
+        champion_receipt.get("observation"),
+        field="infrastructure.exe_dev.observation",
+    )
+    if exe.get("deployment_id") != deployment.get("deployment_id"):
+        raise _error("exe.dev deployment and observation IDs differ")
+    if exe.get("project_id") != project_id:
+        raise _error("exe.dev champion belongs to a different project")
+    if (
+        exe.get("host_kind") != "exe_dev"
+        or exe.get("state") != "running"
+        or exe.get("topology_id") != "research-reflexion-service"
+        or exe.get("topology_version") != "2026-07-10.v1"
+    ):
         raise _error("exe.dev champion CloudDeployment is not running")
     health = _mapping(exe.get("health"), field="infrastructure.exe_dev.health")
-    if health.get("status") != "healthy":
-        raise _error("exe.dev champion service is not healthy")
+    http = _mapping(
+        health.get("http") or {}, field="infrastructure.exe_dev.health.http"
+    )
     if (
-        _git_sha(
-            exe.get("source_commit_sha"),
-            field="infrastructure.exe_dev.source_commit_sha",
+        health.get("observed") is not True
+        or http.get("ok") is not True
+        or http.get("identity_ok") is not True
+        or http.get("status") != "healthy"
+        or http.get("instance_id") != instance_id
+        or http.get("source_commit_sha") != instance_head
+    ):
+        raise _error("exe.dev champion service is not healthy")
+    provision_receipts = _mapping(
+        exe.get("provision_receipts"),
+        field="infrastructure.exe_dev.observation.provision_receipts",
+    )
+    deploy_steps = _sequence(
+        provision_receipts.get("deploy_steps"),
+        field="infrastructure.exe_dev.observation.provision_receipts.deploy_steps",
+    )
+    steps_by_id = {
+        str(step.get("step_id") or ""): dict(step)
+        for step in deploy_steps
+        if isinstance(step, Mapping)
+    }
+    for required_step in ("bootstrap:project_git", "deploy_reflexion_service"):
+        step = _mapping(
+            steps_by_id.get(required_step),
+            field=f"infrastructure.exe_dev.deploy_steps.{required_step}",
         )
-        != instance_head
+        if step.get("exit_code") != 0:
+            raise _error(f"exe.dev deployment step failed: {required_step}")
+    request_payload = _mapping(
+        exe.get("request_payload"),
+        field="infrastructure.exe_dev.observation.request_payload",
+    )
+    source_request = _mapping(
+        requested.get("source"), field="infrastructure.exe_dev.request.source"
+    )
+    server_source_request = _mapping(
+        request_payload.get("source"),
+        field="infrastructure.exe_dev.observation.request_payload.source",
+    )
+    resolved_source = _mapping(
+        request_payload.get("resolved_source"),
+        field="infrastructure.exe_dev.observation.request_payload.resolved_source",
+    )
+    expected_request_source = {
+        "kind": "project_git",
+        "source_commit_sha": instance_head,
+        "evidence_commit_sha": evidence_commit,
+        "instance_id": instance_id,
+    }
+    if source_request != expected_request_source:
+        raise _error("exe.dev caller source binding is not the accepted instance")
+    if server_source_request != expected_request_source:
+        raise _error("exe.dev server source request differs from the accepted instance")
+    expected_resolved_source_keys = {
+        "kind",
+        "repo_id",
+        "remote_repo",
+        "branch",
+        "source_commit_sha",
+        "evidence_commit_sha",
+        "instance_id",
+        "checkout_name",
+        "subdirectory",
+    }
+    if set(resolved_source) != expected_resolved_source_keys:
+        raise _error("exe.dev resolved source binding fields are not canonical")
+    expected_resolved_identity = {
+        "kind": "smr_project_git",
+        "source_commit_sha": instance_head,
+        "evidence_commit_sha": evidence_commit,
+        "instance_id": instance_id,
+        "checkout_name": "reflexion-source",
+        "subdirectory": "reflexion_instance",
+    }
+    if any(
+        resolved_source.get(key) != value
+        for key, value in expected_resolved_identity.items()
     ):
         raise _error("exe.dev champion service is not the accepted instance head")
+    _text(
+        resolved_source.get("repo_id"),
+        field="infrastructure.exe_dev.resolved_source.repo_id",
+    )
+    _text(
+        resolved_source.get("remote_repo"),
+        field="infrastructure.exe_dev.resolved_source.remote_repo",
+    )
+    _text(
+        resolved_source.get("branch"),
+        field="infrastructure.exe_dev.resolved_source.branch",
+    )
     return {
         "railway_deployment_ids": railway_ids,
         "daytona_cycle_labels": sorted(labels),
@@ -317,6 +435,8 @@ def _infrastructure(
         "exe_service_url": _text(
             exe.get("service_url"), field="infrastructure.exe_dev.service_url"
         ),
+        "exe_source_commit_sha": instance_head,
+        "exe_evidence_commit_sha": evidence_commit,
     }
 
 
@@ -338,7 +458,10 @@ def validate_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
     infrastructure = _infrastructure(
         source_packet,
         source_manifest_digest=source["manifest_digest"],
+        project_id=factory["project_id"],
+        instance_id=factory["instance_id"],
         instance_head=factory["instance_head"],
+        evidence_commit=knowledge_git["evidence_commit"],
     )
     return {
         "schema_version": RECEIPT_SCHEMA,
@@ -354,6 +477,7 @@ def validate_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def render_blog(receipt: Mapping[str, Any]) -> str:
+    source = _mapping(receipt.get("source"), field="receipt.source")
     factory = _mapping(receipt.get("factory"), field="receipt.factory")
     experiments = _mapping(receipt.get("experiments"), field="receipt.experiments")
     knowledge_git = _mapping(
@@ -372,6 +496,10 @@ def render_blog(receipt: Mapping[str, Any]) -> str:
 We ran one Research Factory with one continuous objective: build a Reflexion
 implementation from scratch in project git, then improve that same instance.
 The reference cookbook was never mounted or copied into the worker workspace.
+
+The runtime used immutable image `{source["runtime_image_digest"]}` built from
+source manifest `{source["manifest_digest"]}`. The release receipt records the
+full clean commit SHA for each of the five runtime authorities.
 
 The Factory preserved instance `{factory["instance_id"]}` through B0, C1, and
 C2, ending at source commit `{factory["instance_head"]}`. It recorded

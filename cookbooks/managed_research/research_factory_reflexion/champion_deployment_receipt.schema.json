@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://usesynth.ai/schemas/research_factory_reflexion.champion_deployment_receipt.v1.json",
+  "title": "Reflexion champion CloudDeployment receipt",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "dry_run",
+    "request",
+    "deployment",
+    "observation"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "research_factory_reflexion.champion_deployment_receipt.v1"
+    },
+    "dry_run": {"const": false},
+    "request": {"type": "object"},
+    "deployment": {"type": "object"},
+    "observation": {"type": "object"}
+  },
+  "additionalProperties": false
+}

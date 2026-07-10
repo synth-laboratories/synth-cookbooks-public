@@ -47,6 +47,10 @@ def inspect_factory(
         if len(experiment_ids) >= 2
         else None
     )
+    champion_deployments = _wire(
+        client.cloud_deployments.list(project_id=project_id, limit=25)
+    )
+    hosted_artifacts = _wire(client.list_project_hosted_artifacts(project_id))
     return {
         "schema_version": "research_factory_reflexion.inspection.v1",
         "factory_id": factory_id,
@@ -54,6 +58,8 @@ def inspect_factory(
         "factory_status": _wire(status),
         "experiment_history": history_wire,
         "experiment_comparison": comparison,
+        "champion_deployments": champion_deployments,
+        "hosted_artifacts": hosted_artifacts,
     }
 
 

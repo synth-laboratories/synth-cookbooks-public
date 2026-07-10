@@ -4,6 +4,11 @@
     "provider": "railway",
     "services": ["api", "smr-runtime"],
     "required_environments": ["dev", "staging", "prod"],
+    "platform_environment_mapping": {
+      "staging": "dev",
+      "prod": "production"
+    },
+    "operator": "synth_release_engineering",
     "evidence": ["deployment_id", "git_sha", "health_url", "health_status", "observed_at"]
   },
   "cycle_workers": {
@@ -15,9 +20,13 @@
   "champion_service": {
     "provider": "exe.dev",
     "host_kind": "exe_dev",
+    "topology_id": "research-reflexion-service",
+    "topology_version": "2026-07-10.v1",
+    "source_authority": "project_git",
+    "source_checkout": "exact_accepted_commit",
     "purpose": "Durable deployment of the release-audited Reflexion instance",
     "retained_by_default": true,
-    "evidence": ["deployment_id", "state", "vm_name", "service_url", "source_commit_sha", "health"]
+    "evidence": ["deployment_id", "state", "vm_name", "service_url", "resolved_source", "health"]
   },
   "artifacts": {
     "provider": "synth_artifact_site",

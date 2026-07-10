@@ -17,6 +17,13 @@ Railway: Synth API + Factory scheduler/reactor
     +-- exe.dev: durable release-audited champion service
 ```
 
+Railway is the Synth-operated control plane: cookbook users do not run Railway
+CLI commands or receive Railway credentials. Synth release engineering proves
+logical dev, staging (Railway environment `dev`), and production (Railway
+environment `production`) parity. The customer-visible Factory selects Daytona
+through its launch profile and creates the exe.dev champion through the typed
+Managed Research CloudDeployment API.
+
 ## Setup
 
 Install a `synth-ai` version containing the Research Factory, experiment
@@ -57,7 +64,42 @@ python cookbooks/managed_research/research_factory_reflexion/inspect_factory.py 
 
 The inspection joins typed Factory status, experiment history, comparable-only
 comparison, prompts/configs, traces, costs, Wiki/git receipts, health, and the
-operating window. It does not read databases, Redis, or local artifact folders.
+operating window, plus hosted Artifact Sites and any retained champion
+deployments. It does not read databases, Redis, or local artifact folders.
+
+## Deploy the accepted champion
+
+After B0/C1/C2 and the release audit accept one exact instance head, derive the
+deployment directly from that evidence and preview the exact typed request:
+
+```bash
+python cookbooks/managed_research/research_factory_reflexion/deploy_champion.py \
+  --release-evidence cookbooks/managed_research/research_factory_reflexion/evidence/release.json
+```
+
+For integrations that already materialize a small handoff, the script also
+accepts the non-secret `champion_candidate.schema.json` shape via `--candidate`.
+
+The backend derives the git remote and branch from the candidate's Managed
+Research project. The caller supplies no remote URL or credential. Launching a
+retained VM requires both an explicit flag and an exact commit confirmation:
+
+```bash
+python cookbooks/managed_research/research_factory_reflexion/deploy_champion.py \
+  --release-evidence cookbooks/managed_research/research_factory_reflexion/evidence/release.json \
+  --launch \
+  --confirm-source-commit "$SOURCE_COMMIT_SHA" \
+  --wait \
+  --output cookbooks/managed_research/research_factory_reflexion/evidence/champion.json
+```
+
+The `research-reflexion-service` topology checks out the exact accepted source
+commit from project git, proves it is an ancestor of the evidence commit at the
+recorded branch head, starts only `reflexion_instance`, and probes `/health`.
+The CloudDeployment is retained by default; retirement remains a separate,
+explicit lifecycle action. The output contract is
+`champion_deployment_receipt.schema.json`; only a launched, observed receipt is
+eligible for the release packet.
 
 ## Acceptance ladder
 

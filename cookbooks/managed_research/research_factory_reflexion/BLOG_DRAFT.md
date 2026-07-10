@@ -22,7 +22,7 @@ across B0, C1, and C2.
 - Synth Wiki proposals and experiment reports;
 - hosted Artifact Site evidence;
 - Railway control-plane deployments, Daytona worker sandboxes, and the exe.dev
-  champion-service deployment;
+  champion-service deployment pinned to the accepted project-git source commit;
 - restart recovery and the 12-cycle/30-day operating proof.
 
 ## Results

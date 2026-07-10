@@ -25,7 +25,18 @@
     "git_receipts": {"type": "array", "minItems": 3},
     "release_audit": {"type": "object"},
     "artifacts": {"type": "object"},
-    "infrastructure": {"type": "object"}
+    "infrastructure": {
+      "type": "object",
+      "required": ["railway", "daytona_runs", "exe_dev"],
+      "properties": {
+        "railway": {"type": "object"},
+        "daytona_runs": {"type": "array", "minItems": 3},
+        "exe_dev": {
+          "$ref": "champion_deployment_receipt.schema.json"
+        }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }
