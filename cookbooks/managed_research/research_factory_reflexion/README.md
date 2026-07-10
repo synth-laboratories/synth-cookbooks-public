@@ -72,6 +72,16 @@ deployments. It does not read databases, Redis, or local artifact folders.
 After B0/C1/C2 and the release audit accept one exact instance head, derive the
 deployment directly from that evidence and preview the exact typed request:
 
+The audit is its own preregistered experiment and run, not one of B0/C1/C2.
+Attach exactly one `craftax_release_audit_v1_64` experiment result for that run:
+64 unique seeds, `evidence_grade=release_evidence`, attested or verified truth,
+the paired mean delta, and the scorecard artifact. Put the complete
+`craftax_factory.release_audit.v1` receipt under
+`metadata.release_audit`, attach the matching completed container execution,
+and commit the audit bundle/receipt to the same project git branch. The release
+and deployment scripts reject experiment-level membership without this exact
+run/evaluation/execution/source binding.
+
 ```bash
 python cookbooks/managed_research/research_factory_reflexion/deploy_champion.py \
   --release-evidence cookbooks/managed_research/research_factory_reflexion/evidence/release.json

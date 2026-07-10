@@ -18,6 +18,7 @@ RECEIPT_SCHEMA = "research_factory_reflexion.champion_deployment_receipt.v1"
 TOPOLOGY_ID = "research-reflexion-service"
 TOPOLOGY_VERSION = "2026-07-10.v1"
 HOST_KIND = "exe_dev"
+RELEASE_AUDIT_SPLIT = "craftax_release_audit_v1_64"
 _ALLOWED_FIELDS = {
     "schema_version",
     "project_id",
@@ -40,6 +41,12 @@ def _mapping(value: Any, *, field: str) -> dict[str, Any]:
     return dict(value)
 
 
+def _sequence(value: Any, *, field: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise _error(f"{field} must be an array")
+    return list(value)
+
+
 def _text(value: Any, *, field: str) -> str:
     text = str(value or "").strip()
     if not text:
@@ -54,6 +61,15 @@ def _git_sha(value: Any, *, field: str) -> str:
     ):
         raise _error(f"{field} must be a full git SHA")
     return commit_sha
+
+
+def _sha256(value: Any, *, field: str) -> str:
+    digest = _text(value, field=field).lower()
+    if not digest.startswith("sha256:"):
+        digest = "sha256:" + digest
+    if len(digest) != 71 or any(char not in "0123456789abcdef" for char in digest[7:]):
+        raise _error(f"{field} must be a SHA-256 digest")
+    return digest
 
 
 def _deployment_name(value: Any, *, instance_id: str) -> str:
@@ -141,13 +157,19 @@ def candidate_from_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]
     ):
         raise _error("release evidence has no exact B0/C1/C2 IDs")
     audit = _mapping(packet.get("release_audit"), field="release_audit")
+    try:
+        audit_statistics = {
+            field: float(audit.get(field)) for field in ("mean_delta", "ci_lo", "ci_hi")
+        }
+    except (TypeError, ValueError) as exc:
+        raise _error("release audit statistics must be numeric") from exc
     if (
         audit.get("accepted") is not True
         or audit.get("consumed") is not True
         or int(audit.get("use_index") or 0) != 1
         or audit.get("seed_role") != "release_audit"
         or int(audit.get("seed_count") or 0) != 64
-        or float(audit.get("ci_lo") or 0.0) <= 0.0
+        or audit_statistics["ci_lo"] <= 0.0
     ):
         raise _error("release evidence has no accepted positive 64-seed audit")
     if (
@@ -156,7 +178,7 @@ def candidate_from_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]
             audit.get("source_commit_sha"), field="release_audit.source_commit_sha"
         )
         != instance_head
-        or not math.isfinite(float(audit.get("ci_lo") or 0.0))
+        or any(not math.isfinite(value) for value in audit_statistics.values())
     ):
         raise _error("release audit is not bound to the accepted instance")
     audit_experiment_id = _text(
@@ -210,20 +232,148 @@ def candidate_from_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]
         != instance_head
     ):
         raise _error("release audit bundle does not target the accepted instance head")
-    git_receipts = packet.get("git_receipts")
-    if not isinstance(git_receipts, list) or not git_receipts:
-        raise _error("release evidence has no git receipts")
-    latest_git = _mapping(git_receipts[-1], field="git_receipts[-1]")
-    if latest_git.get("repo_state_advanced") is not True:
-        raise _error("latest git receipt did not advance project git")
+    audit_evaluations = [
+        _mapping(raw, field=f"release_audit.bundle.evaluations[{index}]")
+        for index, raw in enumerate(
+            _sequence(
+                audit_bundle.get("evaluations"),
+                field="release_audit.bundle.evaluations",
+            )
+        )
+        if isinstance(raw, Mapping)
+        and str(raw.get("run_id") or "").strip() == audit_run_id
+        and str(raw.get("split_name") or "").strip() == RELEASE_AUDIT_SPLIT
+    ]
+    if len(audit_evaluations) != 1:
+        raise _error("release audit requires exactly one run-specific evaluation")
+    audit_evaluation = audit_evaluations[0]
+    try:
+        audit_seed_set = {
+            int(item)
+            for item in _sequence(
+                audit_evaluation.get("seed_set"),
+                field="release_audit.bundle.evaluation.seed_set",
+            )
+        }
+        evaluation_delta = float(audit_evaluation.get("delta"))
+    except (TypeError, ValueError) as exc:
+        raise _error("release audit evaluation has invalid seed or delta data") from exc
     if (
-        _git_sha(
-            latest_git.get("source_commit_sha"),
-            field="git_receipts[-1].source_commit_sha",
+        int(audit_evaluation.get("sample_size") or 0) != 64
+        or len(audit_seed_set) != 64
+        or audit_evaluation.get("evidence_grade") != "release_evidence"
+        or audit_evaluation.get("truth_status") not in {"attested", "verified"}
+        or evaluation_delta != audit_statistics["mean_delta"]
+        or not audit_evaluation.get("summary_artifact_id")
+    ):
+        raise _error("release audit evaluation is not 64-seed release evidence")
+    evaluation_metadata = _mapping(
+        audit_evaluation.get("metadata"),
+        field="release_audit.bundle.evaluation.metadata",
+    )
+    embedded_audit = _mapping(
+        evaluation_metadata.get("release_audit"),
+        field="release_audit.bundle.evaluation.metadata.release_audit",
+    )
+    embedded_identity = {
+        "schema_version": "craftax_factory.release_audit.v1",
+        "consumed": True,
+        "use_index": 1,
+        "seed_role": "release_audit",
+        "seed_count": 64,
+        "experiment_id": audit_experiment_id,
+        "run_id": audit_run_id,
+        "reflexion_instance_id": instance_id,
+        "source_commit_sha": instance_head,
+        "accepted": True,
+        "registry_version": _text(
+            audit.get("registry_version"), field="release_audit.registry_version"
+        ),
+    }
+    if any(
+        embedded_audit.get(key) != value for key, value in embedded_identity.items()
+    ):
+        raise _error("run-specific evaluation embeds a different release audit")
+    for field, value in audit_statistics.items():
+        try:
+            embedded_value = float(embedded_audit.get(field))
+        except (TypeError, ValueError) as exc:
+            raise _error(f"embedded release audit {field} must be numeric") from exc
+        if not math.isfinite(embedded_value) or embedded_value != value:
+            raise _error(f"embedded release audit {field} differs from the claim")
+    scorecard_digest = _sha256(
+        audit.get("scorecard_digest"), field="release_audit.scorecard_digest"
+    )
+    if (
+        _sha256(
+            embedded_audit.get("scorecard_digest"),
+            field="release_audit.bundle.evaluation.scorecard_digest",
+        )
+        != scorecard_digest
+    ):
+        raise _error("release audit evaluation cites a different scorecard")
+    container_run_id = _text(
+        audit_evaluation.get("container_run_id"),
+        field="release_audit.bundle.evaluation.container_run_id",
+    )
+    audit_executions = [
+        _mapping(raw, field=f"release_audit.bundle.executions[{index}]")
+        for index, raw in enumerate(
+            _sequence(
+                audit_bundle.get("executions"),
+                field="release_audit.bundle.executions",
+            )
+        )
+        if isinstance(raw, Mapping)
+        and str(raw.get("run_id") or "").strip() == audit_run_id
+        and str(raw.get("container_run_id") or "").strip() == container_run_id
+    ]
+    if len(audit_executions) != 1 or audit_executions[0].get("status") not in {
+        "completed",
+        "done",
+    }:
+        raise _error("release audit evaluation has no completed matching execution")
+    provenance = _mapping(
+        audit_bundle.get("provenance"), field="release_audit.bundle.provenance"
+    )
+    audit_git = _mapping(
+        provenance.get("git_server"),
+        field="release_audit.bundle.provenance.git_server",
+    )
+    if (
+        audit_git.get("repo_state_advanced") is not True
+        or audit_git.get("source_run_id") != audit_run_id
+        or _git_sha(
+            audit_git.get("source_commit_sha"),
+            field="release_audit.bundle.git_server.source_commit_sha",
         )
         != instance_head
     ):
-        raise _error("latest git receipt does not contain the accepted instance head")
+        raise _error("release audit git receipt is not source/run bound")
+    audit_evidence_commit = _git_sha(
+        audit_git.get("commit_sha"), field="release_audit.bundle.git_server.commit_sha"
+    )
+    if audit_evidence_commit == instance_head:
+        raise _error("release audit evidence commit cannot equal the source commit")
+    git_receipts = _sequence(packet.get("git_receipts"), field="git_receipts")
+    matching_audit_git = [
+        _mapping(raw, field=f"git_receipts[{index}]")
+        for index, raw in enumerate(git_receipts)
+        if isinstance(raw, Mapping)
+        and str(raw.get("source_run_id") or "").strip() == audit_run_id
+    ]
+    if len(matching_audit_git) != 1 or any(
+        matching_audit_git[0].get(field) != audit_git.get(field)
+        for field in (
+            "commit_sha",
+            "source_commit_sha",
+            "remote_repo",
+            "branch",
+            "source_run_id",
+            "repo_state_advanced",
+        )
+    ):
+        raise _error("top-level audit git receipt differs from experiment history")
     return {
         "schema_version": CANDIDATE_SCHEMA,
         "project_id": _text(factory.get("project_id"), field="factory.project_id"),
@@ -231,9 +381,7 @@ def candidate_from_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]
         "effort_id": _text(factory.get("effort_id"), field="factory.effort_id"),
         "instance_id": instance_id,
         "source_commit_sha": instance_head,
-        "evidence_commit_sha": _git_sha(
-            latest_git.get("commit_sha"), field="git_receipts[-1].commit_sha"
-        ),
+        "evidence_commit_sha": audit_evidence_commit,
     }
 
 
