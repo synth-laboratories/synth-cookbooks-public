@@ -1,0 +1,111 @@
+{
+  "schema_version": "research_factory_reflexion.plan.v1",
+  "factory": {
+    "name": "Reflexion Builder Factory",
+    "kind": "customer",
+    "description": "One 24/7 Factory that builds a new Reflexion implementation in project git, then improves the same instance through evidence-complete experiments.",
+    "budget_policy": {
+      "currency": "USD",
+      "period": "month",
+      "max_active_runs": 1,
+      "ordinary_run_limit_usd": 15,
+      "minimum_cycles_funded": 12
+    },
+    "cap_policy": {
+      "max_active_efforts": 1,
+      "max_active_runs": 1
+    },
+    "publication_policy": {
+      "default_visibility": "org",
+      "public_share_requires_confirmation": true,
+      "release_audit_required": true
+    },
+    "authorization_policy": {
+      "first_cycle_requires_operator_approval": true,
+      "production_promotion_requires_operator_approval": true
+    },
+    "metadata": {
+      "program": "from_scratch_reflexion",
+      "cookbook_role": "reference_design_only",
+      "implementation_root": "reflexion_instance"
+    }
+  },
+  "project": {
+    "project_id": "YOUR_PROJECT_ID",
+    "role": "canonical",
+    "status": "active",
+    "display_name": "Reflexion instance workspace",
+    "workspace_policy": {
+      "require_ready": true,
+      "require_git_server": true
+    },
+    "resource_bindings": {
+      "environment_authority": "gamebench-craftax-rust",
+      "cookbook_reference": "synth-cookbooks-private/cookbooks/craftax_reflexion",
+      "cookbook_source_available_to_worker": false
+    },
+    "feed_health": {
+      "status": "ready"
+    },
+    "default_launch_profile": {
+      "host_kind": "daytona",
+      "work_mode": "directed_effort",
+      "runbook": "lite"
+    },
+    "metadata": {
+      "implementation_root": "reflexion_instance"
+    }
+  },
+  "efforts": [
+    {
+      "name": "Build and improve one Reflexion instance",
+      "hypothesis_or_topic": "A project-owned Reflexion implementation with persistent memory, retrieval, reflection, injection, and causal receipts can improve paired Craftax heldout reward.",
+      "effort_type": "research",
+      "status": "active",
+      "recurrence_policy": {
+        "cadence": "24x7",
+        "trigger": "on_run_complete",
+        "failure_backoff_seconds": 900
+      },
+      "budget_policy": {
+        "run_class": "ordinary",
+        "operator_approved": true
+      },
+      "publication_policy": {
+        "require_experiment_bundle": true,
+        "require_wiki_receipt": true,
+        "require_git_receipt": true,
+        "require_artifact_receipt": true
+      },
+      "authorization_policy": {
+        "heldout_terminal_only": true
+      },
+      "actor_notes": {
+        "objective": "B0 creates reflexion_instance/ from scratch. Later cycles retain the same instance_id and origin_run_id, consume prior findings, and advance the immediately prior source commit. Never copy or execute the reference cookbook.",
+        "required_source_modules": [
+          "memory.py",
+          "retrieval.py",
+          "reflection.py",
+          "injection.py",
+          "runner.py",
+          "scripts/run_experiment.py"
+        ]
+      },
+      "metadata": {
+        "single_instance": true,
+        "b0_c1_c2_required": true
+      }
+    }
+  ],
+  "wake_due": {
+    "limit": 1,
+    "allow_overlap": false,
+    "continue_on_error": false,
+    "dry_run": true,
+    "launch_request": {
+      "host_kind": "daytona",
+      "work_mode": "directed_effort",
+      "runbook": "lite"
+    }
+  }
+}

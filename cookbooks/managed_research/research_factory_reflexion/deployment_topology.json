@@ -1,0 +1,28 @@
+{
+  "schema_version": "research_factory_reflexion.deployment_topology.v1",
+  "control_plane": {
+    "provider": "railway",
+    "services": ["api", "smr-runtime"],
+    "required_environments": ["dev", "staging", "prod"],
+    "evidence": ["deployment_id", "git_sha", "health_url", "health_status", "observed_at"]
+  },
+  "cycle_workers": {
+    "provider": "daytona",
+    "host_kind": "daytona",
+    "purpose": "Disposable B0/C1/C2 research and paired evaluation sandboxes",
+    "evidence": ["run_id", "sandbox_id", "runtime_image", "source_commit_sha", "terminal_state", "cleanup_receipt"]
+  },
+  "champion_service": {
+    "provider": "exe.dev",
+    "host_kind": "exe_dev",
+    "purpose": "Durable deployment of the release-audited Reflexion instance",
+    "retained_by_default": true,
+    "evidence": ["deployment_id", "state", "vm_name", "service_url", "source_commit_sha", "health"]
+  },
+  "artifacts": {
+    "provider": "synth_artifact_site",
+    "required_visibility": "org",
+    "public_promotion_requires_confirmation": true,
+    "evidence": ["hosted_artifact_id", "hosted_url", "sha256", "splits_cited"]
+  }
+}

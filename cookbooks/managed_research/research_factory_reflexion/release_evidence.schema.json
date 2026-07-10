@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://usesynth.ai/schemas/research_factory_reflexion.release_evidence.v1.json",
+  "title": "Research Factory Reflexion release evidence",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source",
+    "factory",
+    "experiments",
+    "wiki_receipts",
+    "git_receipts",
+    "release_audit",
+    "artifacts",
+    "infrastructure"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "research_factory_reflexion.release_evidence.v1"
+    },
+    "source": {"type": "object"},
+    "factory": {"type": "object"},
+    "experiments": {"type": "object"},
+    "wiki_receipts": {"type": "array", "minItems": 3},
+    "git_receipts": {"type": "array", "minItems": 3},
+    "release_audit": {"type": "object"},
+    "artifacts": {"type": "object"},
+    "infrastructure": {"type": "object"}
+  },
+  "additionalProperties": false
+}

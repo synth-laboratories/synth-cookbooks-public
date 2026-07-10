@@ -1,0 +1,4 @@
+evidence/*
+!evidence/.gitignore
+generated/*
+!generated/.gitignore

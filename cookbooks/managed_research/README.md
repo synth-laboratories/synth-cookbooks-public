@@ -14,6 +14,7 @@ export SYNTH_API_KEY="sk_..."
 | Cookbook | What it shows |
 | --- | --- |
 | [`quickstart/`](./quickstart) | Start one hosted run and read back its evidence. |
+| [`research_factory_reflexion/`](./research_factory_reflexion) | Run one 24/7 Factory that builds a Reflexion implementation from scratch, preserves experiment/Wiki/git/artifact evidence, and graduates through Daytona, exe.dev, Railway, and a fail-closed blog release gate. |
 
 > Objectives, experiments, and milestones are **managed by the runtime** — you start a
 > run and read its evidence; you don't create or step them by hand. If you're upgrading
