@@ -383,6 +383,8 @@ def _release_and_artifacts(
     *,
     instance_id: str,
     instance_head: str,
+    cycle_experiment_ids: Sequence[str],
+    cycle_run_ids: Sequence[str],
 ) -> dict[str, Any]:
     audit = _mapping(packet.get("release_audit"), field="release_audit")
     if (
@@ -399,8 +401,64 @@ def _release_and_artifacts(
     }
     if any(audit.get(key) != value for key, value in expected_audit_identity.items()):
         raise _error("release audit is not bound to the accepted C2 instance")
-    _text(audit.get("experiment_id"), field="release_audit.experiment_id")
-    _text(audit.get("run_id"), field="release_audit.run_id")
+    audit_experiment_id = _text(
+        audit.get("experiment_id"), field="release_audit.experiment_id"
+    )
+    audit_run_id = _text(audit.get("run_id"), field="release_audit.run_id")
+    if audit_experiment_id in set(cycle_experiment_ids) or audit_run_id in set(
+        cycle_run_ids
+    ):
+        raise _error("release audit must be distinct from the B0/C1/C2 chain")
+    experiments = _mapping(packet.get("experiments"), field="experiments")
+    bundles = _sequence(experiments.get("bundles"), field="experiments.bundles")
+    audit_bundles = [
+        _mapping(raw, field=f"experiments.bundles[{index}]")
+        for index, raw in enumerate(bundles)
+        if isinstance(raw, Mapping)
+        and str(raw.get("experiment_id") or "").strip() == audit_experiment_id
+    ]
+    if len(audit_bundles) != 1:
+        raise _error("release audit must have exactly one experiment bundle")
+    audit_bundle = audit_bundles[0]
+    audit_bundle_run_ids = {
+        _text(item, field="release_audit.bundle.run_ids[]")
+        for item in _sequence(
+            audit_bundle.get("run_ids"), field="release_audit.bundle.run_ids"
+        )
+    }
+    if audit_run_id not in audit_bundle_run_ids:
+        raise _error("release audit run does not belong to its experiment bundle")
+    audit_integrity = _mapping(
+        audit_bundle.get("integrity"), field="release_audit.bundle.integrity"
+    )
+    if audit_integrity.get("accepted_cycle") is not True or audit_integrity.get(
+        "missing"
+    ) not in (None, []):
+        raise _error("release audit experiment bundle is not evidence-complete")
+    audit_candidate = _mapping(
+        audit_bundle.get("candidate"), field="release_audit.bundle.candidate"
+    )
+    audit_snapshot = _mapping(
+        audit_candidate.get("snapshot"),
+        field="release_audit.bundle.candidate.snapshot",
+    )
+    audit_instance = _mapping(
+        audit_snapshot.get("reflexion_instance"),
+        field="release_audit.bundle.reflexion_instance",
+    )
+    if (
+        _text(
+            audit_instance.get("instance_id"),
+            field="release_audit.bundle.reflexion_instance.instance_id",
+        )
+        != instance_id
+        or _git_sha(
+            audit_instance.get("git_commit_sha"),
+            field="release_audit.bundle.reflexion_instance.git_commit_sha",
+        )
+        != instance_head
+    ):
+        raise _error("release audit bundle does not target the accepted instance head")
     try:
         statistics = {
             field: float(audit.get(field)) for field in ("mean_delta", "ci_lo", "ci_hi")
@@ -427,6 +485,8 @@ def _release_and_artifacts(
         raise _error("hosted Artifact Site does not cite the release-audit split")
     return {
         **statistics,
+        "audit_experiment_id": audit_experiment_id,
+        "audit_run_id": audit_run_id,
         "hosted_artifact_id": hosted_id,
         "hosted_url": hosted_url,
     }
@@ -663,6 +723,8 @@ def validate_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]:
         source_packet,
         instance_id=factory["instance_id"],
         instance_head=factory["instance_head"],
+        cycle_experiment_ids=experiments["experiment_ids"],
+        cycle_run_ids=experiments["run_ids"],
     )
     infrastructure = _infrastructure(
         source_packet,

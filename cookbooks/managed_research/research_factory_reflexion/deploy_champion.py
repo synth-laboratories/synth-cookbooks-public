@@ -159,8 +159,57 @@ def candidate_from_release_evidence(packet: Mapping[str, Any]) -> dict[str, Any]
         or not math.isfinite(float(audit.get("ci_lo") or 0.0))
     ):
         raise _error("release audit is not bound to the accepted instance")
-    _text(audit.get("experiment_id"), field="release_audit.experiment_id")
-    _text(audit.get("run_id"), field="release_audit.run_id")
+    audit_experiment_id = _text(
+        audit.get("experiment_id"), field="release_audit.experiment_id"
+    )
+    audit_run_id = _text(audit.get("run_id"), field="release_audit.run_id")
+    if audit_experiment_id in set(experiment_ids) or audit_run_id in set(run_ids):
+        raise _error("release audit must be distinct from the B0/C1/C2 chain")
+    experiments = _mapping(packet.get("experiments"), field="experiments")
+    bundles = experiments.get("bundles")
+    if not isinstance(bundles, list):
+        raise _error("experiments.bundles must be an array")
+    audit_bundles = [
+        _mapping(raw, field=f"experiments.bundles[{index}]")
+        for index, raw in enumerate(bundles)
+        if isinstance(raw, Mapping)
+        and str(raw.get("experiment_id") or "").strip() == audit_experiment_id
+    ]
+    if len(audit_bundles) != 1:
+        raise _error("release audit must have exactly one experiment bundle")
+    audit_bundle = audit_bundles[0]
+    audit_run_ids = audit_bundle.get("run_ids")
+    if not isinstance(audit_run_ids, list) or audit_run_id not in {
+        _text(item, field="release_audit.bundle.run_ids[]") for item in audit_run_ids
+    }:
+        raise _error("release audit run does not belong to its experiment bundle")
+    audit_integrity = _mapping(
+        audit_bundle.get("integrity"), field="release_audit.bundle.integrity"
+    )
+    if audit_integrity.get("accepted_cycle") is not True or audit_integrity.get(
+        "missing"
+    ) not in (None, []):
+        raise _error("release audit experiment bundle is not evidence-complete")
+    audit_candidate = _mapping(
+        audit_bundle.get("candidate"), field="release_audit.bundle.candidate"
+    )
+    audit_snapshot = _mapping(
+        audit_candidate.get("snapshot"),
+        field="release_audit.bundle.candidate.snapshot",
+    )
+    audit_instance = _mapping(
+        audit_snapshot.get("reflexion_instance"),
+        field="release_audit.bundle.reflexion_instance",
+    )
+    if (
+        _instance_id(audit_instance.get("instance_id")) != instance_id
+        or _git_sha(
+            audit_instance.get("git_commit_sha"),
+            field="release_audit.bundle.reflexion_instance.git_commit_sha",
+        )
+        != instance_head
+    ):
+        raise _error("release audit bundle does not target the accepted instance head")
     git_receipts = packet.get("git_receipts")
     if not isinstance(git_receipts, list) or not git_receipts:
         raise _error("release evidence has no git receipts")
