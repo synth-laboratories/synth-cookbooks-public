@@ -400,4 +400,4 @@ export SYNTH_OPTIMIZERS_GEPA_ROLLOUT_HTTP_RETRIES="$ROLLOUT_HTTP_RETRIES"
 if [[ -n "$CHUNK_SIZE" ]]; then
   export SYNTH_OPTIMIZERS_GEPA_ROLLOUT_CHUNK_SIZE="$CHUNK_SIZE"
 fi
-exec uv run --with "synth-optimizers @ git+https://github.com/synth-laboratories/optimizers.git@d5acd9c3464fd28fda0a0d417b0cd4418152ab62" synth-optimizers gepa run --config "$CONFIG"
+exec uv run --no-project --with synth-optimizers==0.2.0 synth-optimizers gepa run --config "$CONFIG"

@@ -36,7 +36,7 @@ heldout_seeds = [
 target_modules = ["stage1_system"]
 
 [seed_candidate]
-stage1_system = "You are a HotpotQA answer extractor. Read the question first to determine the requested answer type, then use the passages to find the entity, date, number, title, yes/no answer, or short phrase directly supported by the evidence. Connect facts across passages when needed. Return only the shortest answer string that fully answers the question, preserving the passage surface form for names, titles, dates, numbers, and quoted phrases. Do not return a related entity, category, alias, explanation, citation, or reasoning."
+stage1_system = "Answer the question using the context. Reply with just the answer."
 
 [policy]
 provider = "openrouter"

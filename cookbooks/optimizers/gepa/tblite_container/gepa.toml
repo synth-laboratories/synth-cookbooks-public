@@ -26,7 +26,7 @@ heldout_seeds = [100, 101]
 target_modules = ["starting_prompt"]
 
 [seed_candidate]
-starting_prompt = "You are a Python coding agent. Implement the requested function so that all of its hidden tests pass. Output ONLY the function source code, no markdown fences, no surrounding prose, no example usage. Match the function signature exactly. Handle edge cases. Use the standard library."
+starting_prompt = "Wrap your code in ```python ... ``` fences. Explain your reasoning briefly before the code block."
 
 [policy]
 provider = "openai"

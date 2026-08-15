@@ -281,6 +281,7 @@ dependencies = [
     { name = "minigrid" },
     { name = "numpy" },
     { name = "openai" },
+    { name = "synth-containers" },
     { name = "uvicorn" },
 ]
 
@@ -291,6 +292,7 @@ requires-dist = [
     { name = "minigrid", specifier = ">=2.3" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "openai", specifier = ">=1.0" },
+    { name = "synth-containers", specifier = ">=0.2.0" },
     { name = "uvicorn", specifier = ">=0.27" },
 ]
 
@@ -569,6 +571,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/81/69/17425771797c36cded50b7fe44e850315d039f28b15901ab44839e70b593/starlette-1.0.0.tar.gz", hash = "sha256:6a4beaf1f81bb472fd19ea9b918b50dc3a77a6f2e190a12954b25e6ed5eea149", size = 2655289, upload-time = "2026-03-22T18:29:46.779Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/c9/584bc9651441b4ba60cc4d557d8a547b5aff901af35bda3a4ee30c819b82/starlette-1.0.0-py3-none-any.whl", hash = "sha256:d3ec55e0bb321692d275455ddfd3df75fff145d009685eb40dc91fc66b03d38b", size = 72651, upload-time = "2026-03-22T18:29:45.111Z" },
+]
+
+[[package]]
+name = "synth-containers"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "uvicorn" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/58/e3/777a23e6b9e4734692750c4f60d85bfb4572c8df1f9ccbe40da1e6db7247/synth_containers-0.2.0.tar.gz", hash = "sha256:ffca2883b99db7b447c3f4d7faf10a8cd412cd41a9b36c911c030c3e08318097", size = 62166, upload-time = "2026-05-29T16:31:44.337Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6f/c9/fa26d749df6d1fefacb0477e82ddbd32b3a1cd63cfd3643c3d15918aa657/synth_containers-0.2.0-py3-none-any.whl", hash = "sha256:c8f3ae1416b6fd16f834398d47961e5b64fb546788883071dfd90ea0e791d83f", size = 74250, upload-time = "2026-05-29T16:31:43.078Z" },
 ]
 
 [[package]]

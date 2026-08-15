@@ -12,8 +12,9 @@ logs/screenshots.
 
 - `packages/` - public package source, with independently releasable packages
   such as `synth-containers`.
-- `cookbooks/` - public recipes, including the Banking77 GEPA optimizer slice.
-  Active private drafts still live in `synth-cookbooks-private` until promoted.
+- `cookbooks/` - public recipes, including GEPA optimizer examples and the
+  GELO quickstart slice. Active private drafts still live in
+  `synth-cookbooks-private` until promoted.
 - `skills/` - portable agent skills that help users run or adapt the public
   packages and cookbooks.
 - `assets/` - public-safe screenshots, diagrams, and generated media.
@@ -45,19 +46,19 @@ metadata, README, version, build command, and publish command.
 - `packages/synth-optimizers/` - prerelease public optimizer tooling with a
   Rust GEPA core and thin Python bindings.
 
-## Rust GEPA Cookbooks
+## Optimizer Cookbooks
 
 The public GEPA examples live under `cookbooks/optimizers/gepa/`. They use the
 Rust `synth-optimizers` GEPA runtime with a Codex app-server proposer and
 HTTP task containers. Current cookbook containers include Banking77, HotpotQA,
 TBLite, Crafter, and MiniGrid.
 
-Related reusable agent skills:
+The public GELO quickstart lives under `cookbooks/optimizers/gelo/`. It is the
+current public GELO cookbook path for launch, docs, and blog links.
 
-- `skills/containers/SKILL.md` - how to build and debug Synth task containers
-  against the `synth-containers` HTTP contract.
-- `skills/gepa/SKILL.md` - how to run, configure, debug, and adapt public Rust
-  GEPA cookbooks.
+Related reusable agent skills now live in the
+[`synth-laboratories/optimizers`](https://github.com/synth-laboratories/optimizers)
+repository.
 
 Run GEPA from the container directory. Each container keeps its base
 `gepa.toml`, profile TOMLs under `run_profiles/`, and a `run_fresh_gepa.sh`
@@ -92,8 +93,8 @@ the general proposer task context, objectives, output constraints, and
 prompt-writing guidance so the same Rust GEPA loop can work across
 classification, QA, coding, and agent-environment tasks.
 
-For the full config schema, container contract, Codex auth settings, artifact
-layout, and public-safety rules, read
+For the full GEPA config schema, container contract, Codex auth settings,
+artifact layout, and public-safety rules, read
 `cookbooks/optimizers/gepa/README.md`.
 
 ## Development

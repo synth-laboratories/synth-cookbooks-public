@@ -1,0 +1,60 @@
+[profile]
+name = "blog_compare"
+description = "MiniGrid GEPA run matching blog post head-to-head comparison: n=8 train, n=24 heldout, 2 generations × 4 proposals."
+
+[base]
+config = "gepa.toml"
+run_id = "minigrid_blog_compare"
+
+[policy]
+provider = "openai"
+model = "gpt-4.1-nano"
+api_key_env = "OPENAI_API_KEY"
+api_mode = "auto"
+
+[proposer]
+model = "gpt-5.4-nano"
+auth_mode = "api_key"
+api_key_env = "OPENAI_API_KEY"
+copy_host_auth = false
+
+[task]
+# Empty-6x6 = simple nav (just reach the green square). DoorKey-5x5 is too hard
+# for gpt-4.1-nano with the default seed prompt — 0% solve rate kills the
+# reflective loop because there are no winning patterns to learn from.
+env_id = "MiniGrid-Empty-Random-6x6-v0"
+max_steps = 30
+
+[dataset]
+train_size = 12
+heldout_size = 32
+train_seed_start = 1000
+heldout_seed_start = 5000
+
+[pipeline]
+max_generations = 2
+proposals_per_generation = 4
+minibatch_size = 12
+max_in_flight_candidates = 4
+rollout_workers = 16
+rollout_chunk_size = "auto"
+
+[pipeline.adaptive_rollout_concurrency]
+enabled = true
+initial = 16
+min = 1
+max = 32
+increase_step = 4
+decrease_step = 4
+increase_after_successes = 16
+
+[budgets]
+# 8 train × 4 proposals × 2 generations = 64 train rollouts + buffer
+train_rollouts = 200
+heldout_rollouts = 250
+
+[timeouts]
+policy_seconds = 30
+rollout_seconds = 180
+container_http_seconds = 240
+rollout_http_retries = 0

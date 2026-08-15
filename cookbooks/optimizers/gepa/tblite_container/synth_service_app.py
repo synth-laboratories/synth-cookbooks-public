@@ -19,14 +19,12 @@ Each rollout:
 No fixture, no string matching. Reward comes from a real pytest verdict.
 
 Required env:
-  OPENAI_API_KEY               — required.
-  TBLITE_POLICY_MODEL          — default: gpt-4.1-nano
+  OPENAI_API_KEY               — required when rollout.policy.credential_mode=byok.
   TBLITE_TEST_TIMEOUT_SECONDS  — default: 30 (pytest subprocess hard cap)
 """
 from __future__ import annotations
 
 import argparse
-import asyncio
 import os
 import re
 import subprocess
@@ -43,7 +41,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 try:
     from synth_containers import GEPA_OPTIMIZER_CONTRACT_VERSION
 except Exception:
-    GEPA_OPTIMIZER_CONTRACT_VERSION = "synth_optimizers.gepa.v1"
+    GEPA_OPTIMIZER_CONTRACT_VERSION = "synth_optimizers.gepa.v2"
 
 try:
     from openai import OpenAI
@@ -57,14 +55,11 @@ else:
 TASK_ID = "tblite.python_function_impl"
 DATASET_ID = "tblite_public_pytest_tasks"
 
-POLICY_MODEL = os.environ.get("TBLITE_POLICY_MODEL", "gpt-4.1-nano")
 TEST_TIMEOUT_SECONDS = int(os.environ.get("TBLITE_TEST_TIMEOUT_SECONDS", "30"))
 
 DEFAULT_STARTING_PROMPT = (
-    "You are a Python coding agent. Implement the requested function so that "
-    "all of its hidden tests pass. Output ONLY the function source code, no "
-    "markdown fences, no surrounding prose, no example usage. Match the "
-    "function signature exactly. Handle edge cases. Use the standard library."
+    "Wrap your code in ```python ... ``` fences. Explain your reasoning briefly "
+    "before the code block."
 )
 
 
@@ -191,28 +186,354 @@ ROWS = [
             "    assert merge_sorted([-3, -1, 0], [-2, 5]) == [-3, -2, -1, 0, 5]\n"
         ),
     },
+    # ── Harder train problems ────────────────────────────────────────────────
+    # These were added so the seed prompt doesn't saturate on
+    # gpt-4.1-nano. They exercise DP, sliding-window, string parsing, and
+    # tricky-edge-case territory where small models routinely fail.
+    {
+        "seed": 3,
+        "split": "train",
+        "example_id": "text_justification",
+        "signature": "def text_justification(words: list[str], maxWidth: int) -> list[str]:",
+        "spec": (
+            "Greedily pack `words` into lines of width `maxWidth`, then fully "
+            "justify every line *except* the last. Within a non-last line, "
+            "distribute extra spaces between words from left to right so the "
+            "left gaps are >= the right gaps. A line with a single word is "
+            "left-justified and padded with trailing spaces. The last line is "
+            "always left-justified with a single space between words and "
+            "trailing spaces to width."
+        ),
+        "tests": (
+            "from solution import text_justification\n"
+            "def test_canonical():\n"
+            "    out = text_justification(['This', 'is', 'an', 'example', 'of', 'text', 'justification.'], 16)\n"
+            "    assert out == ['This    is    an', 'example  of text', 'justification.  ']\n"
+            "def test_uneven_distribution():\n"
+            "    out = text_justification(['What', 'must', 'be', 'acknowledgment', 'shall', 'be'], 16)\n"
+            "    assert out == ['What   must   be', 'acknowledgment  ', 'shall be        ']\n"
+            "def test_single_short_line():\n"
+            "    assert text_justification(['hi'], 5) == ['hi   ']\n"
+        ),
+    },
+    {
+        "seed": 4,
+        "split": "train",
+        "example_id": "decode_ways",
+        "signature": "def decode_ways(s: str) -> int:",
+        "spec": (
+            "`s` is a non-empty digit string. Each character of an original "
+            "message was encoded by mapping 'A'->'1', 'B'->'2', ..., 'Z'->'26'. "
+            "Return the number of ways to decode `s`. Treat '0' as un-decodable "
+            "by itself: it must combine with a preceding '1' or '2'. Anything "
+            "else (e.g. '30', '06') contributes 0 ways."
+        ),
+        "tests": (
+            "from solution import decode_ways\n"
+            "def test_two_digit():\n"
+            "    assert decode_ways('12') == 2  # 'AB' or 'L'\n"
+            "def test_with_zero():\n"
+            "    assert decode_ways('226') == 3\n"
+            "    assert decode_ways('06') == 0\n"
+            "    assert decode_ways('10') == 1\n"
+            "def test_invalid_zero():\n"
+            "    assert decode_ways('100') == 0\n"
+            "    assert decode_ways('301') == 0\n"
+            "def test_long():\n"
+            "    assert decode_ways('11106') == 2  # 'AAJF' or 'KJF'\n"
+        ),
+    },
+    {
+        "seed": 5,
+        "split": "train",
+        "example_id": "min_window_substring",
+        "signature": "def min_window_substring(s: str, t: str) -> str:",
+        "spec": (
+            "Return the minimum-length contiguous substring of `s` that "
+            "contains every character of `t` *including duplicates* (as a "
+            "multiset). Return '' if no such window exists. If multiple "
+            "windows tie on length, return the one whose left index is "
+            "smallest."
+        ),
+        "tests": (
+            "from solution import min_window_substring\n"
+            "def test_basic():\n"
+            "    assert min_window_substring('ADOBECODEBANC', 'ABC') == 'BANC'\n"
+            "def test_no_window():\n"
+            "    assert min_window_substring('a', 'aa') == ''\n"
+            "    assert min_window_substring('abc', 'xy') == ''\n"
+            "def test_full_string():\n"
+            "    assert min_window_substring('a', 'a') == 'a'\n"
+            "def test_duplicates():\n"
+            "    assert min_window_substring('aaflslflsldkalskaaa', 'aaa') == 'aaa'\n"
+        ),
+    },
+    {
+        "seed": 6,
+        "split": "train",
+        "example_id": "valid_number",
+        "signature": "def valid_number(s: str) -> bool:",
+        "spec": (
+            "Return True iff `s` is a valid number per the following rules: "
+            "an optional sign, then either (1) an integer (one or more digits), "
+            "(2) a decimal (digits before and/or after a '.', with at least "
+            "one digit overall), optionally followed by 'e' or 'E' and a "
+            "signed integer exponent. Leading and trailing whitespace are "
+            "*not* allowed. Examples of invalid: '', '.', '+.', '1e', '1e+', "
+            "'4e+', 'e3', '99e2.5', '+-3'."
+        ),
+        "tests": (
+            "from solution import valid_number\n"
+            "def test_integers_and_decimals():\n"
+            "    for x in ['0', '0.1', '.1', '1.', '+3', '-2.5', '3e10', '+3.14e-2']:\n"
+            "        assert valid_number(x), x\n"
+            "def test_invalid():\n"
+            "    for x in ['', '.', '+.', '1e', '1e+', '4e+', 'e3', '99e2.5', '+-3', ' 1', '1 ', 'abc', '1..0', '1e1.5']:\n"
+            "        assert not valid_number(x), x\n"
+        ),
+    },
+    {
+        "seed": 7,
+        "split": "train",
+        "example_id": "longest_palindromic_subseq",
+        "signature": "def longest_palindromic_subseq(s: str) -> int:",
+        "spec": (
+            "Return the length of the longest subsequence of `s` (characters "
+            "in order, not necessarily contiguous) that reads the same "
+            "forwards and backwards. Empty string returns 0. Single character "
+            "returns 1."
+        ),
+        "tests": (
+            "from solution import longest_palindromic_subseq\n"
+            "def test_basic():\n"
+            "    assert longest_palindromic_subseq('bbbab') == 4  # 'bbbb'\n"
+            "def test_no_repeat():\n"
+            "    assert longest_palindromic_subseq('abcde') == 1\n"
+            "def test_already_palindrome():\n"
+            "    assert longest_palindromic_subseq('character') == 5  # 'carac'\n"
+            "def test_empty_and_one():\n"
+            "    assert longest_palindromic_subseq('') == 0\n"
+            "    assert longest_palindromic_subseq('a') == 1\n"
+        ),
+    },
+    # ── Harder heldout problems ──────────────────────────────────────────────
+    {
+        "seed": 102,
+        "split": "test",
+        "example_id": "word_break",
+        "signature": "def word_break(s: str, word_dict: list[str]) -> bool:",
+        "spec": (
+            "Return True iff `s` can be segmented into a sequence of one or "
+            "more dictionary words from `word_dict`. Words from the "
+            "dictionary may be reused. Empty `s` returns True."
+        ),
+        "tests": (
+            "from solution import word_break\n"
+            "def test_basic():\n"
+            "    assert word_break('leetcode', ['leet', 'code'])\n"
+            "def test_repeat():\n"
+            "    assert word_break('applepenapple', ['apple', 'pen'])\n"
+            "def test_fail():\n"
+            "    assert not word_break('catsandog', ['cats', 'dog', 'sand', 'and', 'cat'])\n"
+            "def test_empty():\n"
+            "    assert word_break('', ['a'])\n"
+        ),
+    },
+    {
+        "seed": 103,
+        "split": "test",
+        "example_id": "spiral_matrix",
+        "signature": "def spiral_matrix(matrix: list[list[int]]) -> list[int]:",
+        "spec": (
+            "Return all elements of an m×n matrix in clockwise spiral order, "
+            "starting at the top-left and turning right/down/left/up as the "
+            "boundary contracts. Handle non-square (including 1×n and m×1) "
+            "matrices."
+        ),
+        "tests": (
+            "from solution import spiral_matrix\n"
+            "def test_square():\n"
+            "    assert spiral_matrix([[1,2,3],[4,5,6],[7,8,9]]) == [1,2,3,6,9,8,7,4,5]\n"
+            "def test_rect_wide():\n"
+            "    assert spiral_matrix([[1,2,3,4],[5,6,7,8],[9,10,11,12]]) == [1,2,3,4,8,12,11,10,9,5,6,7]\n"
+            "def test_single_row():\n"
+            "    assert spiral_matrix([[1,2,3]]) == [1,2,3]\n"
+            "def test_single_col():\n"
+            "    assert spiral_matrix([[1],[2],[3]]) == [1,2,3]\n"
+        ),
+    },
+    {
+        "seed": 104,
+        "split": "test",
+        "example_id": "regex_match",
+        "signature": "def regex_match(s: str, p: str) -> bool:",
+        "spec": (
+            "Return True iff the entire string `s` matches the pattern `p`. "
+            "Pattern syntax: '.' matches any single character; 'x*' matches "
+            "zero or more of the preceding character `x` (where `x` is a "
+            "literal or '.'). No other metacharacters. Anchored at both "
+            "ends — partial matches don't count."
+        ),
+        "tests": (
+            "from solution import regex_match\n"
+            "def test_literal():\n"
+            "    assert regex_match('aa', 'aa')\n"
+            "    assert not regex_match('aa', 'a')\n"
+            "def test_star():\n"
+            "    assert regex_match('aa', 'a*')\n"
+            "    assert regex_match('aaa', 'a*')\n"
+            "    assert regex_match('', 'a*')\n"
+            "def test_dot_star():\n"
+            "    assert regex_match('ab', '.*')\n"
+            "    assert regex_match('aab', 'c*a*b')\n"
+            "    assert not regex_match('mississippi', 'mis*is*p*.')\n"
+        ),
+    },
 ]
 
 
-_openai_client: Any = None
+_openai_clients: dict[tuple[str, str, str], Any] = {}
+_RAW_CREDENTIAL_KEYS = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer_token",
+    "openai_api_key",
+    "openrouter_api_key",
+    "secret_key",
+}
 
 
-def _get_openai_client() -> Any:
-    global _openai_client
-    if _openai_client is not None:
-        return _openai_client
+def _find_raw_credential_key(value: Any) -> str | None:
+    if isinstance(value, dict):
+        for raw_key, raw_value in value.items():
+            normalized = str(raw_key).strip().lower().replace("-", "_")
+            if normalized in _RAW_CREDENTIAL_KEYS or normalized.endswith("_api_key"):
+                return str(raw_key)
+            nested = _find_raw_credential_key(raw_value)
+            if nested is not None:
+                return nested
+    elif isinstance(value, list):
+        for item in value:
+            nested = _find_raw_credential_key(item)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _normalize_policy_enum(value: Any, default: str) -> str:
+    text = str(value or "").strip().lower().replace("-", "_")
+    return text or default
+
+
+def _strip_openai_endpoint_suffix(url: str) -> str:
+    normalized = url.strip().rstrip("/")
+    for suffix in ("/chat/completions", "/responses"):
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)]
+    return normalized
+
+
+def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
+    policy = payload.get("policy")
+    if not isinstance(policy, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy is required for GEPA optimizer contract v2.",
+        )
+    raw_key = _find_raw_credential_key(policy.get("config", {}))
+    if raw_key is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"rollout.policy.config must not carry raw credential field {raw_key!r}.",
+        )
+    provider = str(policy.get("provider") or "").strip()
+    model = str(policy.get("model") or "").strip()
+    if not provider or not model:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.provider and rollout.policy.model are required.",
+        )
+    api_family = _normalize_policy_enum(policy.get("api_family"), "chat_completions")
+    if api_family != "chat_completions":
+        raise HTTPException(
+            status_code=422,
+            detail=f"{TASK_ID} supports rollout.policy.api_family='chat_completions'; got {api_family!r}.",
+        )
+    credential_mode = _normalize_policy_enum(policy.get("credential_mode"), "byok")
+    if credential_mode not in {"byok", "proxy"}:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported rollout.policy.credential_mode: {credential_mode!r}",
+        )
+    raw_base_url = (
+        str(policy.get("inference_url") or "").strip()
+        if credential_mode == "proxy"
+        else str(policy.get("base_url") or "").strip()
+    )
+    if credential_mode == "proxy" and not raw_base_url:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.inference_url is required when credential_mode=proxy.",
+        )
+    if provider.lower() == "openrouter" and credential_mode == "byok" and not raw_base_url:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.base_url is required for provider=openrouter.",
+        )
+    max_tokens = policy.get("max_tokens")
+    if max_tokens is not None:
+        try:
+            max_tokens = int(max_tokens)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="rollout.policy.max_tokens must be an integer when set.",
+            ) from exc
+        if max_tokens <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail="rollout.policy.max_tokens must be positive when set.",
+            )
+    return {
+        "provider": provider,
+        "model": model,
+        "base_url": _strip_openai_endpoint_suffix(raw_base_url) if raw_base_url else None,
+        "credential_mode": credential_mode,
+        "max_tokens": max_tokens,
+    }
+
+
+def _policy_api_key(policy: dict[str, Any]) -> str:
+    if policy["credential_mode"] == "proxy":
+        return "proxy"
+    env_name = "OPENROUTER_API_KEY" if policy["provider"].lower() == "openrouter" else "OPENAI_API_KEY"
+    value = os.environ.get(env_name, "").strip()
+    if value:
+        return value
+    raise HTTPException(
+        status_code=503,
+        detail=f"{env_name} is not set; rollout.policy credential_mode=byok requires a container env credential.",
+    )
+
+
+def _get_openai_client(policy: dict[str, Any]) -> Any:
     if OpenAI is None:
         raise HTTPException(
             status_code=503,
             detail=f"openai package not installed; container deps in pyproject.toml. {_OPENAI_IMPORT_ERROR!r}",
         )
-    if "OPENAI_API_KEY" not in os.environ:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENAI_API_KEY not set in container env; cannot serve live rollouts.",
-        )
-    _openai_client = OpenAI()
-    return _openai_client
+    base_url = policy.get("base_url")
+    key = (policy["provider"].lower(), policy["credential_mode"], str(base_url or ""))
+    client = _openai_clients.get(key)
+    if client is None:
+        client_kwargs = {"api_key": _policy_api_key(policy)}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client = OpenAI(**client_kwargs)
+        _openai_clients[key] = client
+    return client
 
 
 # --- Agent + verifier ---------------------------------------------------------
@@ -228,7 +549,12 @@ def _strip_code_fences(text: str) -> str:
     return text.strip()
 
 
-def _call_agent(client: Any, system_prompt: str, row: dict[str, Any]) -> tuple[str, dict[str, int]]:
+def _call_agent(
+    client: Any,
+    policy: dict[str, Any],
+    system_prompt: str,
+    row: dict[str, Any],
+) -> tuple[str, dict[str, int]]:
     user_content = (
         f"# Task\n"
         f"{row['spec']}\n\n"
@@ -237,13 +563,16 @@ def _call_agent(client: Any, system_prompt: str, row: dict[str, Any]) -> tuple[s
         f"Return only the function body and signature. No imports unless required. "
         f"No usage examples. No markdown fences."
     )
-    resp = client.chat.completions.create(
-        model=POLICY_MODEL,
-        messages=[
+    request_kwargs = {
+        "model": policy["model"],
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
-    )
+    }
+    if policy["max_tokens"] is not None:
+        request_kwargs["max_tokens"] = policy["max_tokens"]
+    resp = client.chat.completions.create(**request_kwargs)
     text = (resp.choices[0].message.content or "").strip()
     usage = {
         "prompt_tokens": int(getattr(resp.usage, "prompt_tokens", 0) or 0),
@@ -398,7 +727,7 @@ async def task_info() -> dict[str, Any]:
             ],
         },
         "metadata": {
-            "policy_model": POLICY_MODEL,
+            "policy_model_source": "rollout.policy.model",
             "verifier": "pytest_subprocess",
             "test_timeout_seconds": TEST_TIMEOUT_SECONDS,
             "trace_schema": "prompt_calls.llm_request.messages.v1",
@@ -469,6 +798,7 @@ async def dataset_rows(request: Request) -> dict[str, Any]:
 @app.post("/rollouts")
 def rollout(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
     payload = payload or {}
+    policy = _require_policy(payload)
     incoming_row = payload.get("dataset_row") if isinstance(payload.get("dataset_row"), dict) else None
     if incoming_row and "tests" in incoming_row:
         row = incoming_row
@@ -487,8 +817,8 @@ def rollout(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, An
     system_prompt = str(candidate.get("starting_prompt") or DEFAULT_STARTING_PROMPT)
     seed = int(row.get("seed") or 0)
 
-    client = _get_openai_client()
-    solution_code, usage = _call_agent(client, system_prompt, row)
+    client = _get_openai_client(policy)
+    solution_code, usage = _call_agent(client, policy, system_prompt, row)
     reward, verdict = _run_pytest(solution_code, row["tests"])
 
     rollout_id = str(payload.get("rollout_id") or f"rollout_{uuid.uuid4().hex[:12]}")
@@ -510,7 +840,7 @@ def rollout(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, An
                 "total": verdict.get("total"),
                 "pytest_timeout": verdict.get("timeout"),
                 "pytest_returncode": verdict.get("returncode"),
-                "policy_model": POLICY_MODEL,
+                "policy_model": policy["model"],
             },
         },
         "summary": {
