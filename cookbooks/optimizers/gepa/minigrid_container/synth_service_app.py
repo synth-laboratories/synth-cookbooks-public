@@ -14,8 +14,7 @@ with an OpenAI-driven agent using the candidate's `system_prompt`, and
 returns the actual env reward.
 
 Required env:
-  OPENAI_API_KEY              — required.
-  MINIGRID_POLICY_MODEL       — default: gpt-4.1-nano
+  OPENAI_API_KEY              — required when rollout.policy.credential_mode=byok.
   MINIGRID_MAX_STEPS          — default: 48 (per-episode hard cap)
   MINIGRID_ENV_ID             — default: MiniGrid-DoorKey-5x5-v0
 """
@@ -34,7 +33,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 try:
     from synth_containers import GEPA_OPTIMIZER_CONTRACT_VERSION
 except Exception:
-    GEPA_OPTIMIZER_CONTRACT_VERSION = "synth_optimizers.gepa.v1"
+    GEPA_OPTIMIZER_CONTRACT_VERSION = "synth_optimizers.gepa.v2"
 
 try:
     from openai import OpenAI
@@ -48,7 +47,6 @@ else:
 TASK_ID = "minigrid.gridworld_policy"
 DATASET_ID = "minigrid_public_episodes"
 
-POLICY_MODEL = os.environ.get("MINIGRID_POLICY_MODEL", "gpt-4.1-nano")
 MAX_STEPS = int(os.environ.get("MINIGRID_MAX_STEPS", "48"))
 ENV_ID = os.environ.get("MINIGRID_ENV_ID", "MiniGrid-DoorKey-5x5-v0")
 
@@ -76,25 +74,148 @@ ROWS = [
 ]
 
 
-_openai_client: Any = None
+_openai_clients: dict[tuple[str, str, str], Any] = {}
+_RAW_CREDENTIAL_KEYS = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer_token",
+    "openai_api_key",
+    "openrouter_api_key",
+    "secret_key",
+}
 
 
-def _get_openai_client() -> Any:
-    global _openai_client
-    if _openai_client is not None:
-        return _openai_client
+def _find_raw_credential_key(value: Any) -> str | None:
+    if isinstance(value, dict):
+        for raw_key, raw_value in value.items():
+            normalized = str(raw_key).strip().lower().replace("-", "_")
+            if normalized in _RAW_CREDENTIAL_KEYS or normalized.endswith("_api_key"):
+                return str(raw_key)
+            nested = _find_raw_credential_key(raw_value)
+            if nested is not None:
+                return nested
+    elif isinstance(value, list):
+        for item in value:
+            nested = _find_raw_credential_key(item)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _normalize_policy_enum(value: Any, default: str) -> str:
+    text = str(value or "").strip().lower().replace("-", "_")
+    return text or default
+
+
+def _strip_openai_endpoint_suffix(url: str) -> str:
+    normalized = url.strip().rstrip("/")
+    for suffix in ("/chat/completions", "/responses"):
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)]
+    return normalized
+
+
+def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
+    policy = payload.get("policy")
+    if not isinstance(policy, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy is required for GEPA optimizer contract v2.",
+        )
+    raw_key = _find_raw_credential_key(policy.get("config", {}))
+    if raw_key is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"rollout.policy.config must not carry raw credential field {raw_key!r}.",
+        )
+    provider = str(policy.get("provider") or "").strip()
+    model = str(policy.get("model") or "").strip()
+    if not provider or not model:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.provider and rollout.policy.model are required.",
+        )
+    api_family = _normalize_policy_enum(policy.get("api_family"), "chat_completions")
+    if api_family != "chat_completions":
+        raise HTTPException(
+            status_code=422,
+            detail=f"{TASK_ID} supports rollout.policy.api_family='chat_completions'; got {api_family!r}.",
+        )
+    credential_mode = _normalize_policy_enum(policy.get("credential_mode"), "byok")
+    if credential_mode not in {"byok", "proxy"}:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported rollout.policy.credential_mode: {credential_mode!r}",
+        )
+    raw_base_url = (
+        str(policy.get("inference_url") or "").strip()
+        if credential_mode == "proxy"
+        else str(policy.get("base_url") or "").strip()
+    )
+    if credential_mode == "proxy" and not raw_base_url:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.inference_url is required when credential_mode=proxy.",
+        )
+    if provider.lower() == "openrouter" and credential_mode == "byok" and not raw_base_url:
+        raise HTTPException(
+            status_code=422,
+            detail="rollout.policy.base_url is required for provider=openrouter.",
+        )
+    max_tokens = policy.get("max_tokens")
+    if max_tokens is not None:
+        try:
+            max_tokens = int(max_tokens)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="rollout.policy.max_tokens must be an integer when set.",
+            ) from exc
+        if max_tokens <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail="rollout.policy.max_tokens must be positive when set.",
+            )
+    return {
+        "provider": provider,
+        "model": model,
+        "base_url": _strip_openai_endpoint_suffix(raw_base_url) if raw_base_url else None,
+        "credential_mode": credential_mode,
+        "max_tokens": max_tokens,
+    }
+
+
+def _policy_api_key(policy: dict[str, Any]) -> str:
+    if policy["credential_mode"] == "proxy":
+        return "proxy"
+    env_name = "OPENROUTER_API_KEY" if policy["provider"].lower() == "openrouter" else "OPENAI_API_KEY"
+    value = os.environ.get(env_name, "").strip()
+    if value:
+        return value
+    raise HTTPException(
+        status_code=503,
+        detail=f"{env_name} is not set; rollout.policy credential_mode=byok requires a container env credential.",
+    )
+
+
+def _get_openai_client(policy: dict[str, Any]) -> Any:
     if OpenAI is None:
         raise HTTPException(
             status_code=503,
             detail=f"openai package not installed; container deps in pyproject.toml. {_OPENAI_IMPORT_ERROR!r}",
         )
-    if "OPENAI_API_KEY" not in os.environ:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENAI_API_KEY not set in container env; cannot serve live rollouts.",
-        )
-    _openai_client = OpenAI()
-    return _openai_client
+    base_url = policy.get("base_url")
+    key = (policy["provider"].lower(), policy["credential_mode"], str(base_url or ""))
+    client = _openai_clients.get(key)
+    if client is None:
+        client_kwargs = {"api_key": _policy_api_key(policy)}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client = OpenAI(**client_kwargs)
+        _openai_clients[key] = client
+    return client
 
 
 # --- Env helpers --------------------------------------------------------------
@@ -180,19 +301,28 @@ def _parse_action(raw_text: str) -> str | None:
     return None
 
 
-def _llm_step(client: Any, system_prompt: str, observation_text: str, step: int) -> tuple[str | None, dict[str, int]]:
+def _llm_step(
+    client: Any,
+    policy: dict[str, Any],
+    system_prompt: str,
+    observation_text: str,
+    step: int,
+) -> tuple[str | None, dict[str, int]]:
     user_content = (
         f"Step {step + 1}. Current state:\n\n{observation_text}\n\n"
         'Reply with strict JSON: {"action": "<one admissible action name>"}'
     )
-    resp = client.chat.completions.create(
-        model=POLICY_MODEL,
-        messages=[
+    request_kwargs = {
+        "model": policy["model"],
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
-        response_format={"type": "json_object"},
-    )
+        "response_format": {"type": "json_object"},
+    }
+    if policy["max_tokens"] is not None:
+        request_kwargs["max_tokens"] = policy["max_tokens"]
+    resp = client.chat.completions.create(**request_kwargs)
     text = (resp.choices[0].message.content or "").strip()
     action = _parse_action(text)
     usage = {
@@ -203,8 +333,8 @@ def _llm_step(client: Any, system_prompt: str, observation_text: str, step: int)
     return action, usage
 
 
-def _run_episode(seed: int, system_prompt: str) -> dict[str, Any]:
-    client = _get_openai_client()
+def _run_episode(seed: int, system_prompt: str, policy: dict[str, Any]) -> dict[str, Any]:
+    client = _get_openai_client(policy)
     env, obs = _make_env(seed)
 
     total_reward = 0.0
@@ -216,7 +346,7 @@ def _run_episode(seed: int, system_prompt: str) -> dict[str, Any]:
     try:
         while step < MAX_STEPS:
             obs_text = _render_observation_text(env, obs)
-            action_name, usage = _llm_step(client, system_prompt, obs_text, step)
+            action_name, usage = _llm_step(client, policy, system_prompt, obs_text, step)
             for k in total_usage:
                 total_usage[k] += usage.get(k, 0)
             if action_name is None:
@@ -340,7 +470,7 @@ async def task_info() -> dict[str, Any]:
             ],
         },
         "metadata": {
-            "policy_model": POLICY_MODEL,
+            "policy_model_source": "rollout.policy.model",
             "env_id": ENV_ID,
             "max_steps": MAX_STEPS,
             "trace_schema": "prompt_calls.llm_request.messages.v1",
@@ -406,6 +536,7 @@ async def dataset_rows(request: Request) -> dict[str, Any]:
 @app.post("/rollouts")
 def rollout(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
     payload = payload or {}
+    policy = _require_policy(payload)
     row = payload.get("dataset_row") if isinstance(payload.get("dataset_row"), dict) else None
     if not row:
         row = _row_for_seed(
@@ -416,7 +547,7 @@ def rollout(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, An
     system_prompt = str(candidate.get("system_prompt") or DEFAULT_SYSTEM_PROMPT)
     seed = int(row.get("seed") or 0)
 
-    episode = _run_episode(seed=seed, system_prompt=system_prompt)
+    episode = _run_episode(seed=seed, system_prompt=system_prompt, policy=policy)
     reward = float(episode["total_reward"])
 
     rollout_id = str(payload.get("rollout_id") or f"rollout_{uuid.uuid4().hex[:12]}")
@@ -436,7 +567,7 @@ def rollout(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, An
                 "n_steps": episode["n_steps"],
                 "done": episode["done"],
                 "solved": episode["solved"],
-                "policy_model": POLICY_MODEL,
+                "policy_model": policy["model"],
             },
         },
         "summary": {

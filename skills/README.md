@@ -8,21 +8,20 @@ Skills shape used by Codex, Claude, and the backend SMR skill catalog:
 
 ```text
 skills/
-  gepa/
-    SKILL.md
-  containers/
+  <skill-name>/
     SKILL.md
 ```
 
-Current skills:
+The `gepa` and `containers` skills now live in their canonical repos:
 
-- `containers/` - build, upgrade, or debug public task containers using the
-  `synth-containers` contract.
-- `gepa/` - run, configure, debug, and adapt public Rust GEPA cookbooks.
+- GEPA → [`synth-laboratories/optimizers`](https://github.com/synth-laboratories/optimizers)
+  at `skills/gepa/`.
+- Containers → [`synth-laboratories/containers`](https://github.com/synth-laboratories/containers)
+  at `skills/containers/`.
 
-Use these skills as copyable, public cookbook assets. For native Codex
-auto-discovery inside a checkout, copy or symlink the desired skill folder into
-`.agents/skills/`.
+This directory remains for future cookbook-specific skills. Use skills as
+copyable, public cookbook assets. For native Codex auto-discovery inside a
+checkout, copy or symlink the desired skill folder into `.agents/skills/`.
 
 ## Authoring Rules
 

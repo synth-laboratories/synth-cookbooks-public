@@ -1,0 +1,53 @@
+[profile]
+name = "blog_compare"
+description = "TBLite GEPA run for the blog head-to-head: 8 train (mix of easy + DP/parsing) + 5 heldout (DP/spiral/regex) so the seed prompt doesn't saturate at 1.000."
+
+[base]
+config = "gepa.toml"
+run_id = "tblite_blog_compare"
+
+[policy]
+provider = "openai"
+model = "gpt-4.1-nano"
+api_key_env = "OPENAI_API_KEY"
+
+[proposer]
+model = "gpt-5.4-nano"
+auth_mode = "api_key"
+api_key_env = "OPENAI_API_KEY"
+copy_host_auth = false
+
+[task]
+test_timeout_seconds = 30
+
+[dataset]
+train_size = 8
+heldout_size = 5
+train_seed_start = 0
+heldout_seed_start = 100
+
+[pipeline]
+max_generations = 2
+proposals_per_generation = 4
+minibatch_size = 8
+max_in_flight_candidates = 4
+rollout_workers = 10
+rollout_chunk_size = "auto"
+
+[pipeline.adaptive_rollout_concurrency]
+enabled = true
+initial = 10
+min = 1
+max = 24
+increase_step = 4
+decrease_step = 4
+increase_after_successes = 16
+
+[budgets]
+# 8 train × 4 proposals × 2 generations + slack = ~80, +5 heldout × ~10 candidates = ~50
+train_rollouts = 200
+heldout_rollouts = 100
+
+[timeouts]
+container_http_seconds = 120
+rollout_http_retries = 0
