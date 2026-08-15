@@ -422,6 +422,8 @@ async def metadata() -> dict[str, Any]:
                 "gepa": {
                     "version": GEPA_OPTIMIZER_CONTRACT_VERSION,
                     "program_route": "/program",
+                    "taskset_route": "/taskset",
+                    "taskset_tasks_route": "/taskset/tasks",
                     "dataset_route": "/dataset",
                     "dataset_rows_route": "/dataset/rows",
                     "rollout_route": "/rollout",
@@ -560,6 +562,61 @@ async def dataset_rows(request: Request) -> dict[str, Any]:
     split = str(payload.get("split") or "train")
     seeds = [int(seed) for seed in payload.get("seeds") or []]
     return {"rows": [_row_for_seed(split=split, seed=seed) for seed in seeds]}
+
+
+@app.get("/taskset")
+async def taskset() -> dict[str, Any]:
+    """Expose the bounded Craftax episode pool through the GEPA v2 contract."""
+    return {
+        "taskset_id": f"{DATASET_ID}:v1",
+        "splits": {
+            "train": sum(1 for row in ROWS if row["split"] == "train"),
+            "test": sum(1 for row in ROWS if row["split"] == "test"),
+        },
+        "source": "crafter_public_episode_seeds",
+        "metadata": {
+            "task_id": TASK_ID,
+            "seed_semantics": "deterministic Craftax text-environment episode seed",
+        },
+    }
+
+
+@app.post("/taskset/tasks")
+async def taskset_tasks(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    split = str(payload.get("split") or "").strip()
+    if split not in {"train", "test"}:
+        raise HTTPException(status_code=422, detail="split must be train or test")
+    raw_task_ids = payload.get("task_ids")
+    if not isinstance(raw_task_ids, list) or not raw_task_ids:
+        raise HTTPException(status_code=422, detail="task_ids must be a non-empty list")
+    tasks = []
+    for raw_task_id in raw_task_ids:
+        task_id = str(raw_task_id).strip()
+        prefix = f"{split}:"
+        if not task_id.startswith(prefix):
+            raise HTTPException(
+                status_code=422,
+                detail=f"task_id {task_id!r} must start with {prefix!r}",
+            )
+        try:
+            seed = int(task_id[len(prefix) :])
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"task_id {task_id!r} must end in an integer seed",
+            ) from exc
+        row = _row_for_seed(split=split, seed=seed)
+        tasks.append(
+            {
+                "task_id": task_id,
+                "task_instance_id": f"craftax:{split}:{seed}",
+                "split": split,
+                "seed": seed,
+                "example_id": row["example_id"],
+            }
+        )
+    return {"tasks": tasks, "metadata": {"taskset_id": f"{DATASET_ID}:v1"}}
 
 
 @app.post("/rollout")
