@@ -29,8 +29,10 @@ First-time boot installs ~70 packages and processes Craftax textures
 
 ## Contract
 
-- `GET /metadata` advertises `synth_optimizers.gepa.v1`.
+- `GET /metadata` advertises `synth_optimizers.gepa.v2` and absolute routes.
 - `GET /program` exposes one mutable module: `react_system_prompt`.
+- `GET /taskset` describes the bounded episode-seed pool.
+- `POST /taskset/tasks` resolves explicit `train:<seed>` / `test:<seed>` IDs.
 - `POST /dataset/rows` returns episode seed rows (each row is a Craftax env seed).
 - `POST /rollout` runs a real episode:
   - Instantiates `CrafterTextEnv` (real Craftax env)
