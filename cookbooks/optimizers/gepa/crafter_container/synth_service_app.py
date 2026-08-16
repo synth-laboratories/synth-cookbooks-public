@@ -5,9 +5,14 @@ This container speaks the public synth-optimizers GEPA contract:
   GET  /metadata
   GET  /task_info
   GET  /program
+  GET  /taskset
+  POST /taskset/tasks
   GET  /dataset
   POST /dataset/rows
   POST /rollout
+  POST /rollouts/prepare
+  GET  /rollouts/{rollout_id}/events
+  GET  /reward
 
 Each rollout runs a real Craftax episode using the candidate's
 `react_system_prompt` as the system prompt for an OpenAI-driven agent.
@@ -19,15 +24,19 @@ Required env:
   CRAFTER_MAX_TURNS         — default: 20  (per-episode hard cap)
   CRAFTER_MIN_BATCH         — default: 1   (min actions per LLM call)
   CRAFTER_MAX_BATCH         — default: 5   (max actions per LLM call)
+  CRAFTER_STREAM_ROOT       — optional durable poll-stream journal directory.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import uvicorn
@@ -66,6 +75,9 @@ VALID_ACTIONS = [
 ]
 _ACTION_SET = set(VALID_ACTIONS)
 _TOOL_CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
+_STREAM_LOCK = threading.Lock()
+_STREAMS: dict[str, list[dict[str, Any]]] = {}
+_STREAM_SCHEMA = "synth.trace-stream-event.v1"
 
 DEFAULT_REACT_SYSTEM_PROMPT = (
     "You are controlling a Crafter survival agent. Each turn you see a compact "
@@ -87,6 +99,128 @@ ROWS = [
     {"seed": 101, "split": "test", "example_id": "ep_heldout_101"},
     {"seed": 103, "split": "test", "example_id": "ep_heldout_103"},
 ]
+
+
+def _stream_id(rollout_id: str) -> str:
+    return f"stream:{rollout_id}"
+
+
+def _stream_descriptor(rollout_id: str) -> dict[str, Any]:
+    return {
+        "schema": "synth.rollout.stream.v1",
+        "id": _stream_id(rollout_id),
+        "stream.id": _stream_id(rollout_id),
+        "transports": {
+            "poll": {"url": f"/rollouts/{rollout_id}/events"},
+            "sse": None,
+            "websocket": None,
+        },
+        "cursor": {"kind": "sequence", "producer_kind": None},
+        "reward": {"url": f"/reward?rollout_id={rollout_id}"},
+        "auth": {"mode": "none"},
+        "retention": "run",
+    }
+
+
+def _stream_root() -> Path:
+    configured = os.environ.get("CRAFTER_STREAM_ROOT", "").strip()
+    return Path(configured) if configured else Path.cwd() / ".crafter-streams"
+
+
+def _stream_path(rollout_id: str) -> Path:
+    digest = hashlib.sha256(rollout_id.encode("utf-8")).hexdigest()
+    return _stream_root() / f"{digest}.jsonl"
+
+
+def _load_stream(rollout_id: str) -> list[dict[str, Any]]:
+    cached = _STREAMS.get(rollout_id)
+    if cached is not None:
+        return cached
+    path = _stream_path(rollout_id)
+    items: list[dict[str, Any]] = []
+    expected_sequence = 1
+    if path.is_file():
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            if item.get("schema") != _STREAM_SCHEMA or item.get("rollout_id") != rollout_id:
+                raise RuntimeError(f"invalid rollout stream identity at {path}:{line_number}")
+            sequence = item.get("sequence")
+            if sequence is None:
+                if item.get("kind") != "stream.subscribed" or item.get("control") is not True:
+                    raise RuntimeError(f"invalid rollout control record at {path}:{line_number}")
+            else:
+                if sequence != expected_sequence or item.get("control") is not False:
+                    raise RuntimeError(f"rollout stream sequence gap at {path}:{line_number}")
+                expected_sequence += 1
+            items.append(item)
+    _STREAMS[rollout_id] = items
+    return items
+
+
+def _persist_stream_item(rollout_id: str, item: dict[str, Any]) -> None:
+    path = _stream_path(rollout_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(item, sort_keys=True, separators=(",", ":"), default=str)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(encoded)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _ensure_stream(rollout_id: str) -> dict[str, Any]:
+    with _STREAM_LOCK:
+        items = _load_stream(rollout_id)
+        if not any(item.get("kind") == "stream.subscribed" for item in items):
+            subscribed = {
+                "schema": _STREAM_SCHEMA,
+                "kind": "stream.subscribed",
+                "event_id": "stream.subscribed",
+                "sequence": None,
+                "control": True,
+                "slot": "stream",
+                "stream_id": _stream_id(rollout_id),
+                "rollout_id": rollout_id,
+                "ts": _now(),
+                "ready": True,
+                "payload": {
+                    "type": "stream.subscribed",
+                    "stream.id": _stream_id(rollout_id),
+                    "rollout_id": rollout_id,
+                    "next_sequence": 1,
+                    "ready": True,
+                },
+            }
+            _persist_stream_item(rollout_id, subscribed)
+            items.append(subscribed)
+    return _stream_descriptor(rollout_id)
+
+
+def _append_stream_event(rollout_id: str, kind: str, payload: dict[str, Any]) -> None:
+    with _STREAM_LOCK:
+        items = _load_stream(rollout_id)
+        high_water = max(
+            (int(item["sequence"]) for item in items if item.get("sequence") is not None),
+            default=0,
+        )
+        item = {
+            "schema": _STREAM_SCHEMA,
+            "kind": kind,
+            "event_id": high_water + 1,
+            "sequence": high_water + 1,
+            "control": False,
+            "slot": "stream",
+            "stream_id": _stream_id(rollout_id),
+            "rollout_id": rollout_id,
+            "run_id": rollout_id,
+            "lane": rollout_id,
+            "ts": _now(),
+            "payload": dict(payload),
+        }
+        _persist_stream_item(rollout_id, item)
+        items.append(item)
 
 
 # --- OpenAI client (lazy) -----------------------------------------------------
@@ -422,6 +556,8 @@ async def metadata() -> dict[str, Any]:
                 "gepa": {
                     "version": GEPA_OPTIMIZER_CONTRACT_VERSION,
                     "program_route": "/program",
+                    "taskset_route": "/taskset",
+                    "taskset_tasks_route": "/taskset/tasks",
                     "dataset_route": "/dataset",
                     "dataset_rows_route": "/dataset/rows",
                     "rollout_route": "/rollout",
@@ -554,6 +690,48 @@ async def dataset() -> dict[str, Any]:
     }
 
 
+@app.get("/taskset")
+async def taskset() -> dict[str, Any]:
+    return {
+        "taskset_id": DATASET_ID,
+        "splits": {
+            split: [f"{split}:{row['seed']}" for row in ROWS if row["split"] == split]
+            for split in ("train", "test")
+        },
+        "source": "crafter_public_episode_seeds",
+    }
+
+
+@app.post("/taskset/tasks")
+async def taskset_tasks(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    split = str(payload.get("split") or "train")
+    task_ids = payload.get("task_ids") or []
+    if not isinstance(task_ids, list) or not all(
+        isinstance(task_id, str) for task_id in task_ids
+    ):
+        raise HTTPException(status_code=422, detail="task_ids must be a list of strings.")
+
+    tasks = []
+    for task_id in task_ids:
+        prefix, separator, raw_seed = task_id.rpartition(":")
+        if not separator:
+            raise HTTPException(
+                status_code=422,
+                detail=f"task_id must end in an integer seed: {task_id!r}",
+            )
+        try:
+            seed = int(raw_seed)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"task_id must end in an integer seed: {task_id!r}",
+            ) from exc
+        row = _row_for_seed(split=prefix or split, seed=seed)
+        tasks.append({"task_id": task_id, **row})
+    return {"tasks": tasks, "metadata": {"split": split}}
+
+
 @app.post("/dataset/rows")
 async def dataset_rows(request: Request) -> dict[str, Any]:
     payload = await request.json()
@@ -566,6 +744,21 @@ async def dataset_rows(request: Request) -> dict[str, Any]:
 @app.post("/rollouts")
 def rollout(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
     payload = payload or {}
+    telemetry = payload.get("telemetry") if isinstance(payload.get("telemetry"), dict) else {}
+    transport = str(telemetry.get("transport") or "poll").strip().lower()
+    if transport == "auto":
+        raise HTTPException(status_code=422, detail="telemetry.transport=auto is forbidden")
+    if transport not in {"", "poll"}:
+        raise HTTPException(status_code=422, detail=f"unsupported telemetry transport: {transport}")
+    submission_mode = str(payload.get("submission_mode") or "sync").strip().lower()
+    if submission_mode != "sync":
+        raise HTTPException(status_code=422, detail="only submission_mode=sync is supported")
+    rollout_id = str(
+        payload.get("rollout_id")
+        or payload.get("trace_correlation_id")
+        or f"rollout_{uuid.uuid4().hex[:12]}"
+    )
+    stream = _ensure_stream(rollout_id)
     policy = _require_policy(payload)
     row = payload.get("dataset_row") if isinstance(payload.get("dataset_row"), dict) else None
     if not row:
@@ -580,9 +773,8 @@ def rollout(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, An
     episode = _run_episode(seed=seed, system_prompt=system_prompt, policy=policy)
     reward = float(episode["total_reward"])
 
-    rollout_id = str(payload.get("rollout_id") or f"rollout_{uuid.uuid4().hex[:12]}")
     now = _now()
-    return {
+    response = {
         "rollout_id": rollout_id,
         "status": "completed",
         "success_status": "succeeded" if reward > 0 else "failed",
@@ -624,8 +816,85 @@ def rollout(payload: dict[str, Any] | None = Body(default=None)) -> dict[str, An
             },
         },
         "metadata": {"candidate": candidate},
+        "stream": stream,
         "created_at": now,
         "updated_at": now,
+    }
+    _append_stream_event(
+        rollout_id,
+        "rollout.completed",
+        {"status": "completed", "reward": reward},
+    )
+    return response
+
+
+@app.post("/rollouts/prepare")
+async def prepare_rollout(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    telemetry = payload.get("telemetry") if isinstance(payload.get("telemetry"), dict) else {}
+    transport = str(telemetry.get("transport") or "poll").strip().lower()
+    if transport == "auto":
+        raise HTTPException(status_code=422, detail="telemetry.transport=auto is forbidden")
+    if transport not in {"", "poll"}:
+        raise HTTPException(status_code=422, detail=f"unsupported telemetry transport: {transport}")
+    rollout_id = str(
+        payload.get("rollout_id")
+        or payload.get("trace_correlation_id")
+        or f"rollout_{uuid.uuid4().hex[:12]}"
+    )
+    return {"rollout_id": rollout_id, "status": "prepared", "stream": _ensure_stream(rollout_id)}
+
+
+@app.get("/rollouts/{rollout_id}/events")
+async def rollout_events(rollout_id: str, after: int = 0) -> dict[str, Any]:
+    if after < 0:
+        raise HTTPException(status_code=422, detail="after must be non-negative")
+    with _STREAM_LOCK:
+        items = list(_load_stream(rollout_id))
+    if not items:
+        raise HTTPException(status_code=404, detail=f"unknown_rollout:{rollout_id}")
+    high_water = max(
+        (int(item["sequence"]) for item in items if item.get("sequence") is not None),
+        default=0,
+    )
+    visible = [
+        item
+        for item in items
+        if (item.get("sequence") is None and after == 0)
+        or (item.get("sequence") is not None and int(item["sequence"]) > after)
+    ]
+    return {
+        "rollout_id": rollout_id,
+        "stream.id": _stream_id(rollout_id),
+        "cursor": {"kind": "sequence", "after": after, "high_water": high_water},
+        "events": visible,
+    }
+
+
+@app.get("/reward")
+async def reward(rollout_id: str) -> dict[str, Any]:
+    with _STREAM_LOCK:
+        items = list(_load_stream(rollout_id))
+    completed = next(
+        (item for item in reversed(items) if item.get("kind") == "rollout.completed"),
+        None,
+    )
+    value = completed.get("payload", {}).get("reward") if completed else None
+    return {
+        "execution_id": f"eval_{rollout_id}",
+        "rollout_id": rollout_id,
+        "status": "scored" if value is not None else "running",
+        "reward": value,
+        "node_results": [] if value is None else [
+            {
+                "node_id": "craftax_total_reward",
+                "kind": "env_reward",
+                "authority": "environment",
+                "status": "scored",
+                "value": value,
+                "evidence_refs": [{"kind": "rollout", "id": rollout_id}],
+            }
+        ],
     }
 
 
