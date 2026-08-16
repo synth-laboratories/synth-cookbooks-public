@@ -13,7 +13,8 @@ No fixture, no string-matching scorer. Each rollout costs real model tokens.
 - `OPENAI_API_KEY` — passed through to the container process.
 - Optional: `CRAFTER_POLICY_MODEL` (default `gpt-4.1-nano`),
   `CRAFTER_MAX_TURNS` (default `20`), `CRAFTER_MIN_BATCH` (default `1`),
-  `CRAFTER_MAX_BATCH` (default `5`).
+  `CRAFTER_MAX_BATCH` (default `5`), and `CRAFTER_STREAM_ROOT` (default
+  `.crafter-streams` in the service working directory).
 
 ## Per-container dependencies
 
@@ -27,13 +28,16 @@ does **not** require dependencies for other cookbooks.
 First-time boot installs ~70 packages and processes Craftax textures
 (~30s). Cached for subsequent runs.
 
-## Contract
+## GEPA v2 contract
 
-- `GET /metadata` advertises `synth_optimizers.gepa.v2` and absolute routes.
+- `GET /metadata` advertises `synth_optimizers.gepa.v2` and its absolute
+  program, taskset, task-loading, and rollout routes.
 - `GET /program` exposes one mutable module: `react_system_prompt`.
 - `GET /taskset` describes the bounded episode-seed pool.
-- `POST /taskset/tasks` resolves explicit `train:<seed>` / `test:<seed>` IDs.
-- `POST /dataset/rows` returns episode seed rows (each row is a Craftax env seed).
+- `POST /taskset/tasks` resolves stable identifiers such as `train:11` and
+  returns those exact identifiers with each episode seed row.
+- `POST /dataset/rows` and the other older dataset routes remain available for
+  compatibility clients.
 - `POST /rollout` runs a real episode:
   - Instantiates `CrafterTextEnv` (real Craftax env)
   - Resets with the row's seed
@@ -42,7 +46,12 @@ First-time boot installs ~70 packages and processes Craftax textures
       a compact text observation as user, and the `crafter_interact` tool.
     - Parses native tool calls (or `<tool_call>` XML fallback) into actions.
     - Steps the env once per action; accumulates real env reward.
-  - Returns `reward_info.outcome_reward = total_episode_reward`.
+  - Returns `reward_info.outcome_reward = total_episode_reward` and a
+    `synth.rollout.stream.v1` descriptor.
+- `POST /rollouts/prepare`, `GET /rollouts/{rollout_id}/events`, and
+  `GET /reward` expose the poll transport and authoritative environment reward.
+  The sequence journal is fsynced under `CRAFTER_STREAM_ROOT`, beginning with a
+  non-advancing `stream.subscribed` control record.
 
 ## Cost notes
 
