@@ -1,0 +1,83 @@
+[run]
+run_id = "minigrid_concurrent"
+output_dir = "runs"
+seed = 0
+
+[container]
+url = "http://127.0.0.1:24054"
+command = [
+  "/usr/bin/env",
+  "MINIGRID_POLICY_MODEL=gpt-5.4-mini",
+  "MINIGRID_MAX_STEPS=24",
+  "MINIGRID_ENV_ID=MiniGrid-Empty-Random-6x6-v0",
+  "uv", "run", "--project", "minigrid_container",
+  "python", "minigrid_container/synth_service_app.py",
+  "--host", "127.0.0.1", "--port", "24054",
+]
+cwd = "."
+startup_timeout_seconds = 180
+
+[dataset]
+train_split = "train"
+heldout_split = "test"
+# Keep budgets small by default — each episode is ~10-48 OpenAI calls.
+train_seeds = [
+  4175906051, 4175906052, 4175906053, 4175906054, 4175906055, 4175906056, 4175906057, 4175906058
+]
+heldout_seeds = [
+  547107527, 547107528, 547107529, 547107530, 547107531, 547107532, 547107533, 547107534
+]
+
+[candidate]
+target_modules = ["system_prompt"]
+
+[seed_candidate]
+system_prompt = "You are a MiniGrid agent. Each turn you see a compact text description of the gridworld (mission, your position/direction, what you're carrying, visible objects, admissible actions). Respond ONLY with strict JSON of the form: {\"action\": \"<one admissible action name>\"}. Choose actions that make real progress toward the mission. Pick up keys before trying to open locked doors. Use toggle to open doors. Use forward to move in your current direction."
+
+[policy]
+provider = "openai"
+model = "gpt-5.4-mini"
+api_key_env = "OPENAI_API_KEY"
+
+[proposer]
+backend = "codex_app_server"
+execution_mode = "local_process"
+timeout_seconds = 900
+model = "gpt-5.4-nano"
+reasoning_effort = "medium"
+auth_mode = "api_key"
+copy_host_auth = false
+api_key_env = "OPENAI_API_KEY"
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+
+[gepa]
+rollout_async_timeout_seconds = 600
+max_heldout_rollouts = 16
+max_train_rollouts = 80
+max_generations = 1
+proposals_per_generation = 3
+minibatch_size = 4
+max_total_rollouts = 96
+max_cost_usd = 0.0
+
+[gepa.pipeline]
+mode = "async_pipelined"
+max_in_flight_candidates = 3
+
+[gepa.pipeline.workers]
+rollout = 10
+
+[gepa.pipeline.adaptive_rollout_concurrency]
+enabled = true
+initial = 10
+min = 10
+max = 30
+increase_step = 5
+decrease_step = 5
+increase_after_successes = 20
+
+[cache]
+mode = "readwrite"
+path = "runs/minigrid_concurrent.sqlite"
+namespace = "minigrid_concurrent"

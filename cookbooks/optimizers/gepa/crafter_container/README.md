@@ -33,9 +33,11 @@ First-time boot installs ~70 packages and processes Craftax textures
 - `GET /metadata` advertises `synth_optimizers.gepa.v2` and its absolute
   program, taskset, task-loading, and rollout routes.
 - `GET /program` exposes one mutable module: `react_system_prompt`.
-- `GET /taskset` and `POST /taskset/tasks` expose stable identifiers such as
-  `train:11` and return those exact identifiers with each episode seed row.
-- The older dataset routes remain available for compatibility clients.
+- `GET /taskset` describes the bounded episode-seed pool.
+- `POST /taskset/tasks` resolves stable identifiers such as `train:11` and
+  returns those exact identifiers with each episode seed row.
+- `POST /dataset/rows` and the other older dataset routes remain available for
+  compatibility clients.
 - `POST /rollout` runs a real episode:
   - Instantiates `CrafterTextEnv` (real Craftax env)
   - Resets with the row's seed
