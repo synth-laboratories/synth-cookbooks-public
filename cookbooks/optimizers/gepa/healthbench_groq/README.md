@@ -53,5 +53,12 @@ optimizer event stream used by Workshop's right-panel visual.
 `gepa.toml` is the reviewed current profile. The dated `*.sdk.toml` files are
 historical experiment records and should not be copied as defaults.
 
+`eval_smoke.toml` is a bounded, zero-generation baseline receipt: two train and
+two heldout examples, two parallel rollout workers, a `$0.50` hard ceiling, and
+no proposer calls. It intentionally uses an OpenAI mini policy plus the
+canonical OpenAI grader so one healthy credential can validate both independent
+model lanes. It measures execution and baseline quality only; it cannot establish
+optimizer uplift.
+
 See [`../CONTAINER_ENGINEERING.md`](../CONTAINER_ENGINEERING.md) for the shared
 quality standard and paid-run preflight.
