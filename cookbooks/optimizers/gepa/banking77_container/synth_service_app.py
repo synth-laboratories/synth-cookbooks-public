@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
+import json
 import os
 import random
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 # Live OpenAI-compatible policy is supplied per rollout through request.policy.
 try:
@@ -32,6 +36,12 @@ ROLLOUT_TIMEOUT_SECONDS = float(
     os.environ.get("BANKING77_ROLLOUT_TIMEOUT_SECONDS", str(POLICY_TIMEOUT_SECONDS + 5))
 )
 DEFAULT_POLICY_MAX_TOKENS = 16
+DESKTOP_EVAL_POLICY_REF = {
+    "harness": "desktop_eval",
+    "config": "banking77_gpt_4_1_nano",
+    "model": "openai/gpt-4.1-nano",
+    "auth": "openrouter",
+}
 _openai_clients: dict[tuple[str, str, str], Any] = {}
 _openai_semaphore: asyncio.Semaphore | None = None
 _RAW_CREDENTIAL_KEYS = {
@@ -79,10 +89,29 @@ def _strip_openai_endpoint_suffix(url: str) -> str:
 def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
     policy = payload.get("policy")
     if not isinstance(policy, dict):
-        raise HTTPException(
-            status_code=422,
-            detail="rollout.policy is required for GEPA optimizer contract v2.",
-        )
+        policy_ref = payload.get("policy_ref") or payload.get("policyRef")
+        if not isinstance(policy_ref, dict) or any(
+            policy_ref.get(field) != DESKTOP_EVAL_POLICY_REF[field]
+            for field in ("harness", "config")
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "rollout.policy is required for GEPA optimizer contract v2; "
+                    "prepared Desktop evals must use the advertised policy_ref."
+                ),
+            )
+        policy = {
+            "provider": "openrouter",
+            "model": DESKTOP_EVAL_POLICY_REF["model"],
+            "api_family": "chat_completions",
+            "base_url": "https://openrouter.ai/api/v1",
+            "credential_mode": "byok",
+            "max_tokens": int(os.environ.get("BANKING77_POLICY_MAX_TOKENS", "64")),
+            "disable_reasoning": os.environ.get(
+                "BANKING77_POLICY_DISABLE_REASONING", "auto"
+            ),
+        }
     raw_key = _find_raw_credential_key(policy.get("config", {}))
     if raw_key is not None:
         raise HTTPException(
@@ -124,7 +153,11 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
             status_code=422,
             detail="rollout.policy.inference_url is required when credential_mode=proxy.",
         )
-    if provider.lower() == "openrouter" and credential_mode == "byok" and not raw_base_url:
+    if (
+        provider.lower() == "openrouter"
+        and credential_mode == "byok"
+        and not raw_base_url
+    ):
         raise HTTPException(
             status_code=422,
             detail="rollout.policy.base_url is required for provider=openrouter.",
@@ -148,7 +181,9 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
         "provider": provider,
         "model": model,
         "api_family": api_family,
-        "base_url": _strip_openai_endpoint_suffix(raw_base_url) if raw_base_url else None,
+        "base_url": (
+            _strip_openai_endpoint_suffix(raw_base_url) if raw_base_url else None
+        ),
         "credential_mode": credential_mode,
         "max_tokens": max_tokens,
         "disable_reasoning": disable_reasoning,
@@ -158,7 +193,11 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
 def _policy_api_key(policy: dict[str, Any]) -> str:
     if policy["credential_mode"] == "proxy":
         return "proxy"
-    env_name = "OPENROUTER_API_KEY" if policy["provider"].lower() == "openrouter" else "OPENAI_API_KEY"
+    env_name = (
+        "OPENROUTER_API_KEY"
+        if policy["provider"].lower() == "openrouter"
+        else "OPENAI_API_KEY"
+    )
     api_key = os.environ.get(env_name, "").strip()
     if api_key:
         return api_key
@@ -181,7 +220,10 @@ def _get_openai_client(policy: dict[str, Any]) -> Any:
     key = (policy["provider"].lower(), policy["credential_mode"], str(base_url or ""))
     client = _openai_clients.get(key)
     if client is None:
-        client_kwargs = {"api_key": _policy_api_key(policy), "timeout": POLICY_TIMEOUT_SECONDS}
+        client_kwargs = {
+            "api_key": _policy_api_key(policy),
+            "timeout": POLICY_TIMEOUT_SECONDS,
+        }
         if base_url:
             client_kwargs["base_url"] = base_url
         client = AsyncOpenAI(**client_kwargs)
@@ -225,6 +267,7 @@ def _policy_chat_extra_body(policy: dict[str, Any]) -> dict[str, Any] | None:
         "chat_template_kwargs": {"enable_thinking": False},
     }
 
+
 try:
     from synth_containers import GEPA_OPTIMIZER_CONTRACT_VERSION
 except Exception:
@@ -244,10 +287,13 @@ TEST_SHUFFLE_SEED = int(os.environ.get("BANKING77_TEST_SHUFFLE_SEED", "2003"))
 def _load_banking77_rows() -> tuple[list[str], list[dict[str, Any]]]:
     """Load deterministic mixed PolyAI/banking77 train+test slices."""
     from datasets import load_dataset
+
     ds = load_dataset("PolyAI/banking77", trust_remote_code=True)
     label_names: list[str] = list(ds["train"].features["label"].names)
 
-    def mixed_rows(split_name: str, sample_size: int, shuffle_seed: int) -> list[dict[str, Any]]:
+    def mixed_rows(
+        split_name: str, sample_size: int, shuffle_seed: int
+    ) -> list[dict[str, Any]]:
         split = ds[split_name]
         grouped: dict[int, list[int]] = {idx: [] for idx in range(len(label_names))}
         for source_index, ex in enumerate(split):
@@ -272,13 +318,15 @@ def _load_banking77_rows() -> tuple[list[str], list[dict[str, Any]]]:
         rows: list[dict[str, Any]] = []
         for seed, source_index in enumerate(selected):
             ex = split[source_index]
-            rows.append({
-                "seed": seed,
-                "source_index": source_index,
-                "split": split_name,
-                "text": str(ex["text"]),
-                "label": label_names[int(ex["label"])],
-            })
+            rows.append(
+                {
+                    "seed": seed,
+                    "source_index": source_index,
+                    "split": split_name,
+                    "text": str(ex["text"]),
+                    "label": label_names[int(ex["label"])],
+                }
+            )
         return rows
 
     rows = []
@@ -365,7 +413,215 @@ BANKING77_PROPOSER_HINTS = {
 app = FastAPI(title="banking77-gepa-container")
 _ASYNC_ROLLOUTS: dict[str, dict[str, Any]] = {}
 _ASYNC_ROLLOUT_LOCK = asyncio.Lock()
+_STREAM_LOCK = asyncio.Lock()
+_STREAMS: dict[str, list[dict[str, Any]]] = {}
 _TERMINAL_ROLLOUT_STATUSES = {"completed", "failed", "cancelled"}
+_STREAM_SCHEMA = "synth.trace-stream-event.v1"
+_ROLLOUT_RECORD_SCHEMA = "synth.banking77-rollout-record.v1"
+
+
+def _stream_id(rollout_id: str) -> str:
+    return f"stream:{rollout_id}"
+
+
+def _stream_descriptor(rollout_id: str) -> dict[str, Any]:
+    return {
+        "schema": "synth.rollout.stream.v1",
+        "id": _stream_id(rollout_id),
+        "stream.id": _stream_id(rollout_id),
+        "transports": {
+            "poll": {"url": f"/rollouts/{rollout_id}/events"},
+            "sse": {"url": f"/rollouts/{rollout_id}/events/sse"},
+            "websocket": None,
+        },
+        "cursor": {"kind": "sequence", "producer_kind": None},
+        "reward": {"url": f"/reward?rollout_id={rollout_id}"},
+        "auth": {"mode": "none"},
+        "retention": "run",
+    }
+
+
+def _stream_root() -> Path:
+    configured = os.environ.get("BANKING77_STREAM_ROOT", "").strip()
+    return Path(configured) if configured else Path.cwd() / ".banking77-streams"
+
+
+def _stream_path(rollout_id: str) -> Path:
+    digest = hashlib.sha256(rollout_id.encode("utf-8")).hexdigest()
+    return _stream_root() / f"{digest}.jsonl"
+
+
+def _rollout_record_path(rollout_id: str) -> Path:
+    digest = hashlib.sha256(rollout_id.encode("utf-8")).hexdigest()
+    return _stream_root() / "records" / f"{digest}.json"
+
+
+def _load_rollout_record(rollout_id: str) -> dict[str, Any] | None:
+    cached = _ASYNC_ROLLOUTS.get(rollout_id)
+    if cached is not None:
+        return dict(cached)
+    path = _rollout_record_path(rollout_id)
+    if not path.is_file():
+        return None
+    envelope = json.loads(path.read_text(encoding="utf-8"))
+    if (
+        envelope.get("schema") != _ROLLOUT_RECORD_SCHEMA
+        or envelope.get("rollout_id") != rollout_id
+        or not isinstance(envelope.get("record"), dict)
+    ):
+        raise RuntimeError(f"invalid rollout record identity at {path}")
+    record = dict(envelope["record"])
+    _ASYNC_ROLLOUTS[rollout_id] = record
+    return dict(record)
+
+
+def _persist_rollout_record(record: dict[str, Any]) -> None:
+    rollout_id = str(record.get("rollout_id") or "").strip()
+    if not rollout_id:
+        raise RuntimeError("rollout record is missing rollout_id")
+    path = _rollout_record_path(rollout_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    envelope = {
+        "schema": _ROLLOUT_RECORD_SCHEMA,
+        "rollout_id": rollout_id,
+        "record": record,
+    }
+    encoded = json.dumps(envelope, sort_keys=True, separators=(",", ":"), default=str)
+    temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            handle.write(encoded)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _store_rollout_record(record: dict[str, Any]) -> None:
+    rollout_id = str(record.get("rollout_id") or "").strip()
+    _persist_rollout_record(record)
+    _ASYNC_ROLLOUTS[rollout_id] = dict(record)
+
+
+def _load_stream(rollout_id: str) -> list[dict[str, Any]]:
+    cached = _STREAMS.get(rollout_id)
+    if cached is not None:
+        return cached
+    path = _stream_path(rollout_id)
+    items: list[dict[str, Any]] = []
+    expected_sequence = 1
+    if path.is_file():
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            if (
+                item.get("schema") != _STREAM_SCHEMA
+                or item.get("rollout_id") != rollout_id
+            ):
+                raise RuntimeError(
+                    f"invalid rollout stream identity at {path}:{line_number}"
+                )
+            sequence = item.get("sequence")
+            if sequence is None:
+                if (
+                    item.get("kind") != "stream.subscribed"
+                    or item.get("control") is not True
+                ):
+                    raise RuntimeError(
+                        f"invalid rollout control record at {path}:{line_number}"
+                    )
+            else:
+                if sequence != expected_sequence or item.get("control") is not False:
+                    raise RuntimeError(
+                        f"rollout stream sequence gap at {path}:{line_number}"
+                    )
+                expected_sequence += 1
+            items.append(item)
+    _STREAMS[rollout_id] = items
+    return items
+
+
+def _persist_stream_item(rollout_id: str, item: dict[str, Any]) -> None:
+    path = _stream_path(rollout_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(item, sort_keys=True, separators=(",", ":"), default=str)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(encoded)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+async def _ensure_stream(rollout_id: str) -> dict[str, Any]:
+    async with _STREAM_LOCK:
+        items = _load_stream(rollout_id)
+        if not any(item.get("kind") == "stream.subscribed" for item in items):
+            subscribed = {
+                "schema": _STREAM_SCHEMA,
+                "kind": "stream.subscribed",
+                "event_id": "stream.subscribed",
+                "sequence": None,
+                "control": True,
+                "slot": "stream",
+                "stream_id": _stream_id(rollout_id),
+                "rollout_id": rollout_id,
+                "ts": _now(),
+                "ready": True,
+                "payload": {
+                    "type": "stream.subscribed",
+                    "stream.id": _stream_id(rollout_id),
+                    "rollout_id": rollout_id,
+                    "next_sequence": 1,
+                    "ready": True,
+                },
+            }
+            _persist_stream_item(rollout_id, subscribed)
+            items.append(subscribed)
+    return _stream_descriptor(rollout_id)
+
+
+async def _append_stream_event(
+    rollout_id: str, kind: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    async with _STREAM_LOCK:
+        items = _load_stream(rollout_id)
+        high_water = max(
+            (
+                int(item["sequence"])
+                for item in items
+                if item.get("sequence") is not None
+            ),
+            default=0,
+        )
+        sequence = high_water + 1
+        item = {
+            "schema": _STREAM_SCHEMA,
+            "kind": kind,
+            "event_id": sequence,
+            "sequence": sequence,
+            "control": False,
+            "slot": "stream",
+            "stream_id": _stream_id(rollout_id),
+            "rollout_id": rollout_id,
+            "run_id": rollout_id,
+            "lane": rollout_id,
+            "ts": _now(),
+            "payload": dict(payload),
+        }
+        _persist_stream_item(rollout_id, item)
+        items.append(item)
+        return item
 
 
 @app.get("/health")
@@ -383,8 +639,18 @@ async def metadata() -> dict[str, Any]:
             "description": "Public prompt-optimizer cookbook for Banking77 with a live OpenAI-compatible policy model.",
         },
         "capabilities": {
+            "protocol": "synth.container.live-eval.v1",
+            "operations": {
+                "rollouts.prepare": True,
+                "rollouts.start_prepared": True,
+                "rollouts.get": True,
+                "rollouts.poll": True,
+                "reward.get": True,
+                "trace_v5.capture": False,
+            },
+            "policy_refs": [DESKTOP_EVAL_POLICY_REF],
             "contract_version": "container_contract.v1",
-            "rollout_modes": ["blocking"],
+            "rollout_modes": ["blocking", "async"],
             "metadata": {},
         },
         "metadata": {
@@ -392,11 +658,60 @@ async def metadata() -> dict[str, Any]:
                 "gepa": {
                     "version": GEPA_OPTIMIZER_CONTRACT_VERSION,
                     "program_route": "/program",
+                    "taskset_route": "/taskset",
+                    "taskset_tasks_route": "/taskset/tasks",
                     "dataset_route": "/dataset",
                     "dataset_rows_route": "/dataset/rows",
                     "rollout_route": "/rollout",
                 }
+            },
+            "task_catalog_route": "/task_catalog",
+        },
+    }
+
+
+@app.get("/task_catalog")
+async def task_catalog() -> dict[str, Any]:
+    return {
+        "catalog_id": "banking77_public_rows:catalog",
+        "tasks": [
+            {
+                "task_id": TASK_ID,
+                "task_name": "Banking77 intent classification",
+                "task_family": "banking77",
+                "description": "Classify a customer banking question into one Banking77 label.",
+                "benchmark": "PolyAI/banking77",
+                "metadata": {
+                    "primary_metric": "classification_accuracy",
+                    "label_count": len(LABELS),
+                },
             }
+        ],
+        "instances": [
+            {
+                "task_instance_id": f"banking77:{row['split']}:{row['seed']}",
+                "task_id": TASK_ID,
+                "split": row["split"],
+                "tags": ["banking77", row["split"], row["label"]],
+                "metadata": {
+                    "seed": row["seed"],
+                    "source_index": row["source_index"],
+                    "input": row["text"],
+                    "output_label": row["label"],
+                },
+            }
+            for row in ROWS
+        ],
+        "metadata": {
+            "dataset_id": "banking77_public_rows",
+            "instance_count": len(ROWS),
+            "filterable_fields": [
+                "split",
+                "tags",
+                "metadata.output_label",
+                "metadata.seed",
+                "metadata.source_index",
+            ],
         },
     }
 
@@ -503,17 +818,79 @@ async def dataset_rows(request: Request) -> dict[str, Any]:
     return {"rows": selected}
 
 
+@app.get("/taskset")
+async def taskset() -> dict[str, Any]:
+    """Expose the current GEPA v2 taskset contract over the pinned row sample."""
+    return {
+        "taskset_id": "banking77_public_rows:v1",
+        "splits": {
+            "train": sum(1 for row in ROWS if row["split"] == "train"),
+            "test": sum(1 for row in ROWS if row["split"] == "test"),
+        },
+        "labels": LABELS,
+        "source": "PolyAI/banking77",
+        "metadata": {
+            "train_shuffle_seed": TRAIN_SHUFFLE_SEED,
+            "test_shuffle_seed": TEST_SHUFFLE_SEED,
+        },
+    }
+
+
+@app.post("/taskset/tasks")
+async def taskset_tasks(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    split = str(payload.get("split") or "").strip()
+    if split not in {"train", "test"}:
+        raise HTTPException(status_code=422, detail="split must be train or test")
+    raw_task_ids = payload.get("task_ids")
+    if not isinstance(raw_task_ids, list) or not raw_task_ids:
+        raise HTTPException(status_code=422, detail="task_ids must be a non-empty list")
+    tasks = []
+    for raw_task_id in raw_task_ids:
+        task_id = str(raw_task_id).strip()
+        prefix = f"{split}:"
+        if not task_id.startswith(prefix):
+            raise HTTPException(
+                status_code=422,
+                detail=f"task_id {task_id!r} must start with {prefix!r}",
+            )
+        try:
+            seed = int(task_id[len(prefix) :])
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"task_id {task_id!r} must end in an integer seed",
+            ) from exc
+        row = _row_for_seed(split=split, seed=seed)
+        tasks.append(
+            {
+                "task_id": task_id,
+                "task_instance_id": f"banking77:{split}:{seed}",
+                "split": split,
+                "seed": seed,
+                "text": row["text"],
+                "label": row["label"],
+                "source_index": row["source_index"],
+            }
+        )
+    return {"tasks": tasks, "metadata": {"taskset_id": "banking77_public_rows:v1"}}
+
+
 @app.post("/rollout")
 @app.post("/rollouts")
 async def rollout(request: Request) -> dict[str, Any]:
     payload = await request.json()
-    submission_mode = str(payload.get("submission_mode") or "sync").strip().lower()
-    if submission_mode == "sync":
-        return await _execute_rollout_payload_with_timeout(payload)
-    if submission_mode != "async":
+    telemetry = (
+        payload.get("telemetry") if isinstance(payload.get("telemetry"), dict) else {}
+    )
+    transport = str(telemetry.get("transport") or "poll").strip().lower()
+    if transport == "auto":
         raise HTTPException(
-            status_code=400,
-            detail="submission_mode must be one of: sync, async",
+            status_code=422, detail="telemetry.transport=auto is forbidden"
+        )
+    if transport not in {"", "poll", "sse"}:
+        raise HTTPException(
+            status_code=422, detail=f"unsupported telemetry transport: {transport}"
         )
     rollout_id = str(
         payload.get("rollout_id")
@@ -521,6 +898,60 @@ async def rollout(request: Request) -> dict[str, Any]:
         or f"rollout_{uuid.uuid4().hex[:12]}"
     )
     payload = {**payload, "rollout_id": rollout_id}
+    stream = await _ensure_stream(rollout_id)
+    submission_mode = str(payload.get("submission_mode") or "sync").strip().lower()
+    async with _ASYNC_ROLLOUT_LOCK:
+        existing = _load_rollout_record(rollout_id)
+    if existing is not None:
+        return existing
+    if submission_mode == "sync":
+        now = _now()
+        running = {
+            "rollout_id": rollout_id,
+            "status": "running",
+            "success_status": "running",
+            "status_detail": "running",
+            "task_id": TASK_ID,
+            "seed": int(payload.get("seed") or 0),
+            "summary": {},
+            "usage": {},
+            "metadata": {"submission_mode": "sync"},
+            "stream": stream,
+            "created_at": now,
+            "updated_at": now,
+        }
+        async with _ASYNC_ROLLOUT_LOCK:
+            _store_rollout_record(running)
+        try:
+            completed = await _execute_rollout_payload_with_timeout(payload)
+        except Exception as exc:
+            failed = {
+                **running,
+                "status": "failed",
+                "success_status": "failed",
+                "status_detail": str(getattr(exc, "detail", exc)),
+                "summary": {"status_detail": str(getattr(exc, "detail", exc))},
+                "updated_at": _now(),
+            }
+            async with _ASYNC_ROLLOUT_LOCK:
+                _store_rollout_record(failed)
+            raise
+        completed = {
+            **completed,
+            "stream": stream,
+            "metadata": {
+                **dict(completed.get("metadata") or {}),
+                "submission_mode": "sync",
+            },
+        }
+        async with _ASYNC_ROLLOUT_LOCK:
+            _store_rollout_record(completed)
+        return completed
+    if submission_mode != "async":
+        raise HTTPException(
+            status_code=400,
+            detail="submission_mode must be one of: sync, async",
+        )
     now = _now()
     queued = {
         "rollout_id": rollout_id,
@@ -532,13 +963,41 @@ async def rollout(request: Request) -> dict[str, Any]:
         "summary": {},
         "usage": {},
         "metadata": {"submission_mode": "async"},
+        "stream": stream,
         "created_at": now,
         "updated_at": now,
     }
     async with _ASYNC_ROLLOUT_LOCK:
-        _ASYNC_ROLLOUTS[rollout_id] = queued
+        _store_rollout_record(queued)
     asyncio.create_task(_complete_async_rollout(rollout_id, payload))
     return queued
+
+
+@app.post("/rollouts/prepare")
+async def prepare_rollout(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    telemetry = (
+        payload.get("telemetry") if isinstance(payload.get("telemetry"), dict) else {}
+    )
+    transport = str(telemetry.get("transport") or "poll").strip().lower()
+    if transport == "auto":
+        raise HTTPException(
+            status_code=422, detail="telemetry.transport=auto is forbidden"
+        )
+    if transport not in {"", "poll", "sse"}:
+        raise HTTPException(
+            status_code=422, detail=f"unsupported telemetry transport: {transport}"
+        )
+    rollout_id = str(
+        payload.get("rollout_id")
+        or payload.get("trace_correlation_id")
+        or f"rollout_{uuid.uuid4().hex[:12]}"
+    )
+    return {
+        "rollout_id": rollout_id,
+        "status": "prepared",
+        "stream": await _ensure_stream(rollout_id),
+    }
 
 
 @app.get("/rollouts/{rollout_id}/state")
@@ -551,6 +1010,106 @@ async def rollout_record(rollout_id: str) -> dict[str, Any]:
     return await _async_rollout_record(rollout_id)
 
 
+@app.get("/rollouts/{rollout_id}/events")
+async def rollout_events(rollout_id: str, after: int = 0) -> dict[str, Any]:
+    if after < 0:
+        raise HTTPException(status_code=422, detail="after must be non-negative")
+    async with _STREAM_LOCK:
+        items = list(_load_stream(rollout_id))
+    if not items:
+        raise HTTPException(status_code=404, detail=f"unknown_rollout:{rollout_id}")
+    high_water = max(
+        (int(item["sequence"]) for item in items if item.get("sequence") is not None),
+        default=0,
+    )
+    visible = [
+        item
+        for item in items
+        if (item.get("sequence") is None and after == 0)
+        or (item.get("sequence") is not None and int(item["sequence"]) > after)
+    ]
+    return {
+        "rollout_id": rollout_id,
+        "stream.id": _stream_id(rollout_id),
+        "cursor": {"kind": "sequence", "after": after, "high_water": high_water},
+        "events": visible,
+    }
+
+
+@app.get("/rollouts/{rollout_id}/events/sse")
+async def rollout_events_sse(rollout_id: str) -> StreamingResponse:
+    await _ensure_stream(rollout_id)
+
+    async def event_source():
+        delivered: set[str] = set()
+        while True:
+            async with _STREAM_LOCK:
+                items = list(_load_stream(rollout_id))
+            for item in items:
+                identity = str(item.get("event_id"))
+                if identity in delivered:
+                    continue
+                delivered.add(identity)
+                yield (
+                    f"event: {item.get('kind', 'message')}\n"
+                    f"data: {json.dumps(item, separators=(',', ':'), default=str)}\n\n"
+                )
+            async with _ASYNC_ROLLOUT_LOCK:
+                current = _load_rollout_record(rollout_id)
+            if (
+                current is not None
+                and str(current.get("status") or "") in _TERMINAL_ROLLOUT_STATUSES
+            ):
+                break
+            await asyncio.sleep(0.1)
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/reward")
+async def reward(rollout_id: str) -> dict[str, Any]:
+    current = await _async_rollout_record(rollout_id)
+    value = current.get("summary", {}).get("outcome_reward")
+    terminal = str(current.get("status") or "") in _TERMINAL_ROLLOUT_STATUSES
+    if not terminal:
+        return {
+            "execution_id": f"eval_{rollout_id}",
+            "rollout_id": rollout_id,
+            "status": "running",
+            "reward": None,
+            "node_results": [],
+        }
+    return {
+        "execution_id": f"eval_{rollout_id}",
+        "rollout_id": rollout_id,
+        "status": "scored" if value is not None else "absent",
+        "reward": value,
+        "node_results": [
+            {
+                "node_id": "classification_accuracy",
+                "kind": "env_reward",
+                "authority": "environment",
+                "status": "scored" if value is not None else "skipped",
+                "value": value,
+                "evidence_refs": [{"kind": "rollout", "id": rollout_id}],
+            }
+        ],
+    }
+
+
+@app.post("/reward")
+async def reward_post(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    rollout_id = str(payload.get("rollout_id") or payload.get("rolloutId") or "").strip()
+    if not rollout_id:
+        raise HTTPException(status_code=422, detail="reward requires rollout_id")
+    return await reward(rollout_id)
+
+
 @app.post("/rollouts/{rollout_id}/terminate")
 async def terminate_rollout(rollout_id: str, request: Request) -> dict[str, Any]:
     try:
@@ -559,7 +1118,7 @@ async def terminate_rollout(rollout_id: str, request: Request) -> dict[str, Any]
         payload = {}
     reason = str(payload.get("reason") or "terminated")
     async with _ASYNC_ROLLOUT_LOCK:
-        current = _ASYNC_ROLLOUTS.get(rollout_id)
+        current = _load_rollout_record(rollout_id)
         if current is None:
             raise HTTPException(status_code=404, detail=f"unknown_rollout:{rollout_id}")
         if str(current.get("status") or "") not in _TERMINAL_ROLLOUT_STATUSES:
@@ -575,30 +1134,106 @@ async def terminate_rollout(rollout_id: str, request: Request) -> dict[str, Any]
                     "termination": {"reason": reason},
                 },
             }
-            _ASYNC_ROLLOUTS[rollout_id] = current
+            _store_rollout_record(current)
         return dict(current)
 
 
 async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
     policy = _require_policy(payload)
-    row = payload.get("dataset_row") if isinstance(payload.get("dataset_row"), dict) else None
+    rollout_id = str(payload.get("rollout_id") or f"rollout_{uuid.uuid4().hex[:12]}")
+    await _ensure_stream(rollout_id)
+    row = (
+        payload.get("dataset_row")
+        if isinstance(payload.get("dataset_row"), dict)
+        else None
+    )
+    if not row and isinstance(payload.get("task"), dict):
+        row = payload["task"]
     if not row:
         row = _row_for_seed(
             split=str(payload.get("split") or "train"),
             seed=int(payload.get("seed") or 0),
         )
-    candidate = payload.get("candidate") if isinstance(payload.get("candidate"), dict) else {}
+    candidate = (
+        payload.get("candidate") if isinstance(payload.get("candidate"), dict) else {}
+    )
     system_prompt = str(candidate.get("stage2_system") or DEFAULT_STAGE2_SYSTEM)
+    await _append_stream_event(
+        rollout_id,
+        "trace.opened",
+        {"trace_id": f"trace:{rollout_id}", "task_id": TASK_ID},
+    )
+    await _append_stream_event(
+        rollout_id,
+        "policy.session.opened",
+        {"session_id": f"policy:{rollout_id}", "model": policy["model"]},
+    )
+    await _append_stream_event(
+        rollout_id,
+        "span.llm.opened",
+        {"span_id": f"llm:{rollout_id}:1", "model": policy["model"]},
+    )
     # Direct await on AsyncOpenAI; concurrency capped inside _predict_label
     # via a module-level asyncio.Semaphore(POLICY_CONCURRENCY).
-    prediction, usage = await _predict_label(
-        str(row.get("text") or ""),
-        policy=policy,
-        system_prompt=system_prompt,
-    )
+    try:
+        prediction, usage = await _predict_label(
+            str(row.get("text") or ""),
+            policy=policy,
+            system_prompt=system_prompt,
+        )
+    except Exception as exc:
+        await _append_stream_event(
+            rollout_id,
+            "span.llm.closed",
+            {
+                "span_id": f"llm:{rollout_id}:1",
+                "status": "failed",
+                "error_type": type(exc).__name__,
+            },
+        )
+        await _append_stream_event(
+            rollout_id,
+            "policy.session.closed",
+            {"session_id": f"policy:{rollout_id}", "status": "failed"},
+        )
+        await _append_stream_event(
+            rollout_id,
+            "trace.closed",
+            {"trace_id": f"trace:{rollout_id}", "status": "failed"},
+        )
+        raise
     expected = str(row.get("label") or "")
     reward = 1.0 if prediction == expected else 0.0
-    rollout_id = str(payload.get("rollout_id") or f"rollout_{uuid.uuid4().hex[:12]}")
+    await _append_stream_event(
+        rollout_id,
+        "data",
+        {
+            "span_id": f"llm:{rollout_id}:1",
+            "kind": "classification.result",
+            "prediction": prediction,
+            "reward": reward,
+        },
+    )
+    await _append_stream_event(
+        rollout_id,
+        "span.llm.closed",
+        {"span_id": f"llm:{rollout_id}:1", "status": "completed", "usage": usage},
+    )
+    await _append_stream_event(
+        rollout_id,
+        "policy.session.closed",
+        {"session_id": f"policy:{rollout_id}", "status": "completed"},
+    )
+    await _append_stream_event(
+        rollout_id,
+        "trace.sealing",
+        {"trace_id": f"trace:{rollout_id}"},
+    )
+    await _append_stream_event(
+        rollout_id,
+        "trace.closed",
+        {"trace_id": f"trace:{rollout_id}", "status": "completed"},
+    )
     now = _now()
     return {
         "rollout_id": rollout_id,
@@ -630,14 +1265,23 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "metadata": {"label": expected},
         },
         "metadata": {"candidate": candidate},
+        "stream": _stream_descriptor(rollout_id),
         "created_at": now,
         "updated_at": now,
     }
 
 
-async def _execute_rollout_payload_with_timeout(payload: dict[str, Any]) -> dict[str, Any]:
-    row = payload.get("dataset_row") if isinstance(payload.get("dataset_row"), dict) else None
-    example_id = str((row or {}).get("example_id") or payload.get("trace_correlation_id") or "-")
+async def _execute_rollout_payload_with_timeout(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    row = (
+        payload.get("dataset_row")
+        if isinstance(payload.get("dataset_row"), dict)
+        else None
+    )
+    example_id = str(
+        (row or {}).get("example_id") or payload.get("trace_correlation_id") or "-"
+    )
     policy = payload.get("policy") if isinstance(payload.get("policy"), dict) else {}
     policy_model = str(policy.get("model") or "unknown")
     api_family = str(policy.get("api_family") or "unknown")
@@ -660,7 +1304,7 @@ async def _execute_rollout_payload_with_timeout(payload: dict[str, Any]) -> dict
 
 async def _async_rollout_record(rollout_id: str) -> dict[str, Any]:
     async with _ASYNC_ROLLOUT_LOCK:
-        current = _ASYNC_ROLLOUTS.get(rollout_id)
+        current = _load_rollout_record(rollout_id)
     if current is None:
         raise HTTPException(status_code=404, detail=f"unknown_rollout:{rollout_id}")
     return dict(current)
@@ -668,16 +1312,18 @@ async def _async_rollout_record(rollout_id: str) -> dict[str, Any]:
 
 async def _complete_async_rollout(rollout_id: str, payload: dict[str, Any]) -> None:
     async with _ASYNC_ROLLOUT_LOCK:
-        current = _ASYNC_ROLLOUTS.get(rollout_id)
+        current = _load_rollout_record(rollout_id)
         if current is None or str(current.get("status") or "") == "cancelled":
             return
-        _ASYNC_ROLLOUTS[rollout_id] = {
-            **current,
-            "status": "running",
-            "success_status": "running",
-            "status_detail": "running",
-            "updated_at": _now(),
-        }
+        _store_rollout_record(
+            {
+                **current,
+                "status": "running",
+                "success_status": "running",
+                "status_detail": "running",
+                "updated_at": _now(),
+            }
+        )
     try:
         completed = await _execute_rollout_payload_with_timeout(payload)
     except Exception as exc:
@@ -695,10 +1341,17 @@ async def _complete_async_rollout(rollout_id: str, payload: dict[str, Any]) -> N
             "updated_at": _now(),
         }
     async with _ASYNC_ROLLOUT_LOCK:
-        current = _ASYNC_ROLLOUTS.get(rollout_id)
+        current = _load_rollout_record(rollout_id)
         if current is None or str(current.get("status") or "") == "cancelled":
             return
-        _ASYNC_ROLLOUTS[rollout_id] = completed
+        completed = {
+            **completed,
+            "metadata": {
+                **dict(completed.get("metadata") or {}),
+                "submission_mode": "async",
+            },
+        }
+        _store_rollout_record(completed)
 
 
 def _row_for_seed(*, split: str, seed: int) -> dict[str, Any]:
@@ -708,7 +1361,9 @@ def _row_for_seed(*, split: str, seed: int) -> dict[str, Any]:
     match = next((row for row in rows if int(row["seed"]) == int(seed)), None)
     row = match or rows[int(seed) % len(rows)]
     result = dict(row)
-    result.setdefault("example_id", f"{result.get('split', split)}:{result.get('seed', seed)}")
+    result.setdefault(
+        "example_id", f"{result.get('split', split)}:{result.get('seed', seed)}"
+    )
     return result
 
 
@@ -778,7 +1433,9 @@ async def _predict_label(
             raw = (resp.choices[0].message.content or "").strip()
             usage = {
                 "prompt_tokens": int(getattr(resp.usage, "prompt_tokens", 0) or 0),
-                "completion_tokens": int(getattr(resp.usage, "completion_tokens", 0) or 0),
+                "completion_tokens": int(
+                    getattr(resp.usage, "completion_tokens", 0) or 0
+                ),
                 "total_tokens": int(getattr(resp.usage, "total_tokens", 0) or 0),
             }
             return _normalize_policy_label(raw), usage
@@ -839,7 +1496,9 @@ async def _predict_label(
             raw = (resp.choices[0].message.content or "").strip()
             usage = {
                 "prompt_tokens": int(getattr(resp.usage, "prompt_tokens", 0) or 0),
-                "completion_tokens": int(getattr(resp.usage, "completion_tokens", 0) or 0),
+                "completion_tokens": int(
+                    getattr(resp.usage, "completion_tokens", 0) or 0
+                ),
                 "total_tokens": int(getattr(resp.usage, "total_tokens", 0) or 0),
             }
     return _normalize_policy_label(raw), usage
@@ -860,7 +1519,9 @@ def _normalize_policy_label(raw: str) -> str:
     for label in LABELS:
         if label.lower() in lowered:
             return label
-        label_simplified = "".join(ch for ch in label.lower() if ch.isalnum() or ch == "_")
+        label_simplified = "".join(
+            ch for ch in label.lower() if ch.isalnum() or ch == "_"
+        )
         if label_simplified and label_simplified in simplified:
             return label
     # Last-resort: no recognized label in response — return the raw first-line so
@@ -877,7 +1538,9 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning", access_log=False)
+    uvicorn.run(
+        app, host=args.host, port=args.port, log_level="warning", access_log=False
+    )
 
 
 if __name__ == "__main__":
