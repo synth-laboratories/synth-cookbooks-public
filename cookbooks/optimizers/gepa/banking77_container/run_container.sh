@@ -21,6 +21,11 @@ while (( $# )); do
   esac
 done
 
+if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
+  echo "OPENROUTER_API_KEY is required by the advertised Banking77 desktop_eval policy; refusing to advertise an unusable container." >&2
+  exit 78
+fi
+
 cd "$script_dir"
 exec uv run --frozen --project "$script_dir" python synth_service_app.py \
   --host 127.0.0.1 \

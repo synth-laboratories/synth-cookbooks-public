@@ -42,6 +42,11 @@ while (( $# )); do
   esac
 done
 
+if [[ -z "${!grader_api_key_env:-}" ]]; then
+  echo "$grader_api_key_env is required by the canonical HealthBench scorer; refusing to advertise an unscorable container." >&2
+  exit 78
+fi
+
 exec uv run --frozen --project "$script_dir" python "$script_dir/synth_service_app.py" \
   --host 127.0.0.1 \
   --port "$port" \
