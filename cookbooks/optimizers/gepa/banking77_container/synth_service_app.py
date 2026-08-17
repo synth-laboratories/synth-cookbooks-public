@@ -651,7 +651,7 @@ async def metadata() -> dict[str, Any]:
             "policy_refs": [DESKTOP_EVAL_POLICY_REF],
             "contract_version": "container_contract.v1",
             "rollout_modes": ["blocking", "async"],
-            "metadata": {},
+            "metadata": {"policy_ready": True},
         },
         "metadata": {
             "optimizer_contracts": {

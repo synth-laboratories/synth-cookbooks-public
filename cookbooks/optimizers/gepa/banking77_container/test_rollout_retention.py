@@ -135,6 +135,7 @@ def test_desktop_contract_is_truthfully_advertised_and_resolved():
         "trace_v5.capture": False,
     }
     assert capabilities["policy_refs"] == [service.DESKTOP_EVAL_POLICY_REF]
+    assert capabilities["metadata"]["policy_ready"] is True
 
     policy = service._require_policy(
         {"policy_ref": dict(service.DESKTOP_EVAL_POLICY_REF)}
