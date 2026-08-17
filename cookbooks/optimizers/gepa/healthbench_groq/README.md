@@ -10,7 +10,7 @@ already has an unpublished service listening on port 8114.
 ## Quick start
 
 ```bash
-./run_container.sh /absolute/path/to/a/dedicated/run-store
+./run_container.sh --storage-root /absolute/path/to/a/dedicated/run-store
 uv run --project . --group dev pytest -q test_container_contract.py
 ```
 

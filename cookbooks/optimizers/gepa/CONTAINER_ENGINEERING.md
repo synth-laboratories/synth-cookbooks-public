@@ -38,7 +38,7 @@ The service is standalone and defaults to `127.0.0.1:8765`. Its durable rollout 
 
 ```bash
 cd healthbench_groq
-./run_container.sh /absolute/path/to/a/dedicated/run-store
+./run_container.sh --storage-root /absolute/path/to/a/dedicated/run-store
 uv run --project . --group dev pytest -q test_container_contract.py
 ```
 

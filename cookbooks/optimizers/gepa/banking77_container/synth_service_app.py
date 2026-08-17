@@ -1537,7 +1537,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--storage-root", type=Path)
     args = parser.parse_args()
+    if args.storage_root is not None:
+        args.storage_root.mkdir(parents=True, exist_ok=True)
+        os.environ["BANKING77_STREAM_ROOT"] = str(args.storage_root.resolve())
     uvicorn.run(
         app, host=args.host, port=args.port, log_level="warning", access_log=False
     )

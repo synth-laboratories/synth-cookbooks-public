@@ -108,7 +108,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "synth-containers", git = "https://github.com/synth-laboratories/containers.git?rev=7f6d84e10d66c6bd3045a8d0fdeb11bef5c97295" },
+    { name = "synth-containers", git = "https://github.com/synth-laboratories/containers.git?rev=91ba87c1e29d841c61e0c22030380940107ccbd0" },
     { name = "uvicorn", specifier = ">=0.27" },
 ]
 
@@ -336,8 +336,8 @@ wheels = [
 
 [[package]]
 name = "synth-containers"
-version = "0.4.1.dev20260814"
-source = { git = "https://github.com/synth-laboratories/containers.git?rev=7f6d84e10d66c6bd3045a8d0fdeb11bef5c97295#7f6d84e10d66c6bd3045a8d0fdeb11bef5c97295" }
+version = "0.4.0.20260730"
+source = { git = "https://github.com/synth-laboratories/containers.git?rev=91ba87c1e29d841c61e0c22030380940107ccbd0#91ba87c1e29d841c61e0c22030380940107ccbd0" }
 dependencies = [
     { name = "certifi" },
     { name = "fastapi" },

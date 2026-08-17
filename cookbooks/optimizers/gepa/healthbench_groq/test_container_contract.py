@@ -27,3 +27,35 @@ def test_healthbench2_unknown_rollout_is_not_fabricated(tmp_path):
     client = TestClient(create_app(storage_root=tmp_path))
     response = client.post("/reward", json={"rollout_id": "missing", "mode": "terminal"})
     assert response.status_code == 404
+
+
+def test_healthbench2_terminal_rollout_survives_service_reconstruction(tmp_path, monkeypatch):
+    from synth_containers.platform.runtimes import healthbench
+
+    monkeypatch.setattr(healthbench, "load_row", lambda _seed: None)
+    first = TestClient(create_app(storage_root=tmp_path))
+    prepared = first.post(
+        "/rollouts/prepare",
+        json={
+            "rollout_id": "healthbench2-restart",
+            "telemetry": {"enabled": True, "transport": "poll", "retention": "run"},
+        },
+    )
+    assert prepared.status_code == 200
+    terminal = first.post(
+        "/rollouts",
+        json={
+            "rollout_id": "healthbench2-restart",
+            "task_instance_id": "seed:0",
+            "slot": "stream",
+            "telemetry": {"enabled": True, "transport": "poll", "retention": "run"},
+            "policy_ref": {"harness": "chat_completion", "config": "groq_llama31_8b"},
+        },
+    )
+    assert terminal.status_code == 200
+    assert terminal.json()["status"] == "failed"
+
+    restarted = TestClient(create_app(storage_root=tmp_path))
+    recovered = restarted.get("/rollouts/healthbench2-restart")
+    assert recovered.status_code == 200
+    assert recovered.json()["rollout_id"] == "healthbench2-restart"
