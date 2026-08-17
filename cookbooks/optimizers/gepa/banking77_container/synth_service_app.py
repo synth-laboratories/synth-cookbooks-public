@@ -2,14 +2,38 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
+import json
 import os
 import random
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+
+try:
+    from producer_integrity import (
+        PROTECTED_SPLIT,
+        example_span_digest,
+        execution_block,
+        leakage_contract,
+        literal_training_targets_policy,
+        span_digests_for_split,
+        split_identity as _split_identity,
+    )
+except ImportError:
+    from cookbooks.optimizers.gepa.banking77_container.producer_integrity import (  # type: ignore
+        PROTECTED_SPLIT,
+        example_span_digest,
+        execution_block,
+        leakage_contract,
+        literal_training_targets_policy,
+        span_digests_for_split,
+        split_identity as _split_identity,
+    )
 
 # Live OpenAI-compatible policy is supplied per rollout through request.policy.
 try:
@@ -288,6 +312,19 @@ def _load_banking77_rows() -> tuple[list[str], list[dict[str, Any]]]:
 
 
 LABELS, ROWS = _load_banking77_rows()
+SPLIT_IDENTITY = _split_identity(
+    ROWS,
+    train_seed=TRAIN_SHUFFLE_SEED,
+    test_seed=TEST_SHUFFLE_SEED,
+    train_sample=TRAIN_SAMPLE,
+    test_sample=TEST_SAMPLE,
+)
+LEAKAGE_CONTRACT = leakage_contract()
+EXECUTION = execution_block(
+    policy_concurrency=POLICY_CONCURRENCY,
+    timeout=POLICY_TIMEOUT_SECONDS,
+    retries=POLICY_RETRIES,
+)
 _LABEL_BY_LOWER = {label.lower(): label for label in LABELS}
 _LABEL_BY_SIMPLIFIED = {
     "".join(ch for ch in label.lower() if ch.isalnum() or ch == "_"): label
@@ -349,7 +386,7 @@ BANKING77_LABEL_GUIDANCE = {
 
 BANKING77_PROPOSER_HINTS = {
     "task_output_space": "finite_intent_label",
-    "literal_training_targets": "allow",
+    "literal_training_targets": literal_training_targets_policy(),
     "proposal_goal": (
         "Infer reusable Banking77 label-boundary rules from rollout traces, mistakes, and guard "
         "wins. Concrete query-to-label examples are valid when they teach a reusable distinction."
@@ -365,7 +402,136 @@ BANKING77_PROPOSER_HINTS = {
 app = FastAPI(title="banking77-gepa-container")
 _ASYNC_ROLLOUTS: dict[str, dict[str, Any]] = {}
 _ASYNC_ROLLOUT_LOCK = asyncio.Lock()
+_STREAM_LOCK = asyncio.Lock()
+_STREAMS: dict[str, list[dict[str, Any]]] = {}
 _TERMINAL_ROLLOUT_STATUSES = {"completed", "failed", "cancelled"}
+_STREAM_SCHEMA = "synth.trace-stream-event.v1"
+
+
+def _stream_id(rollout_id: str) -> str:
+    return f"stream:{rollout_id}"
+
+
+def _stream_descriptor(rollout_id: str) -> dict[str, Any]:
+    return {
+        "schema": "synth.rollout.stream.v1",
+        "id": _stream_id(rollout_id),
+        "stream.id": _stream_id(rollout_id),
+        "transports": {
+            "poll": {"url": f"/rollouts/{rollout_id}/events"},
+            "sse": None,
+            "websocket": None,
+        },
+        "cursor": {"kind": "sequence", "producer_kind": None},
+        "reward": {"url": f"/reward?rollout_id={rollout_id}"},
+        "auth": {"mode": "none"},
+        "retention": "run",
+    }
+
+
+def _stream_root() -> Path:
+    configured = os.environ.get("BANKING77_STREAM_ROOT", "").strip()
+    return Path(configured) if configured else Path.cwd() / ".banking77-streams"
+
+
+def _stream_path(rollout_id: str) -> Path:
+    digest = hashlib.sha256(rollout_id.encode("utf-8")).hexdigest()
+    return _stream_root() / f"{digest}.jsonl"
+
+
+def _load_stream(rollout_id: str) -> list[dict[str, Any]]:
+    cached = _STREAMS.get(rollout_id)
+    if cached is not None:
+        return cached
+    path = _stream_path(rollout_id)
+    items: list[dict[str, Any]] = []
+    expected_sequence = 1
+    if path.is_file():
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            if item.get("schema") != _STREAM_SCHEMA or item.get("rollout_id") != rollout_id:
+                raise RuntimeError(f"invalid rollout stream identity at {path}:{line_number}")
+            sequence = item.get("sequence")
+            if sequence is None:
+                if item.get("kind") != "stream.subscribed" or item.get("control") is not True:
+                    raise RuntimeError(f"invalid rollout control record at {path}:{line_number}")
+            else:
+                if sequence != expected_sequence or item.get("control") is not False:
+                    raise RuntimeError(f"rollout stream sequence gap at {path}:{line_number}")
+                expected_sequence += 1
+            items.append(item)
+    _STREAMS[rollout_id] = items
+    return items
+
+
+def _persist_stream_item(rollout_id: str, item: dict[str, Any]) -> None:
+    path = _stream_path(rollout_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(item, sort_keys=True, separators=(",", ":"), default=str)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(encoded)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+async def _ensure_stream(rollout_id: str) -> dict[str, Any]:
+    async with _STREAM_LOCK:
+        items = _load_stream(rollout_id)
+        if not any(item.get("kind") == "stream.subscribed" for item in items):
+            subscribed = {
+                "schema": _STREAM_SCHEMA,
+                "kind": "stream.subscribed",
+                "event_id": "stream.subscribed",
+                "sequence": None,
+                "control": True,
+                "slot": "stream",
+                "stream_id": _stream_id(rollout_id),
+                "rollout_id": rollout_id,
+                "ts": _now(),
+                "ready": True,
+                "payload": {
+                    "type": "stream.subscribed",
+                    "stream.id": _stream_id(rollout_id),
+                    "rollout_id": rollout_id,
+                    "next_sequence": 1,
+                    "ready": True,
+                },
+            }
+            _persist_stream_item(rollout_id, subscribed)
+            items.append(subscribed)
+    return _stream_descriptor(rollout_id)
+
+
+async def _append_stream_event(
+    rollout_id: str, kind: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    async with _STREAM_LOCK:
+        items = _load_stream(rollout_id)
+        high_water = max(
+            (int(item["sequence"]) for item in items if item.get("sequence") is not None),
+            default=0,
+        )
+        sequence = high_water + 1
+        item = {
+            "schema": _STREAM_SCHEMA,
+            "kind": kind,
+            "event_id": sequence,
+            "sequence": sequence,
+            "control": False,
+            "slot": "stream",
+            "stream_id": _stream_id(rollout_id),
+            "rollout_id": rollout_id,
+            "run_id": rollout_id,
+            "lane": rollout_id,
+            "ts": _now(),
+            "payload": dict(payload),
+        }
+        _persist_stream_item(rollout_id, item)
+        items.append(item)
+        return item
 
 
 @app.get("/health")
@@ -392,11 +558,62 @@ async def metadata() -> dict[str, Any]:
                 "gepa": {
                     "version": GEPA_OPTIMIZER_CONTRACT_VERSION,
                     "program_route": "/program",
+                    "taskset_route": "/taskset",
+                    "taskset_tasks_route": "/taskset/tasks",
                     "dataset_route": "/dataset",
                     "dataset_rows_route": "/dataset/rows",
                     "rollout_route": "/rollout",
                 }
-            }
+            },
+            "task_catalog_route": "/task_catalog",
+            "leakage_contract": LEAKAGE_CONTRACT,
+            "execution": EXECUTION,
+            "split_identity": SPLIT_IDENTITY,
+        },
+        "leakage_contract": LEAKAGE_CONTRACT,
+        "execution": EXECUTION,
+        "split_identity": SPLIT_IDENTITY,
+    }
+
+
+@app.get("/leakage/span_digests")
+async def leakage_span_digests(split: str = PROTECTED_SPLIT) -> dict[str, Any]:
+    resolved = str(split or "test")
+    return {
+        "leakage_contract": LEAKAGE_CONTRACT,
+        "split": resolved,
+        "digests": span_digests_for_split(ROWS, split=resolved),
+    }
+
+
+@app.get("/task_catalog")
+async def task_catalog() -> dict[str, Any]:
+    return {
+        "catalog_id": "banking77_public_rows:catalog",
+        "tasks": [{
+            "task_id": TASK_ID,
+            "task_name": "Banking77 intent classification",
+            "task_family": "banking77",
+            "description": "Classify a customer banking question into one Banking77 label.",
+            "benchmark": "PolyAI/banking77",
+            "metadata": {"primary_metric": "classification_accuracy", "label_count": len(LABELS)},
+        }],
+        "instances": [{
+            "task_instance_id": f"banking77:{row['split']}:{row['seed']}",
+            "task_id": TASK_ID,
+            "split": row["split"],
+            "tags": ["banking77", row["split"], row["label"]],
+            "metadata": {
+                "seed": row["seed"],
+                "source_index": row["source_index"],
+                "input": row["text"],
+                "output_label": row["label"],
+            },
+        } for row in ROWS],
+        "metadata": {
+            "dataset_id": "banking77_public_rows",
+            "instance_count": len(ROWS),
+            "filterable_fields": ["split", "tags", "metadata.output_label", "metadata.seed", "metadata.source_index"],
         },
     }
 
@@ -503,24 +720,90 @@ async def dataset_rows(request: Request) -> dict[str, Any]:
     return {"rows": selected}
 
 
+@app.get("/taskset")
+async def taskset() -> dict[str, Any]:
+    """Expose the current GEPA v2 taskset contract over the pinned row sample."""
+    return {
+        "taskset_id": "banking77_public_rows:v1",
+        "splits": {
+            "train": sum(1 for row in ROWS if row["split"] == "train"),
+            "test": sum(1 for row in ROWS if row["split"] == "test"),
+        },
+        "labels": LABELS,
+        "source": "PolyAI/banking77",
+        "metadata": {
+            "train_shuffle_seed": TRAIN_SHUFFLE_SEED,
+            "test_shuffle_seed": TEST_SHUFFLE_SEED,
+        },
+    }
+
+
+@app.post("/taskset/tasks")
+async def taskset_tasks(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    split = str(payload.get("split") or "").strip()
+    if split not in {"train", "test"}:
+        raise HTTPException(status_code=422, detail="split must be train or test")
+    raw_task_ids = payload.get("task_ids")
+    if not isinstance(raw_task_ids, list) or not raw_task_ids:
+        raise HTTPException(status_code=422, detail="task_ids must be a non-empty list")
+    tasks = []
+    for raw_task_id in raw_task_ids:
+        task_id = str(raw_task_id).strip()
+        prefix = f"{split}:"
+        if not task_id.startswith(prefix):
+            raise HTTPException(
+                status_code=422,
+                detail=f"task_id {task_id!r} must start with {prefix!r}",
+            )
+        try:
+            seed = int(task_id[len(prefix) :])
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"task_id {task_id!r} must end in an integer seed",
+            ) from exc
+        row = _row_for_seed(split=split, seed=seed)
+        tasks.append(
+            {
+                "task_id": task_id,
+                "task_instance_id": f"banking77:{split}:{seed}",
+                "split": split,
+                "seed": seed,
+                "text": row["text"],
+                "label": row["label"],
+                "source_index": row["source_index"],
+            }
+        )
+    return {"tasks": tasks, "metadata": {"taskset_id": "banking77_public_rows:v1"}}
+
+
 @app.post("/rollout")
 @app.post("/rollouts")
 async def rollout(request: Request) -> dict[str, Any]:
     payload = await request.json()
-    submission_mode = str(payload.get("submission_mode") or "sync").strip().lower()
-    if submission_mode == "sync":
-        return await _execute_rollout_payload_with_timeout(payload)
-    if submission_mode != "async":
-        raise HTTPException(
-            status_code=400,
-            detail="submission_mode must be one of: sync, async",
-        )
+    telemetry = payload.get("telemetry") if isinstance(payload.get("telemetry"), dict) else {}
+    transport = str(telemetry.get("transport") or "poll").strip().lower()
+    if transport == "auto":
+        raise HTTPException(status_code=422, detail="telemetry.transport=auto is forbidden")
+    if transport not in {"", "poll"}:
+        raise HTTPException(status_code=422, detail=f"unsupported telemetry transport: {transport}")
     rollout_id = str(
         payload.get("rollout_id")
         or payload.get("trace_correlation_id")
         or f"rollout_{uuid.uuid4().hex[:12]}"
     )
     payload = {**payload, "rollout_id": rollout_id}
+    stream = await _ensure_stream(rollout_id)
+    submission_mode = str(payload.get("submission_mode") or "sync").strip().lower()
+    if submission_mode == "sync":
+        completed = await _execute_rollout_payload_with_timeout(payload)
+        return {**completed, "stream": stream}
+    if submission_mode != "async":
+        raise HTTPException(
+            status_code=400,
+            detail="submission_mode must be one of: sync, async",
+        )
     now = _now()
     queued = {
         "rollout_id": rollout_id,
@@ -531,7 +814,9 @@ async def rollout(request: Request) -> dict[str, Any]:
         "seed": int(payload.get("seed") or 0),
         "summary": {},
         "usage": {},
-        "metadata": {"submission_mode": "async"},
+        "metadata": {"submission_mode": "async", "split_identity": SPLIT_IDENTITY},
+        "split_identity": SPLIT_IDENTITY,
+        "stream": stream,
         "created_at": now,
         "updated_at": now,
     }
@@ -539,6 +824,23 @@ async def rollout(request: Request) -> dict[str, Any]:
         _ASYNC_ROLLOUTS[rollout_id] = queued
     asyncio.create_task(_complete_async_rollout(rollout_id, payload))
     return queued
+
+
+@app.post("/rollouts/prepare")
+async def prepare_rollout(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    telemetry = payload.get("telemetry") if isinstance(payload.get("telemetry"), dict) else {}
+    transport = str(telemetry.get("transport") or "poll").strip().lower()
+    if transport == "auto":
+        raise HTTPException(status_code=422, detail="telemetry.transport=auto is forbidden")
+    if transport not in {"", "poll"}:
+        raise HTTPException(status_code=422, detail=f"unsupported telemetry transport: {transport}")
+    rollout_id = str(
+        payload.get("rollout_id")
+        or payload.get("trace_correlation_id")
+        or f"rollout_{uuid.uuid4().hex[:12]}"
+    )
+    return {"rollout_id": rollout_id, "status": "prepared", "stream": await _ensure_stream(rollout_id)}
 
 
 @app.get("/rollouts/{rollout_id}/state")
@@ -549,6 +851,63 @@ async def rollout_state(rollout_id: str) -> dict[str, Any]:
 @app.get("/rollouts/{rollout_id}")
 async def rollout_record(rollout_id: str) -> dict[str, Any]:
     return await _async_rollout_record(rollout_id)
+
+
+@app.get("/rollouts/{rollout_id}/events")
+async def rollout_events(rollout_id: str, after: int = 0) -> dict[str, Any]:
+    if after < 0:
+        raise HTTPException(status_code=422, detail="after must be non-negative")
+    async with _STREAM_LOCK:
+        items = list(_load_stream(rollout_id))
+    if not items:
+        raise HTTPException(status_code=404, detail=f"unknown_rollout:{rollout_id}")
+    high_water = max(
+        (int(item["sequence"]) for item in items if item.get("sequence") is not None),
+        default=0,
+    )
+    visible = [
+        item
+        for item in items
+        if (item.get("sequence") is None and after == 0)
+        or (item.get("sequence") is not None and int(item["sequence"]) > after)
+    ]
+    return {
+        "rollout_id": rollout_id,
+        "stream.id": _stream_id(rollout_id),
+        "cursor": {"kind": "sequence", "after": after, "high_water": high_water},
+        "events": visible,
+    }
+
+
+@app.get("/reward")
+async def reward(rollout_id: str) -> dict[str, Any]:
+    current = await _async_rollout_record(rollout_id)
+    value = current.get("summary", {}).get("outcome_reward")
+    terminal = str(current.get("status") or "") in _TERMINAL_ROLLOUT_STATUSES
+    if not terminal:
+        return {
+            "execution_id": f"eval_{rollout_id}",
+            "rollout_id": rollout_id,
+            "status": "running",
+            "reward": None,
+            "node_results": [],
+        }
+    return {
+        "execution_id": f"eval_{rollout_id}",
+        "rollout_id": rollout_id,
+        "status": "scored" if value is not None else "absent",
+        "reward": value,
+        "node_results": [
+            {
+                "node_id": "classification_accuracy",
+                "kind": "env_reward",
+                "authority": "environment",
+                "status": "scored" if value is not None else "skipped",
+                "value": value,
+                "evidence_refs": [{"kind": "rollout", "id": rollout_id}],
+            }
+        ],
+    }
 
 
 @app.post("/rollouts/{rollout_id}/terminate")
@@ -581,7 +940,11 @@ async def terminate_rollout(rollout_id: str, request: Request) -> dict[str, Any]
 
 async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
     policy = _require_policy(payload)
+    rollout_id = str(payload.get("rollout_id") or f"rollout_{uuid.uuid4().hex[:12]}")
+    await _ensure_stream(rollout_id)
     row = payload.get("dataset_row") if isinstance(payload.get("dataset_row"), dict) else None
+    if not row and isinstance(payload.get("task"), dict):
+        row = payload["task"]
     if not row:
         row = _row_for_seed(
             split=str(payload.get("split") or "train"),
@@ -589,16 +952,78 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
     candidate = payload.get("candidate") if isinstance(payload.get("candidate"), dict) else {}
     system_prompt = str(candidate.get("stage2_system") or DEFAULT_STAGE2_SYSTEM)
+    await _append_stream_event(
+        rollout_id,
+        "trace.opened",
+        {"trace_id": f"trace:{rollout_id}", "task_id": TASK_ID},
+    )
+    await _append_stream_event(
+        rollout_id,
+        "policy.session.opened",
+        {"session_id": f"policy:{rollout_id}", "model": policy["model"]},
+    )
+    await _append_stream_event(
+        rollout_id,
+        "span.llm.opened",
+        {"span_id": f"llm:{rollout_id}:1", "model": policy["model"]},
+    )
     # Direct await on AsyncOpenAI; concurrency capped inside _predict_label
     # via a module-level asyncio.Semaphore(POLICY_CONCURRENCY).
-    prediction, usage = await _predict_label(
-        str(row.get("text") or ""),
-        policy=policy,
-        system_prompt=system_prompt,
-    )
+    try:
+        prediction, usage = await _predict_label(
+            str(row.get("text") or ""),
+            policy=policy,
+            system_prompt=system_prompt,
+        )
+    except Exception as exc:
+        await _append_stream_event(
+            rollout_id,
+            "span.llm.closed",
+            {"span_id": f"llm:{rollout_id}:1", "status": "failed", "error_type": type(exc).__name__},
+        )
+        await _append_stream_event(
+            rollout_id,
+            "policy.session.closed",
+            {"session_id": f"policy:{rollout_id}", "status": "failed"},
+        )
+        await _append_stream_event(
+            rollout_id,
+            "trace.closed",
+            {"trace_id": f"trace:{rollout_id}", "status": "failed"},
+        )
+        raise
     expected = str(row.get("label") or "")
     reward = 1.0 if prediction == expected else 0.0
-    rollout_id = str(payload.get("rollout_id") or f"rollout_{uuid.uuid4().hex[:12]}")
+    await _append_stream_event(
+        rollout_id,
+        "data",
+        {
+            "span_id": f"llm:{rollout_id}:1",
+            "kind": "classification.result",
+            "prediction": prediction,
+            "reward": reward,
+        },
+    )
+    await _append_stream_event(
+        rollout_id,
+        "span.llm.closed",
+        {"span_id": f"llm:{rollout_id}:1", "status": "completed", "usage": usage},
+    )
+    await _append_stream_event(
+        rollout_id,
+        "policy.session.closed",
+        {"session_id": f"policy:{rollout_id}", "status": "completed"},
+    )
+    await _append_stream_event(
+        rollout_id,
+        "trace.sealing",
+        {"trace_id": f"trace:{rollout_id}"},
+    )
+    await _append_stream_event(
+        rollout_id,
+        "trace.closed",
+        {"trace_id": f"trace:{rollout_id}", "status": "completed"},
+    )
     now = _now()
     return {
         "rollout_id": rollout_id,
@@ -629,7 +1054,15 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
             ],
             "metadata": {"label": expected},
         },
-        "metadata": {"candidate": candidate},
+        "metadata": {
+            "candidate": candidate,
+            "split_identity": SPLIT_IDENTITY,
+            "leakage_contract": LEAKAGE_CONTRACT,
+            "span_digest": example_span_digest(row),
+            "example_id": str(row.get("example_id") or f"{row.get('split')}:{row.get('seed')}"),
+        },
+        "split_identity": SPLIT_IDENTITY,
+        "stream": _stream_descriptor(rollout_id),
         "created_at": now,
         "updated_at": now,
     }
@@ -690,7 +1123,8 @@ async def _complete_async_rollout(rollout_id: str, payload: dict[str, Any]) -> N
             "seed": int(payload.get("seed") or 0),
             "summary": {"status_detail": str(exc)},
             "usage": {},
-            "metadata": {"submission_mode": "async"},
+            "metadata": {"submission_mode": "async", "split_identity": SPLIT_IDENTITY},
+            "split_identity": SPLIT_IDENTITY,
             "created_at": _now(),
             "updated_at": _now(),
         }
@@ -709,6 +1143,7 @@ def _row_for_seed(*, split: str, seed: int) -> dict[str, Any]:
     row = match or rows[int(seed) % len(rows)]
     result = dict(row)
     result.setdefault("example_id", f"{result.get('split', split)}:{result.get('seed', seed)}")
+    result["span_digest"] = example_span_digest(result)
     return result
 
 

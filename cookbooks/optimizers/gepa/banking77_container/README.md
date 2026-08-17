@@ -14,9 +14,14 @@ The runnable GEPA config for this example lives beside the container at
 - `GET /metadata`
 - `GET /task_info`
 - `GET /program`
+- `GET /taskset`
+- `POST /taskset/tasks`
 - `GET /dataset`
 - `POST /dataset/rows`
 - `POST /rollout`
+- `POST /rollouts/prepare`
+- `GET /rollouts/{rollout_id}/events?after={sequence}`
+- `GET /reward?rollout_id={rollout_id}`
 
 The metadata payload advertises:
 
@@ -25,12 +30,24 @@ The metadata payload advertises:
   "metadata": {
     "optimizer_contracts": {
       "gepa": {
-        "version": "synth_optimizers.gepa.v1"
+        "version": "synth_optimizers.gepa.v2",
+        "taskset_route": "/taskset",
+        "taskset_tasks_route": "/taskset/tasks"
       }
     }
   }
 }
 ```
+
+Current GEPA v2 runners load stable ids such as `train:0` and `test:0` through
+`/taskset/tasks`. The older dataset routes remain available for cookbook and
+compatibility clients.
+
+Each rollout returns a `synth.rollout.stream.v1` descriptor. Its declared poll
+route reads an fsynced `synth.trace-stream-event.v1` journal with a sequence
+cursor; the non-advancing `stream.subscribed` record is emitted before rollout
+execution. Journals use `BANKING77_STREAM_ROOT` when configured and otherwise
+live under `.banking77-streams/` in the service working directory.
 
 ## Prompt Program Shape
 
@@ -85,7 +102,14 @@ It returns rows with stable seed, input text, label, and metadata fields.
 ```
 
 It returns the standard `synth-containers` rollout payload with `reward_info`,
-`summary`, `usage`, `trace`, and `metadata`.
+`summary`, `usage`, `trace`, `metadata`, and `split_identity`.
+
+`GET /metadata` advertises:
+
+- `literal_training_targets` default `forbid` (opt in with `BANKING77_LITERAL_TRAINING_TARGETS=allow`)
+- `leakage_contract {policy, protected_split, span_digest_route}` and per-example sha256 digests at `GET /leakage/span_digests`
+- `execution {policy_concurrency, timeout, retries}`
+- `split_identity {dataset_id, dataset_digest, train_seed, test_seed, samples, sampling_mode}`
 
 ## Non-Goals
 
