@@ -14,6 +14,27 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 
+try:
+    from producer_integrity import (
+        PROTECTED_SPLIT,
+        example_span_digest,
+        execution_block,
+        leakage_contract,
+        literal_training_targets_policy,
+        span_digests_for_split,
+        split_identity as _split_identity,
+    )
+except ImportError:
+    from cookbooks.optimizers.gepa.banking77_container.producer_integrity import (  # type: ignore
+        PROTECTED_SPLIT,
+        example_span_digest,
+        execution_block,
+        leakage_contract,
+        literal_training_targets_policy,
+        span_digests_for_split,
+        split_identity as _split_identity,
+    )
+
 # Live OpenAI-compatible policy is supplied per rollout through request.policy.
 try:
     from openai import AsyncOpenAI
@@ -323,6 +344,19 @@ def _load_banking77_rows() -> tuple[list[str], list[dict[str, Any]]]:
 
 
 LABELS, ROWS = _load_banking77_rows()
+SPLIT_IDENTITY = _split_identity(
+    ROWS,
+    train_seed=TRAIN_SHUFFLE_SEED,
+    test_seed=TEST_SHUFFLE_SEED,
+    train_sample=TRAIN_SAMPLE,
+    test_sample=TEST_SAMPLE,
+)
+LEAKAGE_CONTRACT = leakage_contract()
+EXECUTION = execution_block(
+    policy_concurrency=POLICY_CONCURRENCY,
+    timeout=POLICY_TIMEOUT_SECONDS,
+    retries=POLICY_RETRIES,
+)
 _LABEL_BY_LOWER = {label.lower(): label for label in LABELS}
 _LABEL_BY_SIMPLIFIED = {
     "".join(ch for ch in label.lower() if ch.isalnum() or ch == "_"): label
@@ -384,7 +418,7 @@ BANKING77_LABEL_GUIDANCE = {
 
 BANKING77_PROPOSER_HINTS = {
     "task_output_space": "finite_intent_label",
-    "literal_training_targets": "allow",
+    "literal_training_targets": literal_training_targets_policy(),
     "proposal_goal": (
         "Infer reusable Banking77 label-boundary rules from rollout traces, mistakes, and guard "
         "wins. Concrete query-to-label examples are valid when they teach a reusable distinction."
@@ -582,7 +616,23 @@ async def metadata() -> dict[str, Any]:
                 }
             },
             "task_catalog_route": "/task_catalog",
+            "leakage_contract": LEAKAGE_CONTRACT,
+            "execution": EXECUTION,
+            "split_identity": SPLIT_IDENTITY,
         },
+        "leakage_contract": LEAKAGE_CONTRACT,
+        "execution": EXECUTION,
+        "split_identity": SPLIT_IDENTITY,
+    }
+
+
+@app.get("/leakage/span_digests")
+async def leakage_span_digests(split: str = PROTECTED_SPLIT) -> dict[str, Any]:
+    resolved = str(split or "test")
+    return {
+        "leakage_contract": LEAKAGE_CONTRACT,
+        "split": resolved,
+        "digests": span_digests_for_split(ROWS, split=resolved),
     }
 
 
@@ -1095,7 +1145,16 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
             ],
             "metadata": {"label": expected},
         },
-        "metadata": {"candidate": candidate},
+        "metadata": {
+            "candidate": candidate,
+            "split_identity": SPLIT_IDENTITY,
+            "leakage_contract": LEAKAGE_CONTRACT,
+            "span_digest": example_span_digest(row),
+            "example_id": str(
+                row.get("example_id") or f"{row.get('split')}:{row.get('seed')}"
+            ),
+        },
+        "split_identity": SPLIT_IDENTITY,
         "stream": _stream_descriptor(rollout_id),
         "created_at": now,
         "updated_at": now,
@@ -1165,7 +1224,8 @@ async def _complete_async_rollout(rollout_id: str, payload: dict[str, Any]) -> N
             "seed": int(payload.get("seed") or 0),
             "summary": {"status_detail": str(exc)},
             "usage": {},
-            "metadata": {"submission_mode": "async"},
+            "metadata": {"submission_mode": "async", "split_identity": SPLIT_IDENTITY},
+            "split_identity": SPLIT_IDENTITY,
             "created_at": _now(),
             "updated_at": _now(),
         }
@@ -1186,6 +1246,7 @@ def _row_for_seed(*, split: str, seed: int) -> dict[str, Any]:
     result.setdefault(
         "example_id", f"{result.get('split', split)}:{result.get('seed', seed)}"
     )
+    result["span_digest"] = example_span_digest(result)
     return result
 
 
