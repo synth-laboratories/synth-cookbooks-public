@@ -17,6 +17,11 @@ uv run --project . --group dev pytest -q test_container_contract.py
 The service binds only to `127.0.0.1` and defaults to port `8114`. Every
 Workshop instance should receive a separate durable run store. The policy uses
 `GROQ_API_KEY`; canonical physician-rubric grading uses `OPENAI_API_KEY`.
+These are independent model roles: the policy generates the candidate response,
+while the scorer makes one grading call per physician-authored rubric item.
+Their token, cost, and failure telemetry is retained in separate `policy` and
+`grader` usage lanes as well as the combined rollout total. `/metadata` declares
+both roles so callers do not mistake HealthBench for a single-model container.
 Until the HealthBench runtime release reaches PyPI, `pyproject.toml` pins the
 exact reviewed public Containers commit; it never floats on a branch head.
 

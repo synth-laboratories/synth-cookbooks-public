@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import uvicorn
@@ -26,8 +27,14 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8114)
     parser.add_argument("--storage-root", type=Path, required=True)
+    parser.add_argument("--grader-model", default="gpt-4.1-2025-04-14")
+    parser.add_argument("--grader-api-key-env", default="OPENAI_API_KEY")
+    parser.add_argument("--grader-base-url", default="https://api.openai.com/v1")
     args = parser.parse_args()
     args.storage_root.mkdir(parents=True, exist_ok=True)
+    os.environ["HEALTHBENCH_GRADER_MODEL"] = args.grader_model
+    os.environ["HEALTHBENCH_GRADER_API_KEY_ENV"] = args.grader_api_key_env
+    os.environ["HEALTHBENCH_GRADER_BASE_URL"] = args.grader_base_url
     uvicorn.run(
         create_app(storage_root=args.storage_root),
         host=args.host,

@@ -12,6 +12,13 @@ def test_healthbench2_contract_is_truthful_and_gepa_ready(tmp_path):
     metadata = client.get("/metadata").json()
     assert metadata["runtime_family"] == "healthbench"
     assert metadata["live_frames"] == "unsupported"
+    roles = metadata["metadata"]["model_roles"]
+    assert roles["policy"]["configuration_authority"] == "policy_ref"
+    assert roles["policy"]["usage_lane"] == "policy"
+    assert roles["scorer"]["model"] == "gpt-4.1-2025-04-14"
+    assert roles["scorer"]["api_key_env"] == "OPENAI_API_KEY"
+    assert roles["scorer"]["usage_lane"] == "grader"
+    assert roles["scorer"]["canonical"] is True
     assert metadata["metadata"]["optimizer_contracts"]["gepa"]["version"] == "synth_optimizers.gepa.v2"
 
     program = client.get("/program").json()
