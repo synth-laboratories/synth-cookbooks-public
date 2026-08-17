@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Public HealthBench 2 GEPA container using the normalized synth-containers runtime."
 requires-python = ">=3.11"
 dependencies = [
-  "synth-containers @ git+https://github.com/synth-laboratories/containers.git@01a2f699afeff52fe75703cb5d48fe2995e38038",
+  "synth-containers @ git+https://github.com/synth-laboratories/containers.git@ac431727cea071e56c55c1b67a3a059982cc7d35",
   "fastapi>=0.110",
   "uvicorn>=0.27",
   "httpx>=0.27",

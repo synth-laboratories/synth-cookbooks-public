@@ -46,13 +46,8 @@ cookbooks/optimizers/gepa/healthbench_groq/run_container.sh --port 8114
 
 Entrypoint: `cookbooks/optimizers/gepa/healthbench_groq/run_container.sh`
 
-Until the HealthBench cookbook dependency is advanced past its frozen Containers
-revision, dogfood the local concurrency fix explicitly:
-
-```bash
-PYTHONPATH=/absolute/path/to/containers/src \
-  cookbooks/optimizers/gepa/healthbench_groq/run_container.sh --port 8114
-```
+The frozen cookbook dependency includes the concurrent synchronous-rollout fix;
+no local `PYTHONPATH` overlay is required.
 
 Confirm readiness:
 
