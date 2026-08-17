@@ -31,8 +31,8 @@ The task contract is intentionally honest:
 - optimizer-facing GEPA v2 routes declared in `/metadata`.
 
 - Policy: Groq `llama-3.1-8b-instant`.
-- Search: 60 train tasks, 50 isolated heldout tasks, two generations, two
-  proposals per generation, and 20-task minibatches.
+- Search: 60 train tasks, 50 isolated heldout tasks, three generations, three
+  proposals per generation, and 12-task minibatches.
 - Spend guard: hard `$4.75` optimizer budget. Missing provider cost remains
   `null`; token-derived estimates carry `cost_kind` and `cost_source`.
 - Grading: `gpt-4.1-2025-04-14` is the canonical HealthBench grader. For a

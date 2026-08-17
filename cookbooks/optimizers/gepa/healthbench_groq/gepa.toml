@@ -49,7 +49,6 @@ model = "gpt-5.6-luna"
 reasoning_effort = "medium"
 auth_mode = "chatgpt"
 copy_host_auth = true
-codex_home = "/Users/joshuapurtell/.codex"
 sandbox_mode = "workspace-write"
 approval_policy = "never"
 
