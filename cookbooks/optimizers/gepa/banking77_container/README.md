@@ -102,7 +102,14 @@ It returns rows with stable seed, input text, label, and metadata fields.
 ```
 
 It returns the standard `synth-containers` rollout payload with `reward_info`,
-`summary`, `usage`, `trace`, and `metadata`.
+`summary`, `usage`, `trace`, `metadata`, and `split_identity`.
+
+`GET /metadata` advertises:
+
+- `literal_training_targets` default `forbid` (opt in with `BANKING77_LITERAL_TRAINING_TARGETS=allow`)
+- `leakage_contract {policy, protected_split, span_digest_route}` and per-example sha256 digests at `GET /leakage/span_digests`
+- `execution {policy_concurrency, timeout, retries}`
+- `split_identity {dataset_id, dataset_digest, train_seed, test_seed, samples, sampling_mode}`
 
 ## Non-Goals
 
