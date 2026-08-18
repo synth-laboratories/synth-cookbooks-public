@@ -549,6 +549,7 @@ async def metadata() -> dict[str, Any]:
             "rollout_modes": ["blocking"],
             "metadata": {
                 "trace_schema": "prompt_calls.llm_request.messages.v1",
+                "policy_ready": True,
             },
         },
         "metadata": {
