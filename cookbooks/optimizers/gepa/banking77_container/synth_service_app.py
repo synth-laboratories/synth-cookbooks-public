@@ -13,6 +13,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 try:
     from producer_integrity import (
@@ -56,6 +57,12 @@ ROLLOUT_TIMEOUT_SECONDS = float(
     os.environ.get("BANKING77_ROLLOUT_TIMEOUT_SECONDS", str(POLICY_TIMEOUT_SECONDS + 5))
 )
 DEFAULT_POLICY_MAX_TOKENS = 16
+DESKTOP_EVAL_POLICY_REF = {
+    "harness": "desktop_eval",
+    "config": "banking77_gpt_4_1_nano",
+    "model": "openai/gpt-4.1-nano",
+    "auth": "openrouter",
+}
 _openai_clients: dict[tuple[str, str, str], Any] = {}
 _openai_semaphore: asyncio.Semaphore | None = None
 _RAW_CREDENTIAL_KEYS = {
@@ -103,10 +110,29 @@ def _strip_openai_endpoint_suffix(url: str) -> str:
 def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
     policy = payload.get("policy")
     if not isinstance(policy, dict):
-        raise HTTPException(
-            status_code=422,
-            detail="rollout.policy is required for GEPA optimizer contract v2.",
-        )
+        policy_ref = payload.get("policy_ref") or payload.get("policyRef")
+        if not isinstance(policy_ref, dict) or any(
+            policy_ref.get(field) != DESKTOP_EVAL_POLICY_REF[field]
+            for field in ("harness", "config")
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "rollout.policy is required for GEPA optimizer contract v2; "
+                    "prepared Desktop evals must use the advertised policy_ref."
+                ),
+            )
+        policy = {
+            "provider": "openrouter",
+            "model": DESKTOP_EVAL_POLICY_REF["model"],
+            "api_family": "chat_completions",
+            "base_url": "https://openrouter.ai/api/v1",
+            "credential_mode": "byok",
+            "max_tokens": int(os.environ.get("BANKING77_POLICY_MAX_TOKENS", "64")),
+            "disable_reasoning": os.environ.get(
+                "BANKING77_POLICY_DISABLE_REASONING", "auto"
+            ),
+        }
     raw_key = _find_raw_credential_key(policy.get("config", {}))
     if raw_key is not None:
         raise HTTPException(
@@ -438,6 +464,7 @@ _STREAM_LOCK = asyncio.Lock()
 _STREAMS: dict[str, list[dict[str, Any]]] = {}
 _TERMINAL_ROLLOUT_STATUSES = {"completed", "failed", "cancelled"}
 _STREAM_SCHEMA = "synth.trace-stream-event.v1"
+_ROLLOUT_RECORD_SCHEMA = "synth.banking77-rollout-record.v1"
 
 
 def _stream_id(rollout_id: str) -> str:
@@ -451,7 +478,7 @@ def _stream_descriptor(rollout_id: str) -> dict[str, Any]:
         "stream.id": _stream_id(rollout_id),
         "transports": {
             "poll": {"url": f"/rollouts/{rollout_id}/events"},
-            "sse": None,
+            "sse": {"url": f"/rollouts/{rollout_id}/events/sse"},
             "websocket": None,
         },
         "cursor": {"kind": "sequence", "producer_kind": None},
@@ -469,6 +496,66 @@ def _stream_root() -> Path:
 def _stream_path(rollout_id: str) -> Path:
     digest = hashlib.sha256(rollout_id.encode("utf-8")).hexdigest()
     return _stream_root() / f"{digest}.jsonl"
+
+
+def _rollout_record_path(rollout_id: str) -> Path:
+    digest = hashlib.sha256(rollout_id.encode("utf-8")).hexdigest()
+    return _stream_root() / "records" / f"{digest}.json"
+
+
+def _load_rollout_record(rollout_id: str) -> dict[str, Any] | None:
+    cached = _ASYNC_ROLLOUTS.get(rollout_id)
+    if cached is not None:
+        return dict(cached)
+    path = _rollout_record_path(rollout_id)
+    if not path.is_file():
+        return None
+    envelope = json.loads(path.read_text(encoding="utf-8"))
+    if (
+        envelope.get("schema") != _ROLLOUT_RECORD_SCHEMA
+        or envelope.get("rollout_id") != rollout_id
+        or not isinstance(envelope.get("record"), dict)
+    ):
+        raise RuntimeError(f"invalid rollout record identity at {path}")
+    record = dict(envelope["record"])
+    _ASYNC_ROLLOUTS[rollout_id] = record
+    return dict(record)
+
+
+def _persist_rollout_record(record: dict[str, Any]) -> None:
+    rollout_id = str(record.get("rollout_id") or "").strip()
+    if not rollout_id:
+        raise RuntimeError("rollout record is missing rollout_id")
+    path = _rollout_record_path(rollout_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    envelope = {
+        "schema": _ROLLOUT_RECORD_SCHEMA,
+        "rollout_id": rollout_id,
+        "record": record,
+    }
+    encoded = json.dumps(envelope, sort_keys=True, separators=(",", ":"), default=str)
+    temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            handle.write(encoded)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _store_rollout_record(record: dict[str, Any]) -> None:
+    rollout_id = str(record.get("rollout_id") or "").strip()
+    _persist_rollout_record(record)
+    _ASYNC_ROLLOUTS[rollout_id] = dict(record)
 
 
 def _load_stream(rollout_id: str) -> list[dict[str, Any]]:
@@ -599,9 +686,19 @@ async def metadata() -> dict[str, Any]:
             "description": "Public prompt-optimizer cookbook for Banking77 with a live OpenAI-compatible policy model.",
         },
         "capabilities": {
+            "protocol": "synth.container.live-eval.v1",
+            "operations": {
+                "rollouts.prepare": True,
+                "rollouts.start_prepared": True,
+                "rollouts.get": True,
+                "rollouts.poll": True,
+                "reward.get": True,
+                "trace_v5.capture": False,
+            },
+            "policy_refs": [DESKTOP_EVAL_POLICY_REF],
             "contract_version": "container_contract.v1",
-            "rollout_modes": ["blocking"],
-            "metadata": {},
+            "rollout_modes": ["blocking", "async"],
+            "metadata": {"policy_ready": True},
         },
         "metadata": {
             "optimizer_contracts": {
@@ -854,7 +951,7 @@ async def rollout(request: Request) -> dict[str, Any]:
         raise HTTPException(
             status_code=422, detail="telemetry.transport=auto is forbidden"
         )
-    if transport not in {"", "poll"}:
+    if transport not in {"", "poll", "sse"}:
         raise HTTPException(
             status_code=422, detail=f"unsupported telemetry transport: {transport}"
         )
@@ -866,11 +963,53 @@ async def rollout(request: Request) -> dict[str, Any]:
     payload = {**payload, "rollout_id": rollout_id}
     stream = await _ensure_stream(rollout_id)
     submission_mode = str(payload.get("submission_mode") or "sync").strip().lower()
+    async with _ASYNC_ROLLOUT_LOCK:
+        existing = _load_rollout_record(rollout_id)
+    if existing is not None:
+        return existing
     if submission_mode == "sync":
-        completed = await _execute_rollout_payload_with_timeout(payload)
+        now = _now()
+        running = {
+            "rollout_id": rollout_id,
+            "status": "running",
+            "success_status": "running",
+            "status_detail": "running",
+            "task_id": TASK_ID,
+            "seed": int(payload.get("seed") or 0),
+            "summary": {},
+            "usage": {},
+            "metadata": {"submission_mode": "sync"},
+            "stream": stream,
+            "created_at": now,
+            "updated_at": now,
+        }
         async with _ASYNC_ROLLOUT_LOCK:
-            _ASYNC_ROLLOUTS[rollout_id] = completed
-        return {**completed, "stream": stream}
+            _store_rollout_record(running)
+        try:
+            completed = await _execute_rollout_payload_with_timeout(payload)
+        except Exception as exc:
+            failed = {
+                **running,
+                "status": "failed",
+                "success_status": "failed",
+                "status_detail": str(getattr(exc, "detail", exc)),
+                "summary": {"status_detail": str(getattr(exc, "detail", exc))},
+                "updated_at": _now(),
+            }
+            async with _ASYNC_ROLLOUT_LOCK:
+                _store_rollout_record(failed)
+            raise
+        completed = {
+            **completed,
+            "stream": stream,
+            "metadata": {
+                **dict(completed.get("metadata") or {}),
+                "submission_mode": "sync",
+            },
+        }
+        async with _ASYNC_ROLLOUT_LOCK:
+            _store_rollout_record(completed)
+        return completed
     if submission_mode != "async":
         raise HTTPException(
             status_code=400,
@@ -892,7 +1031,7 @@ async def rollout(request: Request) -> dict[str, Any]:
         "updated_at": now,
     }
     async with _ASYNC_ROLLOUT_LOCK:
-        _ASYNC_ROLLOUTS[rollout_id] = queued
+        _store_rollout_record(queued)
     asyncio.create_task(_complete_async_rollout(rollout_id, payload))
     return queued
 
@@ -908,7 +1047,7 @@ async def prepare_rollout(request: Request) -> dict[str, Any]:
         raise HTTPException(
             status_code=422, detail="telemetry.transport=auto is forbidden"
         )
-    if transport not in {"", "poll"}:
+    if transport not in {"", "poll", "sse"}:
         raise HTTPException(
             status_code=422, detail=f"unsupported telemetry transport: {transport}"
         )
@@ -960,6 +1099,40 @@ async def rollout_events(rollout_id: str, after: int = 0) -> dict[str, Any]:
     }
 
 
+@app.get("/rollouts/{rollout_id}/events/sse")
+async def rollout_events_sse(rollout_id: str) -> StreamingResponse:
+    await _ensure_stream(rollout_id)
+
+    async def event_source():
+        delivered: set[str] = set()
+        while True:
+            async with _STREAM_LOCK:
+                items = list(_load_stream(rollout_id))
+            for item in items:
+                identity = str(item.get("event_id"))
+                if identity in delivered:
+                    continue
+                delivered.add(identity)
+                yield (
+                    f"event: {item.get('kind', 'message')}\n"
+                    f"data: {json.dumps(item, separators=(',', ':'), default=str)}\n\n"
+                )
+            async with _ASYNC_ROLLOUT_LOCK:
+                current = _load_rollout_record(rollout_id)
+            if (
+                current is not None
+                and str(current.get("status") or "") in _TERMINAL_ROLLOUT_STATUSES
+            ):
+                break
+            await asyncio.sleep(0.1)
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/reward")
 async def reward(rollout_id: str) -> dict[str, Any]:
     current = await _async_rollout_record(rollout_id)
@@ -991,6 +1164,15 @@ async def reward(rollout_id: str) -> dict[str, Any]:
     }
 
 
+@app.post("/reward")
+async def reward_post(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    rollout_id = str(payload.get("rollout_id") or payload.get("rolloutId") or "").strip()
+    if not rollout_id:
+        raise HTTPException(status_code=422, detail="reward requires rollout_id")
+    return await reward(rollout_id)
+
+
 @app.post("/rollouts/{rollout_id}/terminate")
 async def terminate_rollout(rollout_id: str, request: Request) -> dict[str, Any]:
     try:
@@ -999,7 +1181,7 @@ async def terminate_rollout(rollout_id: str, request: Request) -> dict[str, Any]
         payload = {}
     reason = str(payload.get("reason") or "terminated")
     async with _ASYNC_ROLLOUT_LOCK:
-        current = _ASYNC_ROLLOUTS.get(rollout_id)
+        current = _load_rollout_record(rollout_id)
         if current is None:
             raise HTTPException(status_code=404, detail=f"unknown_rollout:{rollout_id}")
         if str(current.get("status") or "") not in _TERMINAL_ROLLOUT_STATUSES:
@@ -1015,7 +1197,7 @@ async def terminate_rollout(rollout_id: str, request: Request) -> dict[str, Any]
                     "termination": {"reason": reason},
                 },
             }
-            _ASYNC_ROLLOUTS[rollout_id] = current
+            _store_rollout_record(current)
         return dict(current)
 
 
@@ -1194,7 +1376,7 @@ async def _execute_rollout_payload_with_timeout(
 
 async def _async_rollout_record(rollout_id: str) -> dict[str, Any]:
     async with _ASYNC_ROLLOUT_LOCK:
-        current = _ASYNC_ROLLOUTS.get(rollout_id)
+        current = _load_rollout_record(rollout_id)
     if current is None:
         raise HTTPException(status_code=404, detail=f"unknown_rollout:{rollout_id}")
     return dict(current)
@@ -1202,16 +1384,18 @@ async def _async_rollout_record(rollout_id: str) -> dict[str, Any]:
 
 async def _complete_async_rollout(rollout_id: str, payload: dict[str, Any]) -> None:
     async with _ASYNC_ROLLOUT_LOCK:
-        current = _ASYNC_ROLLOUTS.get(rollout_id)
+        current = _load_rollout_record(rollout_id)
         if current is None or str(current.get("status") or "") == "cancelled":
             return
-        _ASYNC_ROLLOUTS[rollout_id] = {
-            **current,
-            "status": "running",
-            "success_status": "running",
-            "status_detail": "running",
-            "updated_at": _now(),
-        }
+        _store_rollout_record(
+            {
+                **current,
+                "status": "running",
+                "success_status": "running",
+                "status_detail": "running",
+                "updated_at": _now(),
+            }
+        )
     try:
         completed = await _execute_rollout_payload_with_timeout(payload)
     except Exception as exc:
@@ -1230,10 +1414,17 @@ async def _complete_async_rollout(rollout_id: str, payload: dict[str, Any]) -> N
             "updated_at": _now(),
         }
     async with _ASYNC_ROLLOUT_LOCK:
-        current = _ASYNC_ROLLOUTS.get(rollout_id)
+        current = _load_rollout_record(rollout_id)
         if current is None or str(current.get("status") or "") == "cancelled":
             return
-        _ASYNC_ROLLOUTS[rollout_id] = completed
+        completed = {
+            **completed,
+            "metadata": {
+                **dict(completed.get("metadata") or {}),
+                "submission_mode": "async",
+            },
+        }
+        _store_rollout_record(completed)
 
 
 def _row_for_seed(*, split: str, seed: int) -> dict[str, Any]:
@@ -1420,7 +1611,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--storage-root", type=Path)
     args = parser.parse_args()
+    if args.storage_root is not None:
+        args.storage_root.mkdir(parents=True, exist_ok=True)
+        os.environ["BANKING77_STREAM_ROOT"] = str(args.storage_root.resolve())
     uvicorn.run(
         app, host=args.host, port=args.port, log_level="warning", access_log=False
     )

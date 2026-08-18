@@ -9,6 +9,18 @@ the standard HTTP routes.
 The runnable GEPA config for this example lives beside the container at
 `gepa.toml`.
 
+## Quick start
+
+```bash
+./run_container.sh
+uv run --project . --with pytest pytest -q test_rollout_retention.py
+```
+
+The default endpoint is `http://127.0.0.1:8765`. Set `BANKING77_PORT` when a
+dedicated Workshop instance needs another port. Terminal sync and async
+rollouts are written atomically and remain retrievable by rollout id and
+`/reward` after process-memory loss or restart.
+
 ## Required Routes
 
 - `GET /metadata`
@@ -21,7 +33,11 @@ The runnable GEPA config for this example lives beside the container at
 - `POST /rollout`
 - `POST /rollouts/prepare`
 - `GET /rollouts/{rollout_id}/events?after={sequence}`
+- `GET /rollouts/{rollout_id}/events/sse`
+- `GET /rollouts/{rollout_id}`
+- `GET /rollouts/{rollout_id}/state`
 - `GET /reward?rollout_id={rollout_id}`
+- `POST /reward`
 
 The metadata payload advertises:
 
@@ -117,3 +133,8 @@ It returns the standard `synth-containers` rollout payload with `reward_info`,
 - No optimizer code in the container.
 - No MIPROv2 contract.
 - No direct private dataset paths.
+
+## Engineering ownership
+
+See [`../CONTAINER_ENGINEERING.md`](../CONTAINER_ENGINEERING.md) for the shared
+quality bar, paid-run preflight, and the corresponding HealthBench 2 path.

@@ -1,12 +1,14 @@
 [project]
-name = "banking77-gepa-container"
+name = "healthbench2-gepa-container"
 version = "0.1.0"
-description = "Public GEPA cookbook container for Banking77 (live OpenAI classifier)."
+description = "Public HealthBench 2 GEPA container using the normalized synth-containers runtime."
 requires-python = ">=3.11"
 dependencies = [
   "synth-containers @ git+https://github.com/synth-laboratories/containers.git@f5581409f45719360ac0a9adc4f311342c98be8c",
   "fastapi>=0.110",
   "uvicorn>=0.27",
-  "openai>=1.0",
-  "datasets>=2.18,<3",
+  "httpx>=0.27",
 ]
+
+[dependency-groups]
+dev = ["pytest>=8"]

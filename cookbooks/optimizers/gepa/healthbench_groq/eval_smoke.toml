@@ -1,0 +1,84 @@
+[run]
+run_id = "healthbench2_eval_smoke_openai_v2"
+output_dir = "../runs"
+seed = 0
+
+[container]
+url = "http://127.0.0.1:8114"
+startup_timeout_seconds = 30
+
+[taskset]
+train_split = "train"
+heldout_split = "heldout"
+train_ids = ["train:0", "train:1"]
+heldout_ids = ["heldout:100", "heldout:101"]
+
+[candidate]
+target_modules = ["system_prompt"]
+
+[seed_candidate]
+system_prompt = "You are a careful health assistant. Give accurate, relevant, and safe guidance. State uncertainty, ask useful follow-up questions, and recommend appropriate professional or emergency care when warranted."
+
+[policy]
+enabled = true
+provider = "openai"
+model = "gpt-4.1-mini-2025-04-14"
+api_key_env = "OPENAI_API_KEY"
+base_url = "https://api.openai.com/v1"
+max_tokens = 768
+
+[proposer]
+backend = "codex_app_server"
+execution_mode = "local_process"
+timeout_seconds = 300
+message_stall_timeout_seconds = 90
+model = "gpt-5.6-luna"
+reasoning_effort = "medium"
+auth_mode = "chatgpt"
+copy_host_auth = true
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+
+[gepa]
+max_generations = 0
+proposals_per_generation = 1
+minibatch_size = 1
+max_train_rollouts = 2
+max_heldout_rollouts = 2
+max_total_rollouts = 4
+max_cost_usd = 0.50
+proposer_estimated_cost_usd = 0.15
+rollout_estimated_cost_usd = 0.05
+rollout_failure_rate_tolerance = 0.25
+rollout_chunk_size = 2
+
+[gepa.pipeline]
+mode = "sync_serial"
+staleness_policy = "full"
+delta_max = 1
+max_in_flight_candidates = 1
+
+[gepa.pipeline.workers]
+propose = 1
+rollout = 2
+evaluate = 1
+
+[gepa.pipeline.adaptive_rollout_concurrency]
+enabled = false
+initial = 2
+min = 1
+max = 2
+increase_step = 1
+decrease_step = 1
+increase_after_successes = 2
+
+[gepa.task_pools]
+pareto = ["train:0", "train:1"]
+minibatch = ["train:0"]
+reflection = ["train:0"]
+heldout = ["heldout:100", "heldout:101"]
+
+[cache]
+mode = "off"
+path = ""
+namespace = "healthbench2_eval_smoke_openai_v2"
