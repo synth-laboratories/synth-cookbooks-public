@@ -237,3 +237,136 @@ class Banking77GepaV2ContractTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _Headers:
+    def __init__(self, values: dict[str, str]) -> None:
+        self._values = values
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._values.get(key, default)
+
+
+class _Response:
+    def __init__(self, status_code: int, headers: dict[str, str]) -> None:
+        self.status_code = status_code
+        self.headers = _Headers(headers)
+
+
+class _FakeStatusError(Exception):
+    """Shape-compatible stand-in for `openai.APIStatusError`."""
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int,
+        headers: dict[str, str] | None = None,
+        body: Any = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.response = _Response(status_code, headers or {})
+        self.body = body
+
+
+class PolicyFailureDiagnosticsTests(unittest.TestCase):
+    """The v0.7 Banking77 boundary.
+
+    Ten rollouts and two preflights recorded exactly
+    ``Policy model 'openai/gpt-4.1-nano' failed through Chat Completions API
+    after 1/1 attempts, timeout=20.0s.`` and a span carrying only
+    ``error_type: HTTPException`` — so a Workshop proxy failure, an OpenRouter
+    rejection, and a relayed upstream 502 were indistinguishable. These tests
+    pin the cause to the record.
+    """
+
+    service: ClassVar[types.ModuleType]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.service = _load_service()
+
+    def test_upstream_status_and_relay_origin_survive_into_the_detail(self) -> None:
+        error = _FakeStatusError(
+            "Bad gateway",
+            502,
+            headers={"x-workshop-proxy-origin": "proxy"},
+            body={"error": {"code": "upstream_unreachable"}},
+        )
+        detail = self.service._policy_failure_detail(
+            {"model": "openai/gpt-4.1-nano"}, error, 1, "Chat Completions API"
+        )
+        self.assertIn("upstream_status=502", detail)
+        self.assertIn("relay_origin=proxy", detail)
+        self.assertIn("upstream_code=upstream_unreachable", detail)
+
+    def test_a_relayed_upstream_status_is_distinguishable_from_a_proxy_one(
+        self,
+    ) -> None:
+        proxy_side = self.service._classify_policy_error(
+            _FakeStatusError("x", 502, headers={"x-workshop-proxy-origin": "proxy"})
+        )
+        upstream_side = self.service._classify_policy_error(
+            _FakeStatusError("x", 502, headers={"x-workshop-proxy-origin": "upstream"})
+        )
+        self.assertEqual(proxy_side["upstream_status"], 502)
+        self.assertEqual(upstream_side["upstream_status"], 502)
+        self.assertNotEqual(proxy_side["relay_origin"], upstream_side["relay_origin"])
+
+    def test_diagnostics_never_publish_a_capability_handle_or_key(self) -> None:
+        leaky = _FakeStatusError(
+            "Error connecting to "
+            "http://127.0.0.1:8791/cap/wcap_3e51db83d8ed4123b5b42b84f59c70cb"
+            "/v1/providers/openrouter/chat/completions "
+            "with Authorization: Bearer sk-or-v1-deadbeefdeadbeef",
+            502,
+        )
+        detail = self.service._policy_failure_detail(
+            {"model": "openai/gpt-4.1-nano"}, leaky, 1, "Chat Completions API"
+        )
+        self.assertNotIn("wcap_3e51db83d8ed4123b5b42b84f59c70cb", detail)
+        self.assertNotIn("sk-or-v1-deadbeefdeadbeef", detail)
+        self.assertIn("wcap_<redacted>", detail)
+        self.assertIn("upstream_status=502", detail)
+
+    def test_a_transport_failure_without_a_status_still_names_its_type(self) -> None:
+        classified = self.service._classify_policy_error(
+            ConnectionRefusedError("[Errno 61] Connection refused")
+        )
+        self.assertEqual(classified["error_type"], "ConnectionRefusedError")
+        self.assertIsNone(classified["upstream_status"])
+        self.assertIn("Connection refused", classified["message"])
+
+    def test_disable_reasoning_auto_survives_the_proxy_hop(self) -> None:
+        """`auto` keyed off the base URL, which the proxy replaces.
+
+        Under ``credential_mode=proxy`` the base URL is Workshop's capability
+        route, so an OpenRouter policy silently stopped disabling reasoning.
+        """
+        direct = self.service._policy_chat_extra_body(
+            {
+                "provider": "openrouter",
+                "disable_reasoning": "auto",
+                "base_url": "https://openrouter.ai/api/v1",
+            }
+        )
+        proxied = self.service._policy_chat_extra_body(
+            {
+                "provider": "openrouter",
+                "disable_reasoning": "auto",
+                "base_url": "http://127.0.0.1:8791/cap/wcap_x/v1/providers/openrouter",
+            }
+        )
+        self.assertIsNotNone(direct)
+        self.assertEqual(direct, proxied)
+
+    def test_a_non_openrouter_provider_still_leaves_reasoning_alone(self) -> None:
+        self.assertIsNone(
+            self.service._policy_chat_extra_body(
+                {
+                    "provider": "openai",
+                    "disable_reasoning": "auto",
+                    "base_url": "https://api.openai.com/v1",
+                }
+            )
+        )
