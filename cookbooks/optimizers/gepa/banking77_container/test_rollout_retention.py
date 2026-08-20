@@ -125,7 +125,7 @@ def test_synchronous_rollout_survives_process_memory_loss(
 def test_desktop_contract_is_truthfully_advertised_and_resolved():
     info = asyncio.run(service.metadata())
     capabilities = info["capabilities"]
-    assert capabilities["protocol"] == "synth.container.live-eval.v1"
+    assert capabilities["protocol"] == "synth_optimizers.gepa.v2"
     assert capabilities["operations"] == {
         "rollouts.prepare": True,
         "rollouts.start_prepared": True,

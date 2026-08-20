@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import time
 import uuid
 from pathlib import Path
@@ -122,16 +123,37 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
                     "prepared Desktop evals must use the advertised policy_ref."
                 ),
             )
+        workshop_route = os.environ.get("WORKSHOP_OPENAI_ROUTE", "").strip()
+        # This cookbook launcher runs the service on the host. Workshop emits a
+        # Docker-reachable route for true container workers, so translate only
+        # its fixed bridge hostname back to loopback before the host process
+        # calls the local proxy. The capability path and port remain unchanged.
+        workshop_route = workshop_route.replace(
+            "://host.docker.internal:", "://127.0.0.1:"
+        )
         policy = {
             "provider": "openrouter",
             "model": DESKTOP_EVAL_POLICY_REF["model"],
             "api_family": "chat_completions",
-            "base_url": "https://openrouter.ai/api/v1",
-            "credential_mode": "byok",
+            "inference_url": workshop_route or None,
+            "base_url": None if workshop_route else "https://openrouter.ai/api/v1",
+            "credential_mode": "proxy" if workshop_route else "byok",
             "max_tokens": int(os.environ.get("BANKING77_POLICY_MAX_TOKENS", "64")),
             "disable_reasoning": os.environ.get(
                 "BANKING77_POLICY_DISABLE_REASONING", "auto"
             ),
+        }
+    workshop_route = os.environ.get("WORKSHOP_OPENAI_ROUTE", "").strip()
+    if workshop_route:
+        workshop_route = workshop_route.replace(
+            "://host.docker.internal:", "://127.0.0.1:"
+        )
+        policy = {
+            **policy,
+            "provider": "openrouter",
+            "inference_url": workshop_route,
+            "base_url": None,
+            "credential_mode": "proxy",
         }
     raw_key = _find_raw_credential_key(policy.get("config", {}))
     if raw_key is not None:
@@ -213,7 +235,13 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _policy_api_key(policy: dict[str, Any]) -> str:
     if policy["credential_mode"] == "proxy":
-        return "proxy"
+        proxy_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+        if proxy_key:
+            return proxy_key
+        raise HTTPException(
+            status_code=503,
+            detail="OPENROUTER_API_KEY proxy sentinel is not set.",
+        )
     env_name = (
         "OPENROUTER_API_KEY"
         if policy["provider"].lower() == "openrouter"
@@ -267,6 +295,94 @@ def _is_policy_timeout(error: Exception) -> bool:
     return "timeout" in name or "timedout" in name
 
 
+_HANDLE_PATTERN = re.compile(r"wcap_[A-Za-z0-9]+")
+_KEY_PATTERN = re.compile(r"(sk-[A-Za-z0-9_\-]+|Bearer\s+\S+)")
+
+
+def _sanitize_diagnostic(text: str) -> str:
+    """Strip anything that identifies a credential or a capability.
+
+    The proxy route embeds the capability handle in its path, and every
+    httpx/OpenAI exception repr carries the request URL. A diagnostic that
+    pasted the repr verbatim would publish the handle into rollout records,
+    so redaction happens here rather than at each call site.
+    """
+    text = _HANDLE_PATTERN.sub("wcap_<redacted>", text)
+    text = _KEY_PATTERN.sub("<redacted>", text)
+    for name in _RAW_CREDENTIAL_KEYS:
+        text = re.sub(
+            rf"{name}['\"]?\s*[:=]\s*['\"]?[^\s,'\"}}]+",
+            f"{name}=<redacted>",
+            text,
+            flags=re.IGNORECASE,
+        )
+    return text[:400]
+
+
+def _classify_policy_error(error: Exception) -> dict[str, Any]:
+    """Reduce a policy-call failure to a secret-free, attributable record.
+
+    Ten v0.7 Banking77 rollouts recorded only `error_type: HTTPException`
+    because the chat-completions path raised without the cause attached. The
+    upstream status is the one field that separates "Workshop could not reach
+    the provider" from "the provider rejected the request", so it is preserved
+    whenever the SDK exposes it.
+    """
+    detail: dict[str, Any] = {
+        "error_type": type(error).__name__,
+        "upstream_status": None,
+        "upstream_code": None,
+        "relay_origin": None,
+        "message": _sanitize_diagnostic(str(error) or repr(error)),
+    }
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int):
+        detail["upstream_status"] = status
+    response = getattr(error, "response", None)
+    if response is not None:
+        if detail["upstream_status"] is None:
+            code = getattr(response, "status_code", None)
+            if isinstance(code, int):
+                detail["upstream_status"] = code
+        # Workshop's provider proxy stamps who produced the status, so a
+        # proxy-generated 502 is distinguishable from a relayed upstream 502.
+        try:
+            detail["relay_origin"] = response.headers.get("x-workshop-proxy-origin")
+        except Exception:  # pragma: no cover - defensive on exotic transports
+            detail["relay_origin"] = None
+    body = getattr(error, "body", None)
+    if isinstance(body, dict):
+        inner = body.get("error")
+        source = inner if isinstance(inner, dict) else body
+        code = source.get("code")
+        if code is not None:
+            detail["upstream_code"] = _sanitize_diagnostic(str(code))
+    if _is_policy_timeout(error):
+        detail["upstream_code"] = detail["upstream_code"] or "timeout"
+    return detail
+
+
+def _policy_failure_detail(
+    policy: dict[str, Any], error: Exception, attempt: int, api: str
+) -> str:
+    classified = _classify_policy_error(error)
+    parts = [
+        f"Policy model {policy['model']!r} failed through {api} "
+        f"after {attempt}/{POLICY_RETRIES} attempts, "
+        f"timeout={POLICY_TIMEOUT_SECONDS:.1f}s.",
+        f"error_type={classified['error_type']}",
+    ]
+    if classified["upstream_status"] is not None:
+        parts.append(f"upstream_status={classified['upstream_status']}")
+    if classified["relay_origin"]:
+        parts.append(f"relay_origin={classified['relay_origin']}")
+    if classified["upstream_code"]:
+        parts.append(f"upstream_code={classified['upstream_code']}")
+    if classified["message"]:
+        parts.append(f"message={classified['message']}")
+    return " ".join(parts)
+
+
 def _policy_prefers_chat(policy: dict[str, Any]) -> bool:
     return policy["api_family"] == "chat_completions"
 
@@ -279,7 +395,15 @@ def _policy_chat_extra_body(policy: dict[str, Any]) -> dict[str, Any] | None:
     setting = policy["disable_reasoning"]
     disable_reasoning = setting in {"1", "true", "yes", "on"}
     if setting == "auto":
-        disable_reasoning = "openrouter.ai" in str(policy.get("base_url") or "").lower()
+        # Do not key this off the base URL: under credential_mode=proxy the
+        # base URL is Workshop's capability route, which never contains the
+        # provider hostname, so auto-detection silently flipped to False and
+        # routing through the proxy changed policy behaviour.
+        provider = str(policy.get("provider") or "").strip().lower()
+        disable_reasoning = (
+            provider == "openrouter"
+            or "openrouter.ai" in str(policy.get("base_url") or "").lower()
+        )
     if not disable_reasoning:
         return None
     return {
@@ -686,7 +810,7 @@ async def metadata() -> dict[str, Any]:
             "description": "Public prompt-optimizer cookbook for Banking77 with a live OpenAI-compatible policy model.",
         },
         "capabilities": {
-            "protocol": "synth.container.live-eval.v1",
+            "protocol": GEPA_OPTIMIZER_CONTRACT_VERSION,
             "operations": {
                 "rollouts.prepare": True,
                 "rollouts.start_prepared": True,
@@ -1251,7 +1375,9 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
             {
                 "span_id": f"llm:{rollout_id}:1",
                 "status": "failed",
-                "error_type": type(exc).__name__,
+                **_classify_policy_error(
+                    exc.__cause__ if exc.__cause__ is not None else exc
+                ),
             },
         )
         await _append_stream_event(
@@ -1492,17 +1618,20 @@ async def _predict_label(
                         status_code = 504 if _is_policy_timeout(chat_error) else 502
                         raise HTTPException(
                             status_code=status_code,
-                            detail=(
-                                f"Policy model {policy['model']!r} failed through Chat Completions API "
-                                f"after {attempt}/{POLICY_RETRIES} attempts, "
-                                f"timeout={POLICY_TIMEOUT_SECONDS:.1f}s."
+                            detail=_policy_failure_detail(
+                                policy, chat_error, attempt, "Chat Completions API"
                             ),
                         ) from chat_error
                     await asyncio.sleep(_policy_retry_delay(attempt))
             else:
                 raise HTTPException(
                     status_code=504,
-                    detail=f"Policy model {policy['model']!r} failed: {last_error!r}",
+                    detail=_policy_failure_detail(
+                        policy,
+                        last_error or RuntimeError("policy retries exhausted"),
+                        POLICY_RETRIES,
+                        "Chat Completions API",
+                    ),
                 )
             raw = (resp.choices[0].message.content or "").strip()
             usage = {
@@ -1563,8 +1692,11 @@ async def _predict_label(
                 raise HTTPException(
                     status_code=status_code,
                     detail=(
-                        f"Policy model {policy['model']!r} failed through OpenAI-compatible API. "
-                        f"Responses error: {responses_error!r}; chat completions error: {chat_error!r}"
+                        _policy_failure_detail(
+                            policy, chat_error, 1, "OpenAI-compatible API"
+                        )
+                        + " responses_error="
+                        + _sanitize_diagnostic(repr(responses_error))
                     ),
                 ) from chat_error
             raw = (resp.choices[0].message.content or "").strip()
