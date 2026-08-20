@@ -122,16 +122,37 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
                     "prepared Desktop evals must use the advertised policy_ref."
                 ),
             )
+        workshop_route = os.environ.get("WORKSHOP_OPENAI_ROUTE", "").strip()
+        # This cookbook launcher runs the service on the host. Workshop emits a
+        # Docker-reachable route for true container workers, so translate only
+        # its fixed bridge hostname back to loopback before the host process
+        # calls the local proxy. The capability path and port remain unchanged.
+        workshop_route = workshop_route.replace(
+            "://host.docker.internal:", "://127.0.0.1:"
+        )
         policy = {
             "provider": "openrouter",
             "model": DESKTOP_EVAL_POLICY_REF["model"],
             "api_family": "chat_completions",
-            "base_url": "https://openrouter.ai/api/v1",
-            "credential_mode": "byok",
+            "inference_url": workshop_route or None,
+            "base_url": None if workshop_route else "https://openrouter.ai/api/v1",
+            "credential_mode": "proxy" if workshop_route else "byok",
             "max_tokens": int(os.environ.get("BANKING77_POLICY_MAX_TOKENS", "64")),
             "disable_reasoning": os.environ.get(
                 "BANKING77_POLICY_DISABLE_REASONING", "auto"
             ),
+        }
+    workshop_route = os.environ.get("WORKSHOP_OPENAI_ROUTE", "").strip()
+    if workshop_route:
+        workshop_route = workshop_route.replace(
+            "://host.docker.internal:", "://127.0.0.1:"
+        )
+        policy = {
+            **policy,
+            "provider": "openrouter",
+            "inference_url": workshop_route,
+            "base_url": None,
+            "credential_mode": "proxy",
         }
     raw_key = _find_raw_credential_key(policy.get("config", {}))
     if raw_key is not None:
@@ -213,7 +234,13 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _policy_api_key(policy: dict[str, Any]) -> str:
     if policy["credential_mode"] == "proxy":
-        return "proxy"
+        proxy_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+        if proxy_key:
+            return proxy_key
+        raise HTTPException(
+            status_code=503,
+            detail="OPENROUTER_API_KEY proxy sentinel is not set.",
+        )
     env_name = (
         "OPENROUTER_API_KEY"
         if policy["provider"].lower() == "openrouter"
@@ -686,7 +713,7 @@ async def metadata() -> dict[str, Any]:
             "description": "Public prompt-optimizer cookbook for Banking77 with a live OpenAI-compatible policy model.",
         },
         "capabilities": {
-            "protocol": "synth.container.live-eval.v1",
+            "protocol": GEPA_OPTIMIZER_CONTRACT_VERSION,
             "operations": {
                 "rollouts.prepare": True,
                 "rollouts.start_prepared": True,
