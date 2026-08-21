@@ -36,6 +36,61 @@ ROLLOUT_TIMEOUT_SECONDS = float(
     os.environ.get("BANKING77_ROLLOUT_TIMEOUT_SECONDS", str(POLICY_TIMEOUT_SECONDS + 5))
 )
 DEFAULT_POLICY_MAX_TOKENS = 16
+# USD / 1M tokens. `cost_usd: 0.0` is not a measurement — OpenAI chat usage has
+# tokens, not a billed dollar field, so this container must apply list prices.
+_POLICY_USD_PER_MILLION: dict[str, tuple[float, float, float]] = {
+    # model: (input, cached_input, output)
+    "gpt-4.1-nano": (0.10, 0.025, 0.40),
+    "openai/gpt-4.1-nano": (0.10, 0.025, 0.40),
+    "gpt-4.1-mini": (0.40, 0.10, 1.60),
+    "gpt-4.1": (2.00, 0.50, 8.00),
+    "gpt-5.4-nano": (0.20, 0.02, 1.25),
+}
+
+
+def _normalize_policy_model(model: str) -> str:
+    text = str(model or "").strip()
+    if text.lower().startswith("openai/"):
+        return text[len("openai/") :]
+    return text
+
+
+def _price_policy_usage(model: str, usage: dict[str, Any]) -> dict[str, Any]:
+    out = dict(usage)
+    out["model"] = model
+    prompt = int(out.get("prompt_tokens") or out.get("input_tokens") or 0)
+    completion = int(out.get("completion_tokens") or out.get("output_tokens") or 0)
+    cached = int(out.get("cached_prompt_tokens") or 0)
+    billed = out.get("cost_usd")
+    try:
+        billed_f = float(billed) if billed is not None else None
+    except (TypeError, ValueError):
+        billed_f = None
+    if billed_f is not None and billed_f > 0.0:
+        out["cost_source"] = "provider_billed"
+        return out
+    rates = _POLICY_USD_PER_MILLION.get(model) or _POLICY_USD_PER_MILLION.get(
+        _normalize_policy_model(model)
+    )
+    if rates is None:
+        out["cost_usd"] = 0.0
+        out["cost_source"] = "unpriced" if (prompt or completion) else "no_tokens"
+        return out
+    input_rate, cached_rate, output_rate = rates
+    billable_prompt = max(0, prompt - min(cached, prompt))
+    cost = (
+        billable_prompt * input_rate / 1_000_000.0
+        + min(cached, prompt) * cached_rate / 1_000_000.0
+        + completion * output_rate / 1_000_000.0
+    )
+    out["cost_usd"] = cost
+    out["cost_source"] = f"static_price:{_normalize_policy_model(model).lower()}"
+    out["cost_pricing"] = {
+        "input_usd_per_million": input_rate,
+        "cached_input_usd_per_million": cached_rate,
+        "output_usd_per_million": output_rate,
+    }
+    return out
 DESKTOP_EVAL_POLICY_REF = {
     "harness": "desktop_eval",
     "config": "banking77_gpt_4_1_nano",
@@ -115,7 +170,7 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
             "api_family": "chat_completions",
             "inference_url": workshop_route or None,
             "base_url": None if workshop_route else "https://openrouter.ai/api/v1",
-            "credential_mode": "proxy" if workshop_route else "byok",
+            "credential_mode": "workshop_proxy" if workshop_route else "byok",
             "max_tokens": int(os.environ.get("BANKING77_POLICY_MAX_TOKENS", "64")),
             "disable_reasoning": os.environ.get(
                 "BANKING77_POLICY_DISABLE_REASONING", "auto"
@@ -131,7 +186,7 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
             "provider": "openrouter",
             "inference_url": workshop_route,
             "base_url": None,
-            "credential_mode": "proxy",
+            "credential_mode": "workshop_proxy",
         }
     raw_key = _find_raw_credential_key(policy.get("config", {}))
     if raw_key is not None:
@@ -153,7 +208,7 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
             detail=f"unsupported rollout.policy.api_family: {api_family!r}",
         )
     credential_mode = _normalize_policy_enum(policy.get("credential_mode"), "byok")
-    if credential_mode not in {"byok", "proxy"}:
+    if credential_mode not in {"byok", "proxy", "workshop_proxy"}:
         raise HTTPException(
             status_code=422,
             detail=f"unsupported rollout.policy.credential_mode: {credential_mode!r}",
@@ -166,13 +221,13 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
         )
     raw_base_url = (
         str(policy.get("inference_url") or "").strip()
-        if credential_mode == "proxy"
+        if credential_mode in {"proxy", "workshop_proxy"}
         else str(policy.get("base_url") or "").strip()
     )
-    if credential_mode == "proxy" and not raw_base_url:
+    if credential_mode in {"proxy", "workshop_proxy"} and not raw_base_url:
         raise HTTPException(
             status_code=422,
-            detail="rollout.policy.inference_url is required when credential_mode=proxy.",
+            detail="rollout.policy.inference_url is required when credential_mode is proxied.",
         )
     if (
         provider.lower() == "openrouter"
@@ -212,13 +267,11 @@ def _require_policy(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _policy_api_key(policy: dict[str, Any]) -> str:
-    if policy["credential_mode"] == "proxy":
-        proxy_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-        if proxy_key:
-            return proxy_key
-        raise HTTPException(
-            status_code=503,
-            detail="OPENROUTER_API_KEY proxy sentinel is not set.",
+    if policy["credential_mode"] in {"proxy", "workshop_proxy"}:
+        return (
+            os.environ.get("OPENAI_API_KEY", "").strip()
+            or os.environ.get("OPENROUTER_API_KEY", "").strip()
+            or "workshop-proxy"
         )
     env_name = (
         "OPENROUTER_API_KEY"
@@ -1283,7 +1336,7 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "prediction": prediction,
             "expected": expected,
         },
-        "usage": {**usage, "cost_usd": 0.0},
+        "usage": _price_policy_usage(policy["model"], usage),
         "trace": {
             "event_history": [
                 {"type": "input", "text": row.get("text")},
@@ -1465,26 +1518,83 @@ async def _predict_label(
                 ),
                 "total_tokens": int(getattr(resp.usage, "total_tokens", 0) or 0),
             }
-            return _normalize_policy_label(raw), usage
-        try:
-            resp = await asyncio.wait_for(
-                client.responses.create(
-                    model=policy["model"],
-                    input=[
+            details = getattr(resp.usage, "prompt_tokens_details", None)
+            if details is not None:
+                usage["cached_prompt_tokens"] = int(
+                    getattr(details, "cached_tokens", 0) or 0
+                )
+            return _normalize_policy_label(raw), _price_policy_usage(policy["model"], usage)
+        responses_error: Exception | None = None
+        resp = None
+        for attempt in range(1, POLICY_RETRIES + 1):
+            try:
+                # Parity with the chat branch. Responses spells the output cap
+                # `max_output_tokens`, not `max_tokens`; omitting it does not mean
+                # "use the chat value", it means uncapped. It also budgets reasoning
+                # tokens out of the same allowance, so a small cap can be consumed
+                # entirely by a reasoning item, returning status="incomplete" with no
+                # message at all (observed against nvidia/nemotron-3.5-lightning at
+                # max_output_tokens=16). Reasoning suppression uses the same payload
+                # the chat branch sends.
+                request_kwargs: dict[str, Any] = {
+                    "model": policy["model"],
+                    "input": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_content},
                     ],
-                    temperature=0,
-                ),
-                timeout=POLICY_TIMEOUT_SECONDS,
-            )
+                    "temperature": 0,
+                    "max_output_tokens": policy["max_tokens"],
+                }
+                extra_body = _policy_chat_extra_body(policy)
+                if extra_body is not None:
+                    request_kwargs["extra_body"] = extra_body
+                resp = await asyncio.wait_for(
+                    client.responses.create(**request_kwargs),
+                    timeout=POLICY_TIMEOUT_SECONDS,
+                )
+                break
+            except Exception as error:
+                responses_error = error
+                if attempt >= POLICY_RETRIES or not _is_policy_timeout(error):
+                    break
+                await asyncio.sleep(_policy_retry_delay(attempt))
+        if resp is not None:
+            responses_error = None
+            # An exhausted or truncated response is an infra failure, not a wrong
+            # prediction. Letting it fall through to _normalize_policy_label would
+            # score an empty string as a bad label and quietly depress the reward.
+            status = str(getattr(resp, "status", "") or "")
+            if status and status != "completed":
+                reason = getattr(getattr(resp, "incomplete_details", None), "reason", None)
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Policy model {policy['model']!r} returned Responses status "
+                        f"{status!r} (reason={reason!r}) with no completed message; "
+                        f"max_output_tokens={policy['max_tokens']}."
+                    ),
+                )
             raw = (resp.output_text or "").strip()
+            if not raw:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Policy model {policy['model']!r} returned an empty Responses "
+                        f"output_text; max_output_tokens={policy['max_tokens']}."
+                    ),
+                )
             usage = {
                 "prompt_tokens": int(getattr(resp.usage, "input_tokens", 0) or 0),
                 "completion_tokens": int(getattr(resp.usage, "output_tokens", 0) or 0),
                 "total_tokens": int(getattr(resp.usage, "total_tokens", 0) or 0),
             }
-        except Exception as responses_error:
+            details = getattr(resp.usage, "input_tokens_details", None)
+            if details is not None:
+                usage["cached_prompt_tokens"] = int(
+                    getattr(details, "cached_tokens", 0) or 0
+                )
+            return _normalize_policy_label(raw), _price_policy_usage(policy["model"], usage)
+        if responses_error is not None:
             if _is_policy_timeout(responses_error):
                 raise HTTPException(
                     status_code=504,
@@ -1528,7 +1638,7 @@ async def _predict_label(
                 ),
                 "total_tokens": int(getattr(resp.usage, "total_tokens", 0) or 0),
             }
-    return _normalize_policy_label(raw), usage
+    return _normalize_policy_label(raw), _price_policy_usage(policy["model"], usage)
 
 
 def _normalize_policy_label(raw: str) -> str:
