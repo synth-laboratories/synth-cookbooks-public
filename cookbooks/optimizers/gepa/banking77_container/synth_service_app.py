@@ -303,6 +303,9 @@ def _get_openai_client(policy: dict[str, Any]) -> Any:
         client_kwargs = {
             "api_key": _policy_api_key(policy),
             "timeout": POLICY_TIMEOUT_SECONDS,
+            # GEPA owns retry policy and attempt accounting. Hidden SDK retries
+            # made one declared attempt issue three provider requests.
+            "max_retries": 0,
         }
         if base_url:
             client_kwargs["base_url"] = base_url
@@ -324,6 +327,25 @@ def _is_policy_timeout(error: Exception) -> bool:
         return True
     name = type(error).__name__.lower()
     return "timeout" in name or "timedout" in name
+
+
+def _safe_policy_error(error: Exception) -> dict[str, Any]:
+    """Retain actionable provider diagnostics without leaking proxy handles."""
+    detail: dict[str, Any] = {"exception_type": type(error).__name__}
+    status_code = getattr(error, "status_code", None)
+    if isinstance(status_code, int):
+        detail["status_code"] = status_code
+    request_id = getattr(error, "request_id", None)
+    if isinstance(request_id, str) and request_id.strip():
+        detail["request_id"] = request_id.strip()
+    body = getattr(error, "body", None)
+    if isinstance(body, dict):
+        provider_error = body.get("error") if isinstance(body.get("error"), dict) else body
+        for key in ("code", "type", "message"):
+            value = provider_error.get(key)
+            if isinstance(value, str) and value.strip():
+                detail[key] = value.strip()
+    return detail
 
 
 def _policy_prefers_chat(policy: dict[str, Any]) -> bool:
@@ -1496,12 +1518,14 @@ async def _predict_label(
                     last_error = chat_error
                     if attempt >= POLICY_RETRIES or not _is_policy_timeout(chat_error):
                         status_code = 504 if _is_policy_timeout(chat_error) else 502
+                        provider_error = _safe_policy_error(chat_error)
                         raise HTTPException(
                             status_code=status_code,
                             detail=(
                                 f"Policy model {policy['model']!r} failed through Chat Completions API "
                                 f"after {attempt}/{POLICY_RETRIES} attempts, "
-                                f"timeout={POLICY_TIMEOUT_SECONDS:.1f}s."
+                                f"timeout={POLICY_TIMEOUT_SECONDS:.1f}s; "
+                                f"provider_error={json.dumps(provider_error, sort_keys=True)}"
                             ),
                         ) from chat_error
                     await asyncio.sleep(_policy_retry_delay(attempt))
