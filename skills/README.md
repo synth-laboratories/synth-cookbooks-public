@@ -12,12 +12,13 @@ skills/
     SKILL.md
 ```
 
-The `gepa` and `containers` skills now live in their canonical repos:
+The reusable optimizer skills now live in their canonical public repo:
 
 - GEPA → [`synth-laboratories/optimizers`](https://github.com/synth-laboratories/optimizers)
   at `skills/gepa/`.
-- Containers → [`synth-laboratories/containers`](https://github.com/synth-laboratories/containers)
-  at `skills/containers/`.
+
+Container-authoring guidance lives with the public package docs and the GEPA
+task contract linked from `synth-laboratories/optimizers`.
 
 This directory remains for future cookbook-specific skills. Use skills as
 copyable, public cookbook assets. For native Codex auto-discovery inside a

@@ -6,7 +6,7 @@ here.
 
 | Package | PyPI | Source repo |
 | --- | --- | --- |
-| `synth-containers` | <https://pypi.org/project/synth-containers/> | <https://github.com/synth-laboratories/containers> |
+| `synth-containers` | <https://pypi.org/project/synth-containers/> | Public package metadata |
 | `synth-optimizers` | <https://pypi.org/project/synth-optimizers/> | <https://github.com/synth-laboratories/optimizers> |
 
 Cookbooks consume them from PyPI. For example, the GEPA runners invoke the

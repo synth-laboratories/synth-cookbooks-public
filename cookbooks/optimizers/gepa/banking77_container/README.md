@@ -131,7 +131,7 @@ It returns the standard `synth-containers` rollout payload with `reward_info`,
 
 - No private policy router.
 - No optimizer code in the container.
-- No MIPROv2 contract.
+- No dependency on external optimizer-specific program schemas.
 - No direct private dataset paths.
 
 ## Engineering ownership

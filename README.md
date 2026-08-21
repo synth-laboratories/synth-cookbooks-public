@@ -3,18 +3,16 @@
 Public-safe Synth cookbook recipes, examples, and package source.
 
 This repo is the public monorepo for Synth cookbook content and first-class
-public packages. Cookbook material should only land here after review in
-`synth-cookbooks-private` confirms the recipe is reproducible without private
-credentials, internal datasets, unreleased behavior, or unredacted
-logs/screenshots.
+public examples. Cookbook material should only land here after public-promotion
+review confirms the recipe is reproducible without private credentials,
+internal datasets, unreleased behavior, or unredacted logs/screenshots.
 
 ## Layout
 
 - `packages/` - public package source, with independently releasable packages
   such as `synth-containers`.
 - `cookbooks/` - public recipes, including GEPA optimizer examples and the
-  GELO quickstart slice. Active private drafts still live in
-  `synth-cookbooks-private` until promoted.
+  GELO quickstart slice.
 - `skills/` - portable agent skills that help users run or adapt the public
   packages and cookbooks.
 - `assets/` - public-safe screenshots, diagrams, and generated media.
@@ -51,7 +49,7 @@ metadata, README, version, build command, and publish command.
 The public GEPA examples live under `cookbooks/optimizers/gepa/`. They use the
 Rust `synth-optimizers` GEPA runtime with a Codex app-server proposer and
 HTTP task containers. Current cookbook containers include Banking77, HotpotQA,
-TBLite, Crafter, and MiniGrid.
+the TBLite coding micro-container, Crafter, and MiniGrid.
 
 The public GELO quickstart lives under `cookbooks/optimizers/gelo/`. It is the
 current public GELO cookbook path for launch, docs, and blog links.
