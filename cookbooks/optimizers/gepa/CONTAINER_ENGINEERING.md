@@ -5,7 +5,7 @@ These are the two canonical, public task boundaries used for fast eval and optim
 | Container | Canonical directory | Runtime profile |
 | --- | --- | --- |
 | Banking77 | `banking77_container/` | closed-label classifier with environment-authored accuracy |
-| HealthBench 2 | `healthbench_groq/` | open-text medical response with physician-rubric grading |
+| HealthBench 2 (parked) | `healthbench_groq/` | missing `healthbench_chat` runtime in Containers 0.4.2; not runnable |
 
 ## Shared quality contract
 
@@ -42,7 +42,11 @@ cd healthbench_groq
 uv run --project . --group dev pytest -q test_container_contract.py
 ```
 
-The service defaults to `127.0.0.1:8114`. A storage root is mandatory so concurrent Workshop instances cannot accidentally share rollout ownership. `GROQ_API_KEY` supplies the policy model and `OPENAI_API_KEY` supplies the rubric grader. The canonical grader is `gpt-4.1-2025-04-14`; a scaled grader must remain explicitly labeled non-canonical.
+This recipe is parked: Containers 0.4.2 lacks its `healthbench_chat` target.
+When that runtime becomes available, the service defaults to `127.0.0.1:8114`.
+A dedicated storage root is mandatory. `OPENROUTER_API_KEY` supplies the policy
+model and `OPENAI_API_KEY` supplies the rubric grader. The canonical grader remains
+`gpt-4.1-2025-04-14`; a scaled grader must remain explicitly non-canonical.
 
 ## Preflight before paid runs
 

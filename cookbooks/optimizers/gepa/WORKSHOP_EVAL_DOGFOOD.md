@@ -38,10 +38,13 @@ cookbooks/optimizers/gepa/banking77_container/run_container.sh --port 8765
 
 Entrypoint: `cookbooks/optimizers/gepa/banking77_container/run_container.sh`
 
-HealthBench uses the canonical OpenAI physician-rubric scorer:
+HealthBench is **parked**: Containers 0.4.2 lacks `healthbench_chat`.
+Do not include it in runnable acceptance until the runtime is published.
+Its proposed policy uses OpenRouter and its canonical physician-rubric scorer
+still uses OpenAI. The future launch command is:
 
 ```bash
-cookbooks/optimizers/gepa/healthbench_groq/run_container.sh --port 8114
+cookbooks/optimizers/gepa/healthbench_groq/run_container.sh --port 8114 --storage-root /absolute/path/to/dedicated/run-store
 ```
 
 Entrypoint: `cookbooks/optimizers/gepa/healthbench_groq/run_container.sh`

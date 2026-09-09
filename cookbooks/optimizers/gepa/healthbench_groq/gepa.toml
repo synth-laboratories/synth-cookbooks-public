@@ -1,5 +1,5 @@
 [run]
-run_id = "healthbench_groq_gepa_aug13i"
+run_id = "healthbench_openrouter_gepa"
 output_dir = "../runs"
 seed = 0
 
@@ -34,10 +34,10 @@ system_prompt = "You are a careful health assistant. Give accurate, relevant, an
 
 [policy]
 enabled = true
-provider = "groq"
-model = "llama-3.1-8b-instant"
-api_key_env = "GROQ_API_KEY"
-base_url = "https://api.groq.com/openai/v1"
+provider = "openrouter"
+model = "meta-llama/llama-3.1-8b-instruct"
+api_key_env = "OPENROUTER_API_KEY"
+base_url = "https://openrouter.ai/api/v1"
 max_tokens = 1536
 
 [proposer]
@@ -94,4 +94,4 @@ heldout = ["heldout:100", "heldout:101", "heldout:102", "heldout:103", "heldout:
 [cache]
 mode = "off"
 path = ""
-namespace = "healthbench_groq_gepa_aug13i"
+namespace = "healthbench_openrouter_gepa"
