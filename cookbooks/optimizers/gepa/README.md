@@ -2,6 +2,19 @@
 
 Public GEPA examples for `synth-optimizers`.
 
+## Release validation status (2026-09-09)
+
+The current schema migration has credential-free configuration and Banking77
+contract evidence against published Containers `0.4.2`. Live provider-backed
+end-to-end acceptance of the release is deferred; offline replay evidence does
+not establish live cache/replay behavior. The examples below describe the
+intended runtime, not a claim that every recipe passed a live release run.
+
+`healthbench_groq/` is parked: Containers `0.4.2` does not register its
+`healthbench_chat` target. Changing the policy provider to OpenRouter does not
+resolve that missing runtime. TBLite is an optional eval/testing cookbook, not
+a Workshop production dependency or release prerequisite.
+
 The current public launch examples are **Banking77** (live OpenAI
 classifier), **HotpotQA** (multi-hop QA with token-F1 verifier),
 **TBLite** (real Python coding tasks with pytest verifier), and

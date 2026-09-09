@@ -16,6 +16,6 @@ optimizer with:
 uv run --no-project --with synth-optimizers==0.2.16 synth-optimizers gepa run --config <config>
 ```
 
-and the container apps depend on `synth-containers>=0.2.0` in their per-container
-`pyproject.toml`. To work on the package internals, clone the canonical repo and
+and the current GEPA container apps require Containers `0.4.2` or newer, as
+declared in each per-container `pyproject.toml`. To work on the package internals, clone the canonical repo and
 follow its `RELEASE.md`.
