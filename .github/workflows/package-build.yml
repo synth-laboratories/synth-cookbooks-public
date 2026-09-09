@@ -1,49 +1,28 @@
-name: Package build
+name: Cookbook contracts
 
 on:
   pull_request:
-    paths:
-      - "packages/**"
-      - ".github/workflows/package-build.yml"
+    paths: ["cookbooks/optimizers/gepa/**", ".github/workflows/package-build.yml", "packages/README.md"]
   push:
-    branches:
-      - main
-    paths:
-      - "packages/**"
-      - ".github/workflows/package-build.yml"
+    branches: [main, dev, staging, jp/v010-cookbook-schema]
+    paths: ["cookbooks/optimizers/gepa/**", ".github/workflows/package-build.yml", "packages/README.md"]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  build:
-    name: Build ${{ matrix.package }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - synth-containers
-          - synth-optimizers
-
+  contracts:
+    runs-on: ubuntu-24.04
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
         with:
           python-version: "3.11"
-
-      - name: Install uv
-        run: python -m pip install --upgrade uv
-
-      - name: Lint package
-        working-directory: packages/${{ matrix.package }}
-        run: uv run --group dev ruff check src
-
-      - name: Type check package
-        working-directory: packages/${{ matrix.package }}
-        run: uv run --group dev ty check src
-
-      - name: Build package
-        working-directory: packages/${{ matrix.package }}
-        run: uv build
+      - name: Syntax and credential-free provider configuration
+        run: |
+          uv run --no-project --python 3.11 python -m compileall -q cookbooks/optimizers/gepa
+          uv run --no-project --python 3.11 python cookbooks/optimizers/gepa/healthbench_groq/test_provider_config.py
+          for script in cookbooks/optimizers/gepa/*/run_fresh_gepa.sh; do bash -n "$script"; done
+      - name: Banking77 contracts against published Containers
+        run: uv run --project cookbooks/optimizers/gepa/banking77_container --python 3.11 --with pytest pytest cookbooks/optimizers/gepa/banking77_container/test_contract.py -q
