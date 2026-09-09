@@ -191,7 +191,7 @@ requires-dist = [
     { name = "datasets", specifier = ">=2.18,<3" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "openai", specifier = ">=1.0" },
-    { name = "synth-containers", git = "https://github.com/synth-laboratories/containers.git?rev=f5581409f45719360ac0a9adc4f311342c98be8c" },
+    { name = "synth-containers", specifier = "==0.4.2" },
     { name = "uvicorn", specifier = ">=0.27" },
 ]
 
@@ -1434,8 +1434,8 @@ wheels = [
 
 [[package]]
 name = "synth-containers"
-version = "0.4.1.dev20260817"
-source = { git = "https://github.com/synth-laboratories/containers.git?rev=f5581409f45719360ac0a9adc4f311342c98be8c#f5581409f45719360ac0a9adc4f311342c98be8c" }
+version = "0.4.2"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
     { name = "fastapi" },
@@ -1444,6 +1444,10 @@ dependencies = [
     { name = "uvicorn" },
     { name = "websockets" },
     { name = "zstandard" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bd/1b/c1367a6291cbb831e69019f37a83cfcdef128dbdabc12bd94f2d70d381e5/synth_containers-0.4.2.tar.gz", hash = "sha256:2aa064d62debc47647e6a05372475158c3a1bb9da7c8d8fdbdee3f25afb5295a", size = 1022589, upload-time = "2026-09-09T21:19:13.928Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/c6/370a96b35532f6f61f8d2cc075868d940dfd1ceeb637a56f320e524660b1/synth_containers-0.4.2-py3-none-any.whl", hash = "sha256:61773e43bfce893437b0b27bcaf03233c8e301e114374d7ea5a159a95ceb2b67", size = 912483, upload-time = "2026-09-09T21:19:12.265Z" },
 ]
 
 [[package]]

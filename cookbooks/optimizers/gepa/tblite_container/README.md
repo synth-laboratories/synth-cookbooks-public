@@ -30,12 +30,20 @@ does **not** require dependencies for other cookbooks.
 - `pytest` — the real verifier
 - `fastapi`, `uvicorn`
 
-## Contract
+## GEPA v2 contract
 
-- `GET /metadata` advertises `synth_optimizers.gepa.v1`.
+- `GET /metadata` advertises `synth_optimizers.gepa.v2` plus its absolute
+  `program_route`, `taskset_route`, `taskset_tasks_route`, and `rollout_route`.
+- `GET /taskset` returns the taskset id and per-split sizes.
+- `POST /taskset/tasks` resolves the stable `<split>:<seed>` task ids declared in
+  the config's `[taskset]` and `[gepa.task_pools]` blocks (for example `train:0`, `test:100`),
+  and echoes each requested id back on its row. This is the route the optimizer
+  loads rows from.
+- `POST /dataset/rows` and the other older seed-based routes remain available for
+  compatibility clients, but GEPA v2 does not use them.
 - `GET /program` exposes one mutable module: `starting_prompt`.
-- `POST /dataset/rows` returns rows **with hidden tests stripped** — the
-  optimizer side never sees the verifier tests.
+- `POST /taskset/tasks` and `POST /dataset/rows` both return rows **with hidden
+  tests stripped** — the optimizer side never sees the verifier tests.
 - `POST /rollout` runs the agent + verifier loop and returns real reward.
 
 ## Safety notes

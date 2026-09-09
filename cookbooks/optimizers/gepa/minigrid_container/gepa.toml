@@ -17,12 +17,12 @@ command = [
 cwd = ".."
 startup_timeout_seconds = 60
 
-[dataset]
+[taskset]
+# Keep budgets small by default — each episode is ~10-48 OpenAI calls.
 train_split = "train"
 heldout_split = "test"
-# Keep budgets small by default — each episode is ~10-48 OpenAI calls.
-train_seeds = [1, 2]
-heldout_seeds = [100]
+train_ids = ["train:1", "train:2"]
+heldout_ids = ["test:100"]
 
 [candidate]
 target_modules = ["system_prompt"]
@@ -69,6 +69,16 @@ max = 30
 increase_step = 5
 decrease_step = 5
 increase_after_successes = 20
+
+[gepa.task_pools]
+# The legacy [dataset] schema had no pool concept: search drew from the whole
+# train split and heldout from the whole heldout split. These pools reproduce
+# that exactly. [gepa].minibatch_size still samples the per-proposal minibatch
+# out of the minibatch pool.
+pareto = ["train:1", "train:2"]
+minibatch = ["train:1", "train:2"]
+reflection = ["train:1", "train:2"]
+heldout = ["test:100"]
 
 [cache]
 mode = "readwrite"

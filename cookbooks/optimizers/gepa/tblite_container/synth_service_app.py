@@ -660,6 +660,8 @@ async def metadata() -> dict[str, Any]:
                 "gepa": {
                     "version": GEPA_OPTIMIZER_CONTRACT_VERSION,
                     "program_route": "/program",
+                    "taskset_route": "/taskset",
+                    "taskset_tasks_route": "/taskset/tasks",
                     "dataset_route": "/dataset",
                     "dataset_rows_route": "/dataset/rows",
                     "rollout_route": "/rollout",
@@ -792,6 +794,63 @@ async def dataset_rows(request: Request) -> dict[str, Any]:
             for seed in seeds
         ]
     }
+
+
+@app.get("/taskset")
+async def taskset() -> dict[str, Any]:
+    """GEPA v2 taskset view over the bounded Terminal-Bench-Lite task pool."""
+    return {
+        "taskset_id": f"{DATASET_ID}:v1",
+        "splits": {
+            "train": sum(1 for row in ROWS if row["split"] == "train"),
+            "test": sum(1 for row in ROWS if row["split"] == "test"),
+        },
+        "source": "tblite_public_pytest_tasks",
+        "metadata": {
+            "task_id": TASK_ID,
+            "seed_semantics": "index into the pinned pytest task pool",
+        },
+    }
+
+
+@app.post("/taskset/tasks")
+async def taskset_tasks(request: Request) -> dict[str, Any]:
+    """Resolve the stable `<split>:<seed>` ids declared in [taskset]/[gepa.task_pools]."""
+    payload = await request.json()
+    split = str(payload.get("split") or "").strip()
+    raw_task_ids = payload.get("task_ids")
+    if not isinstance(raw_task_ids, list) or not raw_task_ids:
+        raise HTTPException(status_code=422, detail="task_ids must be a non-empty list")
+    tasks = []
+    for raw_task_id in raw_task_ids:
+        task_id = str(raw_task_id).strip()
+        prefix, separator, raw_seed = task_id.rpartition(":")
+        if not separator:
+            raise HTTPException(
+                status_code=422,
+                detail=f'task_id {task_id!r} must have the form "<split>:<seed>"',
+            )
+        try:
+            seed = int(raw_seed)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"task_id {task_id!r} must end in an integer seed",
+            ) from exc
+        # Hide tests from the optimizer side — only spec + signature are exposed.
+        row = {
+            k: v
+            for k, v in _row_for_seed(split=prefix or split, seed=seed).items()
+            if k != "tests"
+        }
+        tasks.append(
+            {
+                "task_id": task_id,
+                "task_instance_id": f"tblite:{row['split']}:{seed}",
+                **row,
+            }
+        )
+    return {"tasks": tasks, "metadata": {"taskset_id": f"{DATASET_ID}:v1"}}
 
 
 @app.post("/rollout")

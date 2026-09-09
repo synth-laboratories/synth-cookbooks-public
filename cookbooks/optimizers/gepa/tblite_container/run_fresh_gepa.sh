@@ -154,10 +154,16 @@ set_command_env() {
   NAME="$name" VALUE="$value" perl -0pi -e 'my $name = $ENV{NAME}; my $value = $ENV{VALUE}; if (!s/"\Q$name\E=[^"]*"/"\"" . $name . "=" . $value . "\""/e) { s/("\/usr\/bin\/env",\n)/$1 . "  \"" . $name . "=" . $value . "\",\n"/e; }' "$CONFIG"
 }
 
-seed_array_range_literal() {
-  local start="$1"
-  local count="$2"
-  local result=$'[\n'
+id_array_literal() {
+  # Render a TOML array of GEPA task ids: ["<split>:<start>", ...] with <count>
+  # consecutive seeds. Task ids are the container's `<split>:<seed>` contract
+  # (see synth_service_app.py POST /taskset/tasks); the legacy bare-integer
+  # `train_seeds`/`heldout_seeds` arrays are not the current GEPA schema.
+  local split="$1"
+  local start="$2"
+  local count="$3"
+  local result=$'[
+'
   local line=""
   local i=0
   local value=0
@@ -166,13 +172,14 @@ seed_array_range_literal() {
     if [[ -n "$line" ]]; then
       line="$line, "
     fi
-    line="$line$value"
-    if (( (i + 1) % 10 == 0 || i + 1 == count )); then
+    line="$line\"$split:$value\""
+    if (( (i + 1) % 8 == 0 || i + 1 == count )); then
       result="$result  $line"
       if (( i + 1 < count )); then
         result="$result,"
       fi
-      result="$result"$'\n'
+      result="$result"$'
+'
       line=""
     fi
     i=$((i + 1))
@@ -316,8 +323,24 @@ set_toml_value "proposer" "model" "$PROPOSER_MODEL"
 set_toml_value "proposer" "auth_mode" "$PROPOSER_AUTH_MODE"
 set_toml_value "proposer" "api_key_env" "$PROPOSER_API_KEY_ENV"
 set_toml_raw_value "proposer" "copy_host_auth" "$PROPOSER_COPY_HOST_AUTH"
-replace_toml_array "train_seeds" "$(seed_array_range_literal "$TRAIN_SEED_START" "$TRAIN_SIZE")"
-replace_toml_array "heldout_seeds" "$(seed_array_range_literal "$HELDOUT_SEED_START" "$HELDOUT_SIZE")"
+# Task ids and GEPA selection pools. [taskset] declares which split rows exist;
+# [gepa.task_pools] declares which of them the search uses. The pools mirror the
+# legacy whole-split behavior: search over the full train pool, gate on the full
+# heldout pool. [gepa].minibatch_size still samples each proposal's minibatch.
+TRAIN_SPLIT="$(awk -F'"' '/^train_split[[:space:]]*=/{print $2; exit}' "$CONFIG")"
+HELDOUT_SPLIT="$(awk -F'"' '/^heldout_split[[:space:]]*=/{print $2; exit}' "$CONFIG")"
+if [[ -z "$TRAIN_SPLIT" || -z "$HELDOUT_SPLIT" ]]; then
+  echo "error: base config is missing [taskset].train_split / heldout_split: $BASE_CONFIG" >&2
+  exit 1
+fi
+TRAIN_IDS_LITERAL="$(id_array_literal "$TRAIN_SPLIT" "$TRAIN_SEED_START" "$TRAIN_SIZE")"
+HELDOUT_IDS_LITERAL="$(id_array_literal "$HELDOUT_SPLIT" "$HELDOUT_SEED_START" "$HELDOUT_SIZE")"
+replace_toml_array "train_ids" "$TRAIN_IDS_LITERAL"
+replace_toml_array "heldout_ids" "$HELDOUT_IDS_LITERAL"
+replace_toml_array "pareto" "$TRAIN_IDS_LITERAL"
+replace_toml_array "minibatch" "$TRAIN_IDS_LITERAL"
+replace_toml_array "reflection" "$TRAIN_IDS_LITERAL"
+replace_toml_array "heldout" "$HELDOUT_IDS_LITERAL"
 set_toml_raw_value "gepa" "max_generations" "$MAX_GENERATIONS"
 set_toml_raw_value "gepa" "proposals_per_generation" "$PROPOSAL_COUNT"
 set_toml_raw_value "gepa" "minibatch_size" "$MINIBATCH_SIZE"
@@ -398,4 +421,4 @@ export SYNTH_OPTIMIZERS_GEPA_ROLLOUT_HTTP_RETRIES="$ROLLOUT_HTTP_RETRIES"
 if [[ -n "$CHUNK_SIZE" && "$CHUNK_SIZE" != "auto" ]]; then
   export SYNTH_OPTIMIZERS_GEPA_ROLLOUT_CHUNK_SIZE="$CHUNK_SIZE"
 fi
-exec uv run --no-project --with synth-optimizers==0.2.0 synth-optimizers gepa run --config "$CONFIG"
+exec uv run --no-project --with synth-optimizers==0.2.16 synth-optimizers gepa run --config "$CONFIG"

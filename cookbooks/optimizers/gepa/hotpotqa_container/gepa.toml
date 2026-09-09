@@ -22,15 +22,13 @@ command = [
 cwd = ".."
 startup_timeout_seconds = 120
 
-[dataset]
+[taskset]
 train_split = "train"
 heldout_split = "validation"
-train_seeds = [
-  0, 1, 2, 3, 4, 5, 6, 7,
+train_ids = [
+  "train:0", "train:1", "train:2", "train:3", "train:4", "train:5", "train:6", "train:7"
 ]
-heldout_seeds = [
-  1000, 1001, 1002, 1003,
-]
+heldout_ids = ["validation:1000", "validation:1001", "validation:1002", "validation:1003"]
 
 [candidate]
 target_modules = ["stage1_system"]
@@ -87,3 +85,19 @@ max = 120
 increase_step = 10
 decrease_step = 10
 increase_after_successes = 40
+
+[gepa.task_pools]
+# The legacy [dataset] schema had no pool concept: search drew from the whole
+# train split and heldout from the whole heldout split. These pools reproduce
+# that exactly. [gepa].minibatch_size still samples the per-proposal minibatch
+# out of the minibatch pool.
+pareto = [
+  "train:0", "train:1", "train:2", "train:3", "train:4", "train:5", "train:6", "train:7"
+]
+minibatch = [
+  "train:0", "train:1", "train:2", "train:3", "train:4", "train:5", "train:6", "train:7"
+]
+reflection = [
+  "train:0", "train:1", "train:2", "train:3", "train:4", "train:5", "train:6", "train:7"
+]
+heldout = ["validation:1000", "validation:1001", "validation:1002", "validation:1003"]

@@ -21,13 +21,13 @@ command = [
 cwd = ".."
 startup_timeout_seconds = 60
 
-[dataset]
-train_split = "train"
-heldout_split = "test"
+[taskset]
 # Keep budgets small by default — real Craftax episodes (each ~20 turns of
 # OpenAI calls) cost real money. Scale up after a first cookbook run.
-train_seeds = [11, 13]
-heldout_seeds = [101]
+train_split = "train"
+heldout_split = "test"
+train_ids = ["train:11", "train:13"]
+heldout_ids = ["test:101"]
 
 [candidate]
 target_modules = ["react_system_prompt"]
@@ -76,6 +76,16 @@ max = 30
 increase_step = 5
 decrease_step = 5
 increase_after_successes = 20
+
+[gepa.task_pools]
+# The legacy [dataset] schema had no pool concept: search drew from the whole
+# train split and heldout from the whole heldout split. These pools reproduce
+# that exactly. [gepa].minibatch_size still samples the per-proposal minibatch
+# out of the minibatch pool.
+pareto = ["train:11", "train:13"]
+minibatch = ["train:11", "train:13"]
+reflection = ["train:11", "train:13"]
+heldout = ["test:101"]
 
 [cache]
 mode = "readwrite"

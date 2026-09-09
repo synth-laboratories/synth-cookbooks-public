@@ -87,8 +87,10 @@ local Codex login. Set `OPENAI_API_KEY` for the Codex proposer. Some shipped
 policy profiles also need `OPENROUTER_API_KEY`; check the selected TOML profile.
 
 A GEPA-compatible task container must expose the optimizer HTTP contract:
-`/health`, `/metadata`, `/task_info`, `/program`, `/dataset`,
-`/dataset/rows`, and `/rollout`. The `/task_info` route is important: it gives
+`/health`, `/metadata`, `/task_info`, `/program`, `/taskset`,
+`/taskset/tasks`, and `/rollout` (the older `/dataset` and `/dataset/rows`
+routes are still served by these cookbooks for compatibility clients, but
+GEPA v2 loads rows through `/taskset/tasks`). The `/task_info` route is important: it gives
 the general proposer task context, objectives, output constraints, and
 prompt-writing guidance so the same Rust GEPA loop can work across
 classification, QA, coding, and agent-environment tasks.

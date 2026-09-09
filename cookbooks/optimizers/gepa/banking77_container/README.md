@@ -87,7 +87,30 @@ Example module:
 }
 ```
 
-## Dataset Shape
+## Taskset Shape
+
+`POST /taskset/tasks` is the route the current optimizer loads rows from. It
+accepts:
+
+```json
+{
+  "split": "train",
+  "task_ids": ["train:0", "train:1", "train:2"],
+  "filters": {}
+}
+```
+
+Every id must be `"<split>:<seed>"` for the requested split, and the response
+echoes each requested `task_id` back on its row alongside `task_instance_id`,
+`seed`, `text`, `label`, and `source_index`. These are exactly the id strings a
+config puts in `[taskset].train_ids` / `heldout_ids` and in the four
+`[gepa.task_pools]` arrays.
+
+Seeds are 0-based **within each split's sampled subset**, sized by
+`BANKING77_TRAIN_SAMPLE` / `BANKING77_TEST_SAMPLE`. A seed past the end of a
+split wraps modulo the sample size rather than erroring.
+
+## Dataset Shape (legacy routes)
 
 `POST /dataset/rows` accepts:
 

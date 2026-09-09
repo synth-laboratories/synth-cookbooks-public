@@ -17,15 +17,15 @@ command = [
 cwd = "."
 startup_timeout_seconds = 180
 
-[dataset]
+[taskset]
+# Keep budgets small by default — each episode is ~10-48 OpenAI calls.
 train_split = "train"
 heldout_split = "test"
-# Keep budgets small by default — each episode is ~10-48 OpenAI calls.
-train_seeds = [
-  4175906051, 4175906052, 4175906053, 4175906054, 4175906055, 4175906056, 4175906057, 4175906058
+train_ids = [
+  "train:4175906051", "train:4175906052", "train:4175906053", "train:4175906054", "train:4175906055", "train:4175906056", "train:4175906057", "train:4175906058"
 ]
-heldout_seeds = [
-  547107527, 547107528, 547107529, 547107530, 547107531, 547107532, 547107533, 547107534
+heldout_ids = [
+  "test:547107527", "test:547107528", "test:547107529", "test:547107530", "test:547107531", "test:547107532", "test:547107533", "test:547107534"
 ]
 
 [candidate]
@@ -76,6 +76,24 @@ max = 30
 increase_step = 5
 decrease_step = 5
 increase_after_successes = 20
+
+[gepa.task_pools]
+# The legacy [dataset] schema had no pool concept: search drew from the whole
+# train split and heldout from the whole heldout split. These pools reproduce
+# that exactly. [gepa].minibatch_size still samples the per-proposal minibatch
+# out of the minibatch pool.
+pareto = [
+  "train:4175906051", "train:4175906052", "train:4175906053", "train:4175906054", "train:4175906055", "train:4175906056", "train:4175906057", "train:4175906058"
+]
+minibatch = [
+  "train:4175906051", "train:4175906052", "train:4175906053", "train:4175906054", "train:4175906055", "train:4175906056", "train:4175906057", "train:4175906058"
+]
+reflection = [
+  "train:4175906051", "train:4175906052", "train:4175906053", "train:4175906054", "train:4175906055", "train:4175906056", "train:4175906057", "train:4175906058"
+]
+heldout = [
+  "test:547107527", "test:547107528", "test:547107529", "test:547107530", "test:547107531", "test:547107532", "test:547107533", "test:547107534"
+]
 
 [cache]
 mode = "readwrite"

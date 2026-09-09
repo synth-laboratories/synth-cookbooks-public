@@ -243,7 +243,7 @@ requires-dist = [
     { name = "jax", extras = ["cpu"], specifier = ">=0.4.30" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "openai", specifier = ">=1.0" },
-    { name = "synth-containers", specifier = "==0.4.1.dev20260814" },
+    { name = "synth-containers", specifier = "==0.4.2" },
     { name = "uvicorn", specifier = ">=0.27" },
 ]
 
@@ -1704,7 +1704,7 @@ wheels = [
 
 [[package]]
 name = "synth-containers"
-version = "0.4.1.dev20260814"
+version = "0.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -1715,9 +1715,9 @@ dependencies = [
     { name = "websockets" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4b/82/47fa0f8e886376399667902e434dec527be1eaafc2714f6985e0fdc35c05/synth_containers-0.4.1.dev20260814.tar.gz", hash = "sha256:7122cc1d61f73a25e266a92d93ddd7a66bf075d2f5ca304c079588294e867ebf", size = 518914, upload-time = "2026-08-14T19:43:53.12Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/1b/c1367a6291cbb831e69019f37a83cfcdef128dbdabc12bd94f2d70d381e5/synth_containers-0.4.2.tar.gz", hash = "sha256:2aa064d62debc47647e6a05372475158c3a1bb9da7c8d8fdbdee3f25afb5295a", size = 1022589, upload-time = "2026-09-09T21:19:13.928Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/62/7ad5656a825db2c145afa14b8f16ef81132c14db48afd084c28fce22235d/synth_containers-0.4.1.dev20260814-py3-none-any.whl", hash = "sha256:518dcd5304edc245e74d1d5d2d5f76b32759716d48550ecb756be431d59d8fd3", size = 516462, upload-time = "2026-08-14T19:43:51.847Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/c6/370a96b35532f6f61f8d2cc075868d940dfd1ceeb637a56f320e524660b1/synth_containers-0.4.2-py3-none-any.whl", hash = "sha256:61773e43bfce893437b0b27bcaf03233c8e301e114374d7ea5a159a95ceb2b67", size = 912483, upload-time = "2026-09-09T21:19:12.265Z" },
 ]
 
 [[package]]

@@ -25,6 +25,7 @@ except Exception:
 DATASET_NAME = "hotpot_qa"
 DATASET_CONFIG = "distractor"
 TASK_ID = "hotpotqa.multihop_qa"
+TASKSET_ID = f"{DATASET_NAME}:{DATASET_CONFIG}:v1"
 DEFAULT_STAGE1_SYSTEM = (
     "You are a HotpotQA answer extractor. Read the question first to determine the "
     "requested answer type, then use the passages to find the entity, date, number, "
@@ -390,6 +391,8 @@ async def metadata() -> dict[str, Any]:
                 "gepa": {
                     "version": GEPA_OPTIMIZER_CONTRACT_VERSION,
                     "program_route": "/program",
+                    "taskset_route": "/taskset",
+                    "taskset_tasks_route": "/taskset/tasks",
                     "dataset_route": "/dataset",
                     "dataset_rows_route": "/dataset/rows",
                     "rollout_route": "/rollout",
@@ -503,6 +506,59 @@ async def dataset_rows(request: Request) -> dict[str, Any]:
     seeds = [int(seed) for seed in payload.get("seeds") or []]
     rows = [await _row_for_seed(split=split, seed=seed) for seed in seeds]
     return {"rows": rows}
+
+
+@app.get("/taskset")
+async def taskset() -> dict[str, Any]:
+    """GEPA v2 taskset view over the HotpotQA distractor splits."""
+    await _ensure_dataset_loaded()
+    return {
+        "taskset_id": TASKSET_ID,
+        "splits": {
+            "train": len(_train_dataset or []),
+            "validation": len(_validation_dataset or []),
+        },
+        "source": "hotpot_qa:distractor",
+        "metadata": {
+            "task_id": TASK_ID,
+            "seed_semantics": "seed_mod_dataset_index",
+        },
+    }
+
+
+@app.post("/taskset/tasks")
+async def taskset_tasks(request: Request) -> dict[str, Any]:
+    """Resolve the stable `<split>:<seed>` ids declared in [taskset]/[gepa.task_pools]."""
+    payload = await request.json()
+    split = str(payload.get("split") or "").strip()
+    canonical = _canonical_split(split)
+    raw_task_ids = payload.get("task_ids")
+    if not isinstance(raw_task_ids, list) or not raw_task_ids:
+        raise HTTPException(status_code=422, detail="task_ids must be a non-empty list")
+    tasks = []
+    for raw_task_id in raw_task_ids:
+        task_id = str(raw_task_id).strip()
+        prefix, separator, raw_seed = task_id.rpartition(":")
+        if not separator:
+            raise HTTPException(
+                status_code=422,
+                detail=f'task_id {task_id!r} must have the form "<split>:<seed>"',
+            )
+        if _canonical_split(prefix) != canonical:
+            raise HTTPException(
+                status_code=422,
+                detail=f"task_id {task_id!r} does not belong to split {split!r}",
+            )
+        try:
+            seed = int(raw_seed)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"task_id {task_id!r} must end in an integer seed",
+            ) from exc
+        row = await _row_for_seed(split=canonical, seed=seed)
+        tasks.append({"task_id": task_id, **row})
+    return {"tasks": tasks, "metadata": {"taskset_id": TASKSET_ID}}
 
 
 @app.post("/rollout")

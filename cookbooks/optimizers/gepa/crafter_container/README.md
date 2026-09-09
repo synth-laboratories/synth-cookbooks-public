@@ -57,6 +57,7 @@ First-time boot installs ~70 packages and processes Craftax textures
 
 Real episodes are not free. The default `gepa.toml` is small on purpose:
 2 train seeds, 1 heldout seed, 1 generation, 1 proposal — about 30–60
-OpenAI calls per full GEPA pass. Scale `train_seeds`, `heldout_seeds`,
+OpenAI calls per full GEPA pass. Scale `[taskset].train_ids`,
+`[taskset].heldout_ids` (and the matching `[gepa.task_pools]` entries),
 `max_generations`, `proposals_per_generation`, and `CRAFTER_MAX_TURNS`
 once you're confident in the setup.

@@ -53,6 +53,15 @@ Run GEPA from a container directory. The helper script keeps all run parameters
 in TOML profiles, generates a one-off local TOML next to the container, and
 writes large run artifacts under `cookbooks/optimizers/gepa/runs/`.
 
+Note on the two TOML schemas in play: `gepa.toml` is the **optimizer config**
+(`[taskset]`, `[gepa.task_pools]`, ...), while the files under `run_profiles/`
+are **profile overlays read only by `run_fresh_gepa.sh`**. A profile's
+`[dataset]` block (`train_size`, `heldout_size`, `train_shuffle_seed`,
+`heldout_shuffle_seed`) is that overlay's own vocabulary, not the optimizer's;
+the script expands those sizes into `[taskset].train_ids` / `heldout_ids` and
+the matching `[gepa.task_pools]` arrays in the generated config. Do not copy a
+profile's `[dataset]` block into a `gepa.toml`.
+
 ```bash
 cd cookbooks/optimizers/gepa/banking77_container
 export OPENAI_API_KEY="..."       # Codex proposer auth
@@ -124,13 +133,22 @@ A GEPA container is an HTTP service. It can be written in any language as long
 as it implements this contract:
 
 - `GET /health`: returns 200 when the container is ready.
-- `GET /metadata`: declares the optimizer protocol and route names.
+- `GET /metadata`: declares the optimizer protocol and route names. It must
+  advertise `metadata.optimizer_contracts.gepa` with `version =
+  "synth_optimizers.gepa.v2"` plus absolute `program_route`, `taskset_route`,
+  `taskset_tasks_route`, and `rollout_route`; a missing or empty taskset route
+  fails the container contract before any rollout runs.
 - `GET /task_info`: describes the task, objective, output contract, dataset,
   constraints, and useful prompt-writing guidance for the proposer.
 - `GET /program`: returns the prompt program, mutable fields, scoring
   objectives, and rollout overlay schema.
-- `GET /dataset`: returns dataset metadata and split names.
-- `POST /dataset/rows`: accepts split/seeds and returns concrete dataset rows.
+- `GET /taskset`: returns the taskset id, split names, and split sizes.
+- `POST /taskset/tasks`: accepts `{split, task_ids, filters}` and returns one task
+  row per requested id. Ids are the container's own stable identifiers; every
+  cookbook container here uses `<split>:<seed>` (for example `train:0`,
+  `test:100`). This is the route the current optimizer actually loads rows from.
+- `GET /dataset`, `POST /dataset/rows`: the older seed-based routes. Still served
+  by these cookbooks for compatibility clients, but not what GEPA v2 uses.
 - `POST /rollout`: runs one blocking rollout and returns scores plus metadata.
 - Optional async rollout routes: `POST /rollouts`, `GET /rollouts/{id}`,
   `GET /rollouts/{id}/state`, and `POST /rollouts/{id}/terminate`.
@@ -149,13 +167,25 @@ cookbook configs launch containers through `uv run --project <container_dir>`.
 
 ## Config Shape
 
-The TOML section shape is frozen for public GEPA v1:
+The TOML section shape for public GEPA v2:
 
 - `[run]`: `run_id`, `output_dir`, and `seed`.
 - `[container]`: `url` for a standing container, or `command` and `cwd` for a
   cookbook local process, plus `startup_timeout_seconds`.
-- `[dataset]`: `train_split`, `heldout_split`, `train_seeds`, `heldout_seeds`,
-  and optional `filters`.
+- `[taskset]`: `train_split`, `heldout_split`, `train_ids`, `heldout_ids`, and
+  optional `filters`. `train_ids` and `heldout_ids` are **container task id
+  strings**, not bare integers — every container in this cookbook uses
+  `<split>:<seed>`, so a train seed `0` on split `train` is `"train:0"`. Both
+  lists must be non-empty. Ids are split-local: `train_ids` are fetched from
+  `train_split`, `heldout_ids` from `heldout_split`.
+- `[gepa.task_pools]`: the four GEPA selection pools, all required and all
+  non-empty — `pareto` (selection set), `minibatch` (judge set), `reflection`
+  (proposer evidence set), and `heldout` (never touched during search).
+  `pareto`/`minibatch`/`reflection` ids must come from `[taskset].train_ids`;
+  `heldout` ids must come from `[taskset].heldout_ids`; `minibatch` must be a
+  subset of `reflection`; and `heldout` must be disjoint from the three search
+  pools. `[gepa].minibatch_size` still samples each proposal's minibatch out of
+  the `minibatch` pool, so the pool is the candidate set, not the batch.
 - `[candidate]`: `target_modules` and optional `candidate_id_prefix`.
 - `[seed_candidate]`: baseline candidate payload. Keys must match mutable prompt
   fields from `GET /program`.

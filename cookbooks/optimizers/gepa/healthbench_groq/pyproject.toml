@@ -4,6 +4,12 @@ version = "0.1.0"
 description = "Public HealthBench 2 GEPA container using the normalized synth-containers runtime."
 requires-python = ">=3.11"
 dependencies = [
+  # NOT YET REPINNABLE to the published wheel. synth_service_app.py calls
+  # synth_containers.platform.create_compat_app("healthbench_chat"), and the
+  # "healthbench_chat" target is absent from the TARGETS registry in published
+  # synth-containers 0.4.2 (only harbor_public, harbor_docker, deo_nested,
+  # openenv_echo, digbench_public, digbench_mock). Repin to a later published
+  # version containing the target; immutable 0.4.2 cannot gain it retroactively.
   "synth-containers @ git+https://github.com/synth-laboratories/containers.git@f5581409f45719360ac0a9adc4f311342c98be8c",
   "fastapi>=0.110",
   "uvicorn>=0.27",

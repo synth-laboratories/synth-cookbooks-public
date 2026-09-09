@@ -13,7 +13,7 @@ Cookbooks consume them from PyPI. For example, the GEPA runners invoke the
 optimizer with:
 
 ```bash
-uv run --no-project --with synth-optimizers==0.2.0 synth-optimizers gepa run --config <config>
+uv run --no-project --with synth-optimizers==0.2.16 synth-optimizers gepa run --config <config>
 ```
 
 and the container apps depend on `synth-containers>=0.2.0` in their per-container

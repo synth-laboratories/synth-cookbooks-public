@@ -11,13 +11,16 @@
 #     and config changes silently don't apply)
 #   - stamps a fresh run_id + cache namespace per invocation (avoids stale-lease
 #     and stale-cache reuse)
-#   - runs synth-optimizers from the pinned public org repo
+#   - runs the pinned published synth-optimizers release
 #   - streams the live GEPA terminal visualizer (SYNTH_OPTIMIZERS_TERMINAL=1)
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"
-OPTIMIZERS_SPEC="synth-optimizers @ git+https://github.com/synth-laboratories/optimizers.git@d5acd9c3464fd28fda0a0d417b0cd4418152ab62"
+# Published wheel, not a git ref: a public cookbook should be runnable from PyPI.
+# 0.2.16 is the first published release that accepts the current
+# [taskset] + [gepa.task_pools] schema these configs use.
+OPTIMIZERS_SPEC="${SYNTH_OPTIMIZERS_SPEC:-synth-optimizers==0.2.16}"
 
 CFG=""
 while [[ $# -gt 0 ]]; do

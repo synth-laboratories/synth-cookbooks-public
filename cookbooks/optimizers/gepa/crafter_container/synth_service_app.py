@@ -691,48 +691,6 @@ async def dataset() -> dict[str, Any]:
     }
 
 
-@app.get("/taskset")
-async def taskset() -> dict[str, Any]:
-    return {
-        "taskset_id": DATASET_ID,
-        "splits": {
-            split: [f"{split}:{row['seed']}" for row in ROWS if row["split"] == split]
-            for split in ("train", "test")
-        },
-        "source": "crafter_public_episode_seeds",
-    }
-
-
-@app.post("/taskset/tasks")
-async def taskset_tasks(request: Request) -> dict[str, Any]:
-    payload = await request.json()
-    split = str(payload.get("split") or "train")
-    task_ids = payload.get("task_ids") or []
-    if not isinstance(task_ids, list) or not all(
-        isinstance(task_id, str) for task_id in task_ids
-    ):
-        raise HTTPException(status_code=422, detail="task_ids must be a list of strings.")
-
-    tasks = []
-    for task_id in task_ids:
-        prefix, separator, raw_seed = task_id.rpartition(":")
-        if not separator:
-            raise HTTPException(
-                status_code=422,
-                detail=f"task_id must end in an integer seed: {task_id!r}",
-            )
-        try:
-            seed = int(raw_seed)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail=f"task_id must end in an integer seed: {task_id!r}",
-            ) from exc
-        row = _row_for_seed(split=prefix or split, seed=seed)
-        tasks.append({"task_id": task_id, **row})
-    return {"tasks": tasks, "metadata": {"split": split}}
-
-
 @app.post("/dataset/rows")
 async def dataset_rows(request: Request) -> dict[str, Any]:
     payload = await request.json()
