@@ -1,0 +1,7 @@
+[taskset]
+train_ids = ["train:0", "train:1"]
+heldout_ids = ["heldout:100", "heldout:101"]
+
+[policy]
+config_id = "openai_gpt41_mini"
+api_key_env = "OPENAI_API_KEY"

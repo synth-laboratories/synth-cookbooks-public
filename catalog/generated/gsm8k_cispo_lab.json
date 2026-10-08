@@ -1,0 +1,72 @@
+{
+  "mode": "cispo",
+  "baseline": 0.3,
+  "final": 0.225,
+  "uplift": -0.07499999999999998,
+  "eval_n": 40,
+  "adapter_digest": "sha256:98fa1292321c608a0a01abae1ab1bdb9058cde63bf854032320bb1e6796aebbc",
+  "history": [
+    {
+      "round": 0,
+      "train_reward": 0.21875,
+      "datums": 16,
+      "refused": 0
+    },
+    {
+      "round": 1,
+      "train_reward": 0.28125,
+      "datums": 8,
+      "refused": 0
+    },
+    {
+      "round": 2,
+      "train_reward": 0.375,
+      "datums": 24,
+      "refused": 0
+    },
+    {
+      "round": 3,
+      "train_reward": 0.21875,
+      "datums": 16,
+      "refused": 0
+    },
+    {
+      "round": 4,
+      "train_reward": 0.4375,
+      "datums": 16,
+      "refused": 0
+    },
+    {
+      "round": 5,
+      "train_reward": 0.25,
+      "datums": 12,
+      "refused": 0
+    },
+    {
+      "round": 6,
+      "train_reward": 0.40625,
+      "datums": 20,
+      "refused": 0
+    },
+    {
+      "round": 7,
+      "train_reward": 0.25,
+      "datums": 8,
+      "refused": 0
+    }
+  ],
+  "args": {
+    "mode": "cispo",
+    "eval_n": 40,
+    "train_prompts": 64,
+    "group": 4,
+    "epochs": 1,
+    "lr": 1e-05,
+    "max_tokens": 256,
+    "accum": 4,
+    "max_traces": 0,
+    "cache": "runs/traces.jsonl",
+    "rounds": 8,
+    "out": "/Users/joshuapurtell/Documents/GitHub/worktrees/synth-cookbooks-public-v0.6/catalog/generated/gsm8k_cispo_lab.json"
+  }
+}

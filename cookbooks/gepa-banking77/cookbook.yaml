@@ -1,0 +1,33 @@
+schema_version: synth.cookbook.v1
+id: gepa-banking77
+title: GEPA on Banking77
+summary: Evolve a Banking77 intent-classification prompt with Optimizers GEPA against the versioned Banking77 container.
+version: 0.1.0
+status: proven-local
+license: Apache-2.0
+classification:
+  method: gepa
+  task: banking77
+  orchestration: optimizer
+  runtime: containers-http
+  execution: local
+  tags: [prompt-optimization, exact-match]
+compatibility:
+  platforms: [macos-arm64, linux]
+  repositories:
+    containers: a2a316b2e113883349b096ae07e17898f14bc7e5
+    optimizers: 1c890923138332a6675176447da5793ff25d4563
+    synth-mlx-rl: 848752cbedc488558af9e19ea1792e44d96897ae
+requirements:
+  credentials: [OPENAI_API_KEY]
+  network: required
+  estimated_duration_minutes: [20, 90]
+  estimated_cost_usd: [2, 25]
+entrypoints:
+  preflight: runbooks/preflight.sh
+  smoke: runbooks/smoke.sh
+  run: runbooks/run.sh
+artifacts:
+  expected: [job-manifest, metrics, candidate-lineage, eval-result, report]
+evidence:
+  report: REPORT.md

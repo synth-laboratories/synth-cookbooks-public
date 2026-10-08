@@ -1,0 +1,14 @@
+{
+  "schema_version": "synth.cookbook.catalog.v1",
+  "source": {
+    "repository": "https://github.com/synth-laboratories/synth-cookbooks-public",
+    "branch": "v0.6/turnover",
+    "note": "Local proven receipts in catalog/generated/pages.json. Paid GEPA/HealthBench not claimed."
+  },
+  "cookbooks": [
+    {"id": "gepa-banking77", "path": "cookbooks/gepa-banking77", "status": "proven-local"},
+    {"id": "evals-healthbench", "path": "cookbooks/evals-healthbench", "status": "proven-local"},
+    {"id": "mlx-sft-craftax", "path": "cookbooks/mlx-sft-craftax", "status": "proven-local"},
+    {"id": "remote-cispo-gsm8k", "path": "cookbooks/remote-cispo-gsm8k", "status": "proven-local"}
+  ]
+}

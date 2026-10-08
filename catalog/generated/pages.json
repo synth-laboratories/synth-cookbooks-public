@@ -1,0 +1,478 @@
+{
+  "generated_at": "2026-08-19T01:00:03Z",
+  "pages": [
+    {
+      "slug": "gepa-banking77",
+      "title": "GEPA on Banking77",
+      "method": "gepa",
+      "task": "banking77",
+      "execution": "local",
+      "status": "proven-live",
+      "hypothesis": "A GEPA search over stage2_system beats the seed prompt on held-out exact match.",
+      "verdict": "Live gpt-4.1-nano heldout exact-match is 0/16. Gold replay remains 1.0 on seed 0.",
+      "confidence": "high",
+      "why": "32 requested heldout seeds; only 16 exist in the current split and all scored. Nano missed every label (accuracy 0.0). That is a real baseline, not a transport failure.",
+      "receipt": {
+        "cookbook_id": "gepa-banking77",
+        "proved_at": "2026-08-19T00:54:41Z",
+        "target": "banking77_classify",
+        "runtime_family": "banking77",
+        "gold_seed0_reward": 1.0,
+        "gold_seed0_status": "scored",
+        "rollout_http": 200,
+        "claim": "dataset_gold seed 0 scores 1.0 on current banking77_classify",
+        "not_claimed": "paid GEPA search uplift",
+        "live_e2e": {
+          "proved_at": "2026-08-19T01:00:03Z",
+          "http": 200,
+          "status": "completed",
+          "reward": 0.0,
+          "reward_status": "scored",
+          "usage_tokens": 163,
+          "model": "gpt-4.1-nano"
+        },
+        "live_batch": {
+          "proved_at": "2026-08-19T01:11:04Z",
+          "split": "heldout",
+          "n": 32,
+          "n_scored": 16,
+          "hits": 0,
+          "accuracy": 0.0,
+          "model": "gpt-4.1-nano",
+          "rows": [
+            {
+              "seed": 0,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 156
+            },
+            {
+              "seed": 1,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 155
+            },
+            {
+              "seed": 2,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 158
+            },
+            {
+              "seed": 3,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 153
+            },
+            {
+              "seed": 4,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 156
+            },
+            {
+              "seed": 5,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 157
+            },
+            {
+              "seed": 6,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 158
+            },
+            {
+              "seed": 7,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 156
+            },
+            {
+              "seed": 8,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 157
+            },
+            {
+              "seed": 9,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 158
+            },
+            {
+              "seed": 10,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 157
+            },
+            {
+              "seed": 11,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 155
+            },
+            {
+              "seed": 12,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 159
+            },
+            {
+              "seed": 13,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 157
+            },
+            {
+              "seed": 14,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 156
+            },
+            {
+              "seed": 15,
+              "http": 200,
+              "reward": 0.0,
+              "status": "scored",
+              "tokens": 160
+            },
+            {
+              "seed": 16,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 17,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 18,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 19,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 20,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 21,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 22,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 23,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 24,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 25,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 26,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 27,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 28,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 29,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 30,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            },
+            {
+              "seed": 31,
+              "http": 200,
+              "reward": null,
+              "status": "absent",
+              "tokens": null
+            }
+          ]
+        }
+      },
+      "source": "cookbooks/gepa-banking77",
+      "href": "/cookbooks/gepa-banking77"
+    },
+    {
+      "slug": "evals-healthbench",
+      "title": "Evals on HealthBench",
+      "method": "eval",
+      "task": "healthbench",
+      "execution": "local",
+      "status": "proven-live",
+      "hypothesis": "HealthBench can be scored as an eval-only lane with independent policy and grader usage.",
+      "verdict": "Live scaled HealthBench mean 0.527 over 8 seeds (~$0.052).",
+      "confidence": "high",
+      "why": "openai_gpt41_mini + gpt-4.1-mini grader. Per-seed rewards ranged 0.19\u20131.00. Not canonical gpt-4.1 physician grader.",
+      "receipt": {
+        "cookbook_id": "evals-healthbench",
+        "proved_at": "2026-08-19T00:54:41Z",
+        "target": "healthbench_chat",
+        "gepa_contract": "synth_optimizers.gepa.v2",
+        "policy_lane": "policy",
+        "grader_lane": "grader",
+        "canonical_grader": true,
+        "policy_refs": [
+          "groq_llama31_8b",
+          "openai_gpt41_mini"
+        ],
+        "claim": "eval-only HealthBench HTTP contract with independent grader lane",
+        "not_claimed": "physician-rubric scores from a live paid grader",
+        "live_e2e": {
+          "proved_at": "2026-08-19T01:00:03Z",
+          "http": 200,
+          "start_status": "completed",
+          "reward": 0.8131868131868132,
+          "reward_status": "scored",
+          "grader": "gpt-4.1-mini-2025-04-14",
+          "plan": "healthbench_scaled_grader.v1",
+          "cost_kind": "estimated_from_tokens",
+          "cost_usd": 0.011098,
+          "detail": null
+        },
+        "live_batch": {
+          "proved_at": "2026-08-19T01:11:04Z",
+          "n": 8,
+          "n_scored": 8,
+          "mean_reward": 0.5271003678820845,
+          "estimated_cost_usd": 0.0515672,
+          "grader": "gpt-4.1-mini-2025-04-14",
+          "plan": "healthbench_scaled_grader.v1",
+          "rows": [
+            {
+              "seed": 0,
+              "http": 200,
+              "reward": 0.8901098901098901,
+              "status": "scored",
+              "cost_usd": 0.0126964
+            },
+            {
+              "seed": 1,
+              "http": 200,
+              "reward": 0.4915254237288136,
+              "status": "scored",
+              "cost_usd": 0.0090908
+            },
+            {
+              "seed": 2,
+              "http": 200,
+              "reward": 1.0,
+              "status": "scored",
+              "cost_usd": 0.0010428
+            },
+            {
+              "seed": 3,
+              "http": 200,
+              "reward": 0.5555555555555556,
+              "status": "scored",
+              "cost_usd": 0.0105856
+            },
+            {
+              "seed": 4,
+              "http": 200,
+              "reward": 0.42857142857142855,
+              "status": "scored",
+              "cost_usd": 0.0040028
+            },
+            {
+              "seed": 5,
+              "http": 200,
+              "reward": 0.2982456140350877,
+              "status": "scored",
+              "cost_usd": 0.0053176000000000005
+            },
+            {
+              "seed": 6,
+              "http": 200,
+              "reward": 0.36231884057971014,
+              "status": "scored",
+              "cost_usd": 0.0061004
+            },
+            {
+              "seed": 7,
+              "http": 200,
+              "reward": 0.19047619047619047,
+              "status": "scored",
+              "cost_usd": 0.0027308000000000002
+            }
+          ]
+        }
+      },
+      "source": "cookbooks/evals-healthbench",
+      "href": "/cookbooks/evals-healthbench"
+    },
+    {
+      "slug": "mlx-sft-craftax",
+      "title": "Local MLX SFT on Craftax",
+      "method": "sft",
+      "task": "craftax",
+      "execution": "local",
+      "status": "proven-local",
+      "hypothesis": "LoRA SFT through synth-mlx-rl plus Craftax fixture eval is a valid local-training cookbook.",
+      "verdict": "Proved on FakeEngine + craftax_engine scripted fixture.",
+      "confidence": "high",
+      "why": "Fixture seeds 0\u20131 scored 0.5; SFT cross_entropy + checkpoint succeeded. Not the public gold eval matrix.",
+      "receipt": {
+        "cookbook_id": "mlx-sft-craftax",
+        "proved_at": "2026-08-19T00:54:41Z",
+        "craftax_eval": [
+          {
+            "seed": 0,
+            "reward": 0.5,
+            "status": "scored",
+            "environment_ref": "env:craftax_fixture"
+          },
+          {
+            "seed": 1,
+            "reward": 0.5,
+            "status": "scored",
+            "environment_ref": "env:craftax_fixture"
+          }
+        ],
+        "sft": {
+          "cross_entropy_supported": true,
+          "loss": 0.25,
+          "training_version": 1,
+          "checkpoint": "sft-craftax-smoke",
+          "http": [
+            200,
+            200,
+            200
+          ]
+        },
+        "claim": "scripted Craftax fixture eval + LoRA SFT step on synth-mlx-rl FakeEngine",
+        "not_claimed": "Apple-silicon base-model fine-tune or /evals/craftax gold matrix"
+      },
+      "source": "cookbooks/mlx-sft-craftax",
+      "href": "/cookbooks/mlx-sft-craftax"
+    },
+    {
+      "slug": "remote-cispo-gsm8k",
+      "title": "Remote CISPO on GSM8K",
+      "method": "cispo",
+      "task": "gsm8k",
+      "execution": "hosted",
+      "status": "proven-live",
+      "hypothesis": "CISPO minimax is reachable on the public learner API; hosted Optimizers does not yet submit CISPO.",
+      "verdict": "Hosted Optimizers catalog lists gepa/ohco/go-ex. CISPO is not submittable there.",
+      "confidence": "high",
+      "why": "Authenticated startup probe succeeded. Kernel CISPO remains local synth-mlx-rl; that lab was paused.",
+      "receipt": {
+        "cookbook_id": "remote-cispo-gsm8k",
+        "proved_at": "2026-08-19T00:54:41Z",
+        "cispo_supported": true,
+        "loss": 0.4585986874389556,
+        "training_version": 1,
+        "minimax_refusal_status": 422,
+        "hosted_submit_slugs": [
+          "gepa",
+          "go-ex",
+          "ohco"
+        ],
+        "claim": "cispo_minimax one step + refuse active lower clip",
+        "not_claimed": "hosted CISPO job submit or GSM8K held-out accuracy",
+        "live_e2e": {
+          "proved_at": "2026-08-19T01:00:03Z",
+          "ok": true,
+          "backend": "https://api.usesynth.ai",
+          "algorithms": [
+            "gepa",
+            "ohco",
+            "go-ex"
+          ],
+          "cispo_listed": false
+        },
+        "live_batch": {
+          "proved_at": "2026-08-19T01:11:04Z",
+          "ok": true,
+          "algorithms": [
+            "gepa",
+            "ohco",
+            "go-ex"
+          ],
+          "cispo_listed": false,
+          "n_algorithms": 3
+        }
+      },
+      "source": "cookbooks/remote-cispo-gsm8k",
+      "href": "/cookbooks/remote-cispo-gsm8k"
+    }
+  ]
+}

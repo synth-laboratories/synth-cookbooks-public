@@ -51,3 +51,9 @@ out/
 .env.*
 !.env.example
 .DS_Store
+
+# Cookbook local streams, caches, and traces (never commit)
+**/.crafter-streams/
+**/.banking77-runs/
+**/.codex_home/
+**/.venv/

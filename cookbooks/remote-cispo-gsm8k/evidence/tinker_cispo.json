@@ -1,0 +1,34 @@
+{
+  "schema": "synth.cookbook.tinker_cispo.v1",
+  "backend": "tinker",
+  "loss_fn": "cispo",
+  "model": "Qwen/Qwen3.5-4B",
+  "baseline": 1.0,
+  "final": 1.0,
+  "uplift": 0.0,
+  "eval_n": 8,
+  "history": [
+    {
+      "round": 0,
+      "train_reward": 0.9375,
+      "datums": 4,
+      "steps": 1
+    },
+    {
+      "round": 1,
+      "train_reward": 1.0,
+      "datums": 0,
+      "steps": 1
+    }
+  ],
+  "args": {
+    "eval_n": 8,
+    "train_prompts": 16,
+    "group": 4,
+    "rounds": 2,
+    "lr": 1e-05,
+    "max_tokens": 512,
+    "rank": 8,
+    "eps_high": 4.0
+  }
+}

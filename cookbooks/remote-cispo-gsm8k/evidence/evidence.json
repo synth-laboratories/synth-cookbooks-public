@@ -1,0 +1,51 @@
+{
+  "cookbook_id": "remote-cispo-gsm8k",
+  "proved_at": "2026-08-19T00:54:41Z",
+  "cispo_supported": true,
+  "loss": 0.4585986874389556,
+  "training_version": 1,
+  "minimax_refusal_status": 422,
+  "hosted_submit_slugs": [
+    "gepa",
+    "go-ex",
+    "ohco"
+  ],
+  "claim": "cispo_minimax one step + refuse active lower clip",
+  "not_claimed": "hosted CISPO job submit or GSM8K held-out accuracy",
+  "live_e2e": {
+    "proved_at": "2026-08-19T01:00:03Z",
+    "ok": true,
+    "backend": "https://api.usesynth.ai",
+    "algorithms": [
+      "gepa",
+      "ohco",
+      "go-ex"
+    ],
+    "cispo_listed": false
+  },
+  "live_batch": {
+    "proved_at": "2026-08-19T01:11:04Z",
+    "ok": true,
+    "algorithms": [
+      "gepa",
+      "ohco",
+      "go-ex"
+    ],
+    "cispo_listed": false,
+    "n_algorithms": 3
+  },
+  "tinker_cispo": {
+    "schema": "synth.cookbook.tinker_cispo.v1",
+    "backend": "tinker",
+    "loss_fn": "cispo",
+    "model": "Qwen/Qwen3.5-4B",
+    "baseline": 1.0,
+    "final": 1.0,
+    "uplift": 0.0,
+    "eval_n": 8,
+    "history": [
+      {"round": 0, "train_reward": 0.9375, "datums": 4, "steps": 1},
+      {"round": 1, "train_reward": 1.0, "datums": 0, "steps": 1}
+    ]
+  }
+}

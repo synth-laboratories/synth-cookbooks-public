@@ -1,0 +1,33 @@
+schema_version: synth.cookbook.v1
+id: remote-cispo-gsm8k
+title: Remote CISPO on GSM8K
+summary: Submit a hosted CISPO job through the stable Tinker-oriented adapter and evaluate on GSM8K.
+version: 0.1.0
+status: proven-local
+license: Apache-2.0
+classification:
+  method: cispo
+  task: gsm8k
+  orchestration: hosted-job
+  runtime: hosted-cispo
+  execution: hosted
+  tags: [training, hosted, tinker]
+compatibility:
+  platforms: [macos-arm64, linux]
+  repositories:
+    synth-mlx-rl: 848752cbedc488558af9e19ea1792e44d96897ae
+    optimizers: 1c890923138332a6675176447da5793ff25d4563
+requirements:
+  credentials: [TINKER_API_KEY]
+  network: required
+  estimated_duration_minutes: [30, 180]
+  estimated_cost_usd: [10, 80]
+entrypoints:
+  preflight: runbooks/preflight.sh
+  smoke: runbooks/smoke.sh
+  run: runbooks/run.sh
+  evaluate: runbooks/evaluate.sh
+artifacts:
+  expected: [job-manifest, metrics, checkpoint, eval-result, hosted-usage, report]
+evidence:
+  report: REPORT.md

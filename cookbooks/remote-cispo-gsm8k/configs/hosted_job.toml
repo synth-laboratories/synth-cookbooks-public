@@ -1,0 +1,15 @@
+[job]
+algorithm = "cispo"
+dataset = "openai/gsm8k"
+split = "heldout"
+eval_n = 16
+max_spend_usd = 8.0
+eps_low = 0.0
+eps_high = 4.0
+learning_rate = 1e-5
+lora_rank = 8
+
+[runtime]
+kind = "tinker"
+loss_fn = "cispo"
+note = "Hosted Tinker LoRA learner. Not synth-mlx-rl and not HostedOptimizer gepa/ohco/go-ex."

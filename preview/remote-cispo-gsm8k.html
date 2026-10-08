@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Remote CISPO on GSM8K</title><style>
+:root { color-scheme: dark; --bg:#0b0b0c; --ink:#f4f1ea; --muted:#b7b2a7; --line:#ffffff1a; --accent:#e4572e; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+main { max-width: 920px; margin: 0 auto; padding: 48px 24px 96px; }
+a { color: var(--accent); text-decoration: none; }
+.kicker { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); }
+h1 { font-size: 40px; line-height: 1.1; margin: 16px 0 12px; }
+.grid { display:grid; gap:16px; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); margin-top: 32px; }
+.card, .panel { border:1px solid var(--line); border-radius: 16px; padding: 20px; }
+.muted { color: var(--muted); }
+pre { overflow:auto; background:#00000066; border:1px solid var(--line); padding:16px; border-radius:12px; font-size:12px; }
+dt { font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#ffffff66; }
+dd { margin: 8px 0 20px; }
+</style></head>
+<body><main>
+        <p><a href="index.html">← Cookbooks</a></p>
+        <p class="kicker">cispo · gsm8k · hosted · proven-live</p>
+        <h1>Remote CISPO on GSM8K</h1>
+        <dl>
+          <dt>Hypothesis</dt><dd>CISPO minimax is reachable on the public learner API; hosted Optimizers does not yet submit CISPO.</dd>
+          <dt>Verdict</dt><dd>Hosted Optimizers catalog lists gepa/ohco/go-ex. CISPO is not submittable there.</dd>
+          <dt>Confidence</dt><dd>high</dd>
+          <dt>Why</dt><dd class="muted">Authenticated startup probe succeeded. Kernel CISPO remains local synth-mlx-rl; that lab was paused.</dd>
+        </dl>
+        <h2>Measured receipt</h2>
+        <pre>{
+  "cookbook_id": "remote-cispo-gsm8k",
+  "proved_at": "2026-08-19T00:54:41Z",
+  "cispo_supported": true,
+  "loss": 0.4585986874389556,
+  "training_version": 1,
+  "minimax_refusal_status": 422,
+  "hosted_submit_slugs": [
+    "gepa",
+    "go-ex",
+    "ohco"
+  ],
+  "claim": "cispo_minimax one step + refuse active lower clip",
+  "not_claimed": "hosted CISPO job submit or GSM8K held-out accuracy",
+  "live_e2e": {
+    "proved_at": "2026-08-19T01:00:03Z",
+    "ok": true,
+    "backend": "https://api.usesynth.ai",
+    "algorithms": [
+      "gepa",
+      "ohco",
+      "go-ex"
+    ],
+    "cispo_listed": false
+  },
+  "live_batch": {
+    "proved_at": "2026-08-19T01:11:04Z",
+    "ok": true,
+    "algorithms": [
+      "gepa",
+      "ohco",
+      "go-ex"
+    ],
+    "cispo_listed": false,
+    "n_algorithms": 3
+  }
+}</pre>
+        <p class="muted">Source cookbooks/remote-cispo-gsm8k. Local preview only; frontend route is /cookbooks/remote-cispo-gsm8k.</p>
+        </main></body></html>

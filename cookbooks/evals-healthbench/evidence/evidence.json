@@ -1,0 +1,94 @@
+{
+  "cookbook_id": "evals-healthbench",
+  "proved_at": "2026-08-19T00:54:41Z",
+  "target": "healthbench_chat",
+  "gepa_contract": "synth_optimizers.gepa.v2",
+  "policy_lane": "policy",
+  "grader_lane": "grader",
+  "canonical_grader": true,
+  "policy_refs": [
+    "groq_llama31_8b",
+    "openai_gpt41_mini"
+  ],
+  "claim": "eval-only HealthBench HTTP contract with independent grader lane",
+  "not_claimed": "physician-rubric scores from a live paid grader",
+  "live_e2e": {
+    "proved_at": "2026-08-19T01:00:03Z",
+    "http": 200,
+    "start_status": "completed",
+    "reward": 0.8131868131868132,
+    "reward_status": "scored",
+    "grader": "gpt-4.1-mini-2025-04-14",
+    "plan": "healthbench_scaled_grader.v1",
+    "cost_kind": "estimated_from_tokens",
+    "cost_usd": 0.011098,
+    "detail": null
+  },
+  "live_batch": {
+    "proved_at": "2026-08-19T01:11:04Z",
+    "n": 8,
+    "n_scored": 8,
+    "mean_reward": 0.5271003678820845,
+    "estimated_cost_usd": 0.0515672,
+    "grader": "gpt-4.1-mini-2025-04-14",
+    "plan": "healthbench_scaled_grader.v1",
+    "rows": [
+      {
+        "seed": 0,
+        "http": 200,
+        "reward": 0.8901098901098901,
+        "status": "scored",
+        "cost_usd": 0.0126964
+      },
+      {
+        "seed": 1,
+        "http": 200,
+        "reward": 0.4915254237288136,
+        "status": "scored",
+        "cost_usd": 0.0090908
+      },
+      {
+        "seed": 2,
+        "http": 200,
+        "reward": 1.0,
+        "status": "scored",
+        "cost_usd": 0.0010428
+      },
+      {
+        "seed": 3,
+        "http": 200,
+        "reward": 0.5555555555555556,
+        "status": "scored",
+        "cost_usd": 0.0105856
+      },
+      {
+        "seed": 4,
+        "http": 200,
+        "reward": 0.42857142857142855,
+        "status": "scored",
+        "cost_usd": 0.0040028
+      },
+      {
+        "seed": 5,
+        "http": 200,
+        "reward": 0.2982456140350877,
+        "status": "scored",
+        "cost_usd": 0.0053176000000000005
+      },
+      {
+        "seed": 6,
+        "http": 200,
+        "reward": 0.36231884057971014,
+        "status": "scored",
+        "cost_usd": 0.0061004
+      },
+      {
+        "seed": 7,
+        "http": 200,
+        "reward": 0.19047619047619047,
+        "status": "scored",
+        "cost_usd": 0.0027308000000000002
+      }
+    ]
+  }
+}

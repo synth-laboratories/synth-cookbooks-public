@@ -1,0 +1,24 @@
+Installed 63 packages in 441ms
+Using the latest cached version of the dataset since openai/gsm8k couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'main' at /Users/joshuapurtell/.cache/huggingface/datasets/openai___gsm8k/main/0.0.0/740312add88f781978c0658806c59bc2815b9866 (last modified on Sun Aug  2 13:49:48 2026).
+Using the latest cached version of the dataset since openai/gsm8k couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'main' at /Users/joshuapurtell/.cache/huggingface/datasets/openai___gsm8k/main/0.0.0/740312add88f781978c0658806c59bc2815b9866 (last modified on Sun Aug  2 13:49:48 2026).
+GSM8K source=hf train=7473 heldout=1319
+Tinker CISPO  model=Qwen/Qwen3.5-4B  lora r=8
+Your Tinker SDK version is outdated. Please upgrade to the latest version.
+[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+  [baseline sample0] tokens=225 parsed='18' gold='18' text="To find out how much Janet makes at the farmers' market, we need to determine how many eggs she has left to sell after accounting for the ones she eats and the ones she bakes with.  1.  **Total eggs produced**: Janet's ducks lay 16 eggs per"
+  [baseline] held-out 30.0/32 = 0.9375  (204s)
+  round 0: train_reward=0.938 datums=4 steps=1
+  round 1: train_reward=0.844 datums=4 steps=2
+  round 2: train_reward=0.938 datums=8 steps=4
+  round 3: train_reward=0.750 datums=8 steps=6
+  round 4: train_reward=0.938 datums=8 steps=8
+  round 5: train_reward=0.969 datums=4 steps=9
+  [after cispo sample0] tokens=225 parsed='18' gold='18' text="To find out how much Janet makes at the farmers' market, we need to determine how many eggs she has left to sell after accounting for the ones she eats and the ones she bakes with.  1.  **Total eggs produced**: Janet's ducks lay 16 eggs per"
+  [after cispo] held-out 30.0/32 = 0.9375  (199s)
+==========================================================
+  baseline   0.9375
+  final      0.9375
+  uplift     +0.0000
+==========================================================

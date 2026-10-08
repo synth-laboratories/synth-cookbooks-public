@@ -1,104 +1,35 @@
-# Synth Public Packages and Cookbooks
+# Synth Public Cookbooks (v0.6 turnover)
 
-Public-safe Synth cookbook recipes, examples, and package source.
+Canonical, reviewed, agent-readable examples for the current Synth stack.
 
-This repo is the public monorepo for Synth cookbook content and first-class
-public packages. Cookbook material should only land here after review in
-`synth-cookbooks-private` confirms the recipe is reproducible without private
-credentials, internal datasets, unreleased behavior, or unredacted
-logs/screenshots.
+Website: `https://usesynth.ai/cookbooks/`  
+Source base: `origin/main` at `1e524fa` (clean worktree; not the dirty v0.5 checkout).
+
+Legacy recipes from that SHA live under [`old/cookbooks/`](old/cookbooks/). New cookbooks use one directory contract under [`cookbooks/`](cookbooks/).
+
+## Launch set (containers × algorithms)
+
+| Cookbook | Algorithm / product lane | Container / runtime | Task | Why this pair |
+| --- | --- | --- | --- | --- |
+| `gepa-banking77` | **GEPA** (Optimizers OSS) | **Banking77** HTTP task (`synth_containers` banking77 runtime; cookbook configures, does not fork) | 77-way intent classification | Fast exact-match hello-world for prompt evolution; existing reviewed evidence to migrate. |
+| `evals-healthbench` | **Evals** (no optimizer) | **HealthBench** container + rubric grader | Professional medical QA | First-class eval lane; Groq/HealthBench material already in `old/`. |
+| `mlx-sft-craftax` | **SFT** via MLX Tinker API | **Craftax** container for rollout/eval; MLX Tinker for local train | Long-horizon Craftax survival | Local Apple-silicon training on the same env as `/evals/craftax`; Tinker job/artifact contract. |
+| `remote-cispo-gsm8k` | **CISPO** (hosted adapter) | GSM8K eval (hosted language-task proof) | Grade-school math | Hosted training lane; not the Craftax twin — different execution class and task on purpose. |
+
+Deferred from the old tree (archive only until a second wave): Crafter *GEPA* (prompt ReAct, not SFT), MiniGrid, HotpotQA, TBLite, GELO, managed-research quickstart, blog chart packets. Those stay in `old/` so Frontend historical links can redirect.
 
 ## Layout
 
-- `packages/` - public package source, with independently releasable packages
-  such as `synth-containers`.
-- `cookbooks/` - public recipes, including GEPA optimizer examples and the
-  GELO quickstart slice. Active private drafts still live in
-  `synth-cookbooks-private` until promoted.
-- `skills/` - portable agent skills that help users run or adapt the public
-  packages and cookbooks.
-- `assets/` - public-safe screenshots, diagrams, and generated media.
-
-## Target Layout
-
-This repo uses the public monorepo layout:
-
 ```text
-synth-cookbooks-public/
-  packages/
-    synth-containers/
-    synth-optimizers/
-  cookbooks/
-  skills/
-  assets/
+cookbooks/<id>/{cookbook.yaml,README.md,AGENT.md,REPORT.md,configs,runbooks,fixtures,tests,evidence}
+catalog/{catalog.v1.json,schema/,generated/}
+old/cookbooks/   # frozen v0.5 material
 ```
 
-Keep recipe-first content in `cookbooks/` only after public promotion review;
-move installable, versioned code under `packages/`.
+## Tested against (2026-08-18)
 
-## Packages
+In-process pytest: 8 passed against local `containers` (`f558140`, Banking77/HealthBench/Craftax HTTP) and `synth-mlx-rl` (`848752c`, FakeEngine SFT + `cispo_minimax`). Catalog pins also record Containers `origin/main` `a2a316b` and Optimizers `origin/main` `1c89092`. Paid GEPA search and live HealthBench grader runs are not claimed.
 
-Packages are independently releasable. Each package should own its package
-metadata, README, version, build command, and publish command.
+## Dirty checkout (do not use as release base)
 
-- `packages/synth-containers/` - public container harnesses, service wrappers,
-  and task adapters used by published recipes.
-- `packages/synth-optimizers/` - prerelease public optimizer tooling with a
-  Rust GEPA core and thin Python bindings.
-
-## Optimizer Cookbooks
-
-The public GEPA examples live under `cookbooks/optimizers/gepa/`. They use the
-Rust `synth-optimizers` GEPA runtime with a Codex app-server proposer and
-HTTP task containers. Current cookbook containers include Banking77, HotpotQA,
-TBLite, Crafter, and MiniGrid.
-
-The public GELO quickstart lives under `cookbooks/optimizers/gelo/`. It is the
-current public GELO cookbook path for launch, docs, and blog links.
-
-Related reusable agent skills now live in the
-[`synth-laboratories/optimizers`](https://github.com/synth-laboratories/optimizers)
-repository.
-
-Run GEPA from the container directory. Each container keeps its base
-`gepa.toml`, profile TOMLs under `run_profiles/`, and a `run_fresh_gepa.sh`
-helper that generates the concrete run config:
-
-```bash
-cd cookbooks/optimizers/gepa/banking77_container
-bash run_fresh_gepa.sh --profile long
-```
-
-Equivalent local runs:
-
-```bash
-cd cookbooks/optimizers/gepa/hotpotqa_container && bash run_fresh_gepa.sh --profile long
-cd cookbooks/optimizers/gepa/tblite_container && bash run_fresh_gepa.sh --profile long
-cd cookbooks/optimizers/gepa/crafter_container && bash run_fresh_gepa.sh --profile long
-cd cookbooks/optimizers/gepa/minigrid_container && bash run_fresh_gepa.sh --profile long
-```
-
-Use `bash run_fresh_gepa.sh --list` inside a container directory to inspect its
-available profiles. Run artifacts are written under
-`cookbooks/optimizers/gepa/runs/` and are intentionally ignored by git.
-
-Public GEPA runs should use API-key auth for the proposer, not a developer's
-local Codex login. Set `OPENAI_API_KEY` for the Codex proposer. Some shipped
-policy profiles also need `OPENROUTER_API_KEY`; check the selected TOML profile.
-
-A GEPA-compatible task container must expose the optimizer HTTP contract:
-`/health`, `/metadata`, `/task_info`, `/program`, `/dataset`,
-`/dataset/rows`, and `/rollout`. The `/task_info` route is important: it gives
-the general proposer task context, objectives, output constraints, and
-prompt-writing guidance so the same Rust GEPA loop can work across
-classification, QA, coding, and agent-environment tasks.
-
-For the full GEPA config schema, container contract, Codex auth settings,
-artifact layout, and public-safety rules, read
-`cookbooks/optimizers/gepa/README.md`.
-
-## Development
-
-See `DEVELOPERS.md` for contribution guidance, package validation commands, and
-the conventions for keeping cookbook examples separate from reusable package
-code.
+The original checkout `/Users/joshuapurtell/Documents/GitHub/synth-cookbooks-public` remains on `v0.5/banking77-durable-rollouts` @ `7fc5b48`. Uncommitted Banking77 timeout/proxy-error changes and run traces were stashed as `v0.6-turnover: preserve dirty banking77 patch and run traces` (`stash` `aaf04b84`). Patch copy: `Documents/Codex/2026-08-18/re/outputs/public-cookbooks-v0.6-dirty-preserve/`.

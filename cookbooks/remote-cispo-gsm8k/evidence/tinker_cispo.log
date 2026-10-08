@@ -1,0 +1,14 @@
+Tinker CISPO  model=Qwen/Qwen3.5-4B  lora r=8
+Your Tinker SDK version is outdated. Please upgrade to the latest version.
+[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+  [baseline sample0] tokens=183 parsed='47' gold='47' text='To find the number of tulips that bloom, we follow these steps:  1.  **Calculate the total number of tulips planted:**     The gardener plants 8 rows, and each row has 7 tulips.     Total tulips = $8 \\text{ rows} \\times 7 \\text{ tulips/row}'
+  [baseline] held-out 8.0/8 = 1.0000  (45s)
+  round 0: train_reward=0.938 datums=4 steps=1
+  round 1: train_reward=1.000 datums=0 steps=1
+  [after cispo sample0] tokens=194 parsed='47' gold='47' text='To find the number of blooming tulips, we first need to determine the total number of tulips planted.  1.  **Calculate the total number of tulips:**     The gardener plants 8 rows, and each row has 7 tulips.     Total tulips = (Number of ro'
+  [after cispo] held-out 8.0/8 = 1.0000  (37s)
+==========================================================
+  baseline   1.0000
+  final      1.0000
+  uplift     +0.0000
+==========================================================

@@ -1,0 +1,33 @@
+schema_version: synth.cookbook.v1
+id: evals-healthbench
+title: Evals on HealthBench
+summary: Run a bounded HealthBench evaluation with a rubric grader and no optimizer in the loop.
+version: 0.1.0
+status: proven-local
+license: Apache-2.0
+classification:
+  method: eval
+  task: healthbench
+  orchestration: direct-runbook
+  runtime: containers-http
+  execution: local
+  tags: [evals, medical-qa, rubric]
+compatibility:
+  platforms: [macos-arm64, linux]
+  repositories:
+    containers: a2a316b2e113883349b096ae07e17898f14bc7e5
+    optimizers: 1c890923138332a6675176447da5793ff25d4563
+requirements:
+  credentials: [OPENAI_API_KEY]
+  network: required
+  estimated_duration_minutes: [10, 60]
+  estimated_cost_usd: [5, 40]
+entrypoints:
+  preflight: runbooks/preflight.sh
+  smoke: runbooks/smoke.sh
+  run: runbooks/run.sh
+  evaluate: runbooks/evaluate.sh
+artifacts:
+  expected: [job-manifest, metrics, per-case-evidence, report]
+evidence:
+  report: REPORT.md

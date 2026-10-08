@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Local MLX SFT on Craftax</title><style>
+:root { color-scheme: dark; --bg:#0b0b0c; --ink:#f4f1ea; --muted:#b7b2a7; --line:#ffffff1a; --accent:#e4572e; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+main { max-width: 920px; margin: 0 auto; padding: 48px 24px 96px; }
+a { color: var(--accent); text-decoration: none; }
+.kicker { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); }
+h1 { font-size: 40px; line-height: 1.1; margin: 16px 0 12px; }
+.grid { display:grid; gap:16px; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); margin-top: 32px; }
+.card, .panel { border:1px solid var(--line); border-radius: 16px; padding: 20px; }
+.muted { color: var(--muted); }
+pre { overflow:auto; background:#00000066; border:1px solid var(--line); padding:16px; border-radius:12px; font-size:12px; }
+dt { font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#ffffff66; }
+dd { margin: 8px 0 20px; }
+</style></head>
+<body><main>
+        <p><a href="index.html">← Cookbooks</a></p>
+        <p class="kicker">sft · craftax · local · proven-local</p>
+        <h1>Local MLX SFT on Craftax</h1>
+        <dl>
+          <dt>Hypothesis</dt><dd>LoRA SFT through synth-mlx-rl plus Craftax fixture eval is a valid local-training cookbook.</dd>
+          <dt>Verdict</dt><dd>Proved on FakeEngine + craftax_engine scripted fixture.</dd>
+          <dt>Confidence</dt><dd>high</dd>
+          <dt>Why</dt><dd class="muted">Fixture seeds 0–1 scored 0.5; SFT cross_entropy + checkpoint succeeded. Not the public gold eval matrix.</dd>
+        </dl>
+        <h2>Measured receipt</h2>
+        <pre>{
+  "cookbook_id": "mlx-sft-craftax",
+  "proved_at": "2026-08-19T00:54:41Z",
+  "craftax_eval": [
+    {
+      "seed": 0,
+      "reward": 0.5,
+      "status": "scored",
+      "environment_ref": "env:craftax_fixture"
+    },
+    {
+      "seed": 1,
+      "reward": 0.5,
+      "status": "scored",
+      "environment_ref": "env:craftax_fixture"
+    }
+  ],
+  "sft": {
+    "cross_entropy_supported": true,
+    "loss": 0.25,
+    "training_version": 1,
+    "checkpoint": "sft-craftax-smoke",
+    "http": [
+      200,
+      200,
+      200
+    ]
+  },
+  "claim": "scripted Craftax fixture eval + LoRA SFT step on synth-mlx-rl FakeEngine",
+  "not_claimed": "Apple-silicon base-model fine-tune or /evals/craftax gold matrix"
+}</pre>
+        <p class="muted">Source cookbooks/mlx-sft-craftax. Local preview only; frontend route is /cookbooks/mlx-sft-craftax.</p>
+        </main></body></html>

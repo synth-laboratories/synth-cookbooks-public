@@ -1,0 +1,31 @@
+{
+  "cookbook_id": "mlx-sft-craftax",
+  "proved_at": "2026-08-19T00:54:41Z",
+  "craftax_eval": [
+    {
+      "seed": 0,
+      "reward": 0.5,
+      "status": "scored",
+      "environment_ref": "env:craftax_fixture"
+    },
+    {
+      "seed": 1,
+      "reward": 0.5,
+      "status": "scored",
+      "environment_ref": "env:craftax_fixture"
+    }
+  ],
+  "sft": {
+    "cross_entropy_supported": true,
+    "loss": 0.25,
+    "training_version": 1,
+    "checkpoint": "sft-craftax-smoke",
+    "http": [
+      200,
+      200,
+      200
+    ]
+  },
+  "claim": "scripted Craftax fixture eval + LoRA SFT step on synth-mlx-rl FakeEngine",
+  "not_claimed": "Apple-silicon base-model fine-tune or /evals/craftax gold matrix"
+}

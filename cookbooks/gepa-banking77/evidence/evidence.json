@@ -1,0 +1,255 @@
+{
+  "cookbook_id": "gepa-banking77",
+  "proved_at": "2026-08-19T00:54:41Z",
+  "target": "banking77_classify",
+  "runtime_family": "banking77",
+  "gold_seed0_reward": 1.0,
+  "gold_seed0_status": "scored",
+  "rollout_http": 200,
+  "claim": "dataset_gold seed 0 scores 1.0 on current banking77_classify",
+  "not_claimed": "paid GEPA search uplift",
+  "live_e2e": {
+    "proved_at": "2026-08-19T01:00:03Z",
+    "http": 200,
+    "status": "completed",
+    "reward": 0.0,
+    "reward_status": "scored",
+    "usage_tokens": 163,
+    "model": "gpt-4.1-nano"
+  },
+  "live_batch": {
+    "proved_at": "2026-08-19T01:11:04Z",
+    "split": "heldout",
+    "n": 32,
+    "n_scored": 16,
+    "hits": 0,
+    "accuracy": 0.0,
+    "model": "gpt-4.1-nano",
+    "rows": [
+      {
+        "seed": 0,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 156
+      },
+      {
+        "seed": 1,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 155
+      },
+      {
+        "seed": 2,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 158
+      },
+      {
+        "seed": 3,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 153
+      },
+      {
+        "seed": 4,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 156
+      },
+      {
+        "seed": 5,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 157
+      },
+      {
+        "seed": 6,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 158
+      },
+      {
+        "seed": 7,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 156
+      },
+      {
+        "seed": 8,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 157
+      },
+      {
+        "seed": 9,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 158
+      },
+      {
+        "seed": 10,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 157
+      },
+      {
+        "seed": 11,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 155
+      },
+      {
+        "seed": 12,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 159
+      },
+      {
+        "seed": 13,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 157
+      },
+      {
+        "seed": 14,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 156
+      },
+      {
+        "seed": 15,
+        "http": 200,
+        "reward": 0.0,
+        "status": "scored",
+        "tokens": 160
+      },
+      {
+        "seed": 16,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 17,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 18,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 19,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 20,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 21,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 22,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 23,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 24,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 25,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 26,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 27,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 28,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 29,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 30,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      },
+      {
+        "seed": 31,
+        "http": 200,
+        "reward": null,
+        "status": "absent",
+        "tokens": null
+      }
+    ]
+  }
+}

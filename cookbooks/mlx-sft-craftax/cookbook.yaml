@@ -1,0 +1,40 @@
+schema_version: synth.cookbook.v1
+id: mlx-sft-craftax
+title: Local MLX SFT on Craftax
+summary: Fine-tune a supported policy locally through the MLX Tinker API and evaluate on the Craftax container contract.
+version: 0.1.0
+status: proven-local
+license: Apache-2.0
+classification:
+  method: sft
+  task: craftax
+  orchestration: direct-runbook
+  runtime: mlx-tinker
+  execution: local
+  tags: [training, apple-silicon, tinker, craftax, long-horizon]
+compatibility:
+  platforms: [macos-arm64]
+  repositories:
+    containers: a2a316b2e113883349b096ae07e17898f14bc7e5
+    synth-mlx-rl: 848752cbedc488558af9e19ea1792e44d96897ae
+requirements:
+  hardware:
+    memory_gb_min: 24
+  credentials: []
+  network: optional
+  estimated_duration_minutes: [20, 90]
+  estimated_cost_usd: [0, 0]
+  disk_gb: 16
+entrypoints:
+  preflight: runbooks/preflight.sh
+  smoke: runbooks/smoke.sh
+  run: runbooks/run.sh
+  evaluate: runbooks/evaluate.sh
+  cleanup: runbooks/cleanup.sh
+artifacts:
+  expected: [job-manifest, metrics, checkpoint, eval-result, traces, report]
+evidence:
+  report: REPORT.md
+related:
+  website_eval: https://www.usesynth.ai/evals/craftax
+  container_runtime: synth_containers.platform.runtimes.craftax

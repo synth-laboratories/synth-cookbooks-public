@@ -1,0 +1,32 @@
+[run]
+run_id = "gepa-banking77-smoke"
+output_dir = ".out/runs"
+seed = 0
+
+[container]
+url = "http://127.0.0.1:8765"
+startup_timeout_seconds = 30
+
+[dataset]
+train_split = "train"
+heldout_split = "test"
+train_seeds = [0, 1]
+heldout_seeds = [100, 101]
+
+[candidate]
+target_modules = ["stage2_system"]
+
+[seed_candidate]
+stage2_system = "Classify the customer banking query into exactly one Banking77 intent. Return only the label."
+
+[policy]
+provider = "openai"
+model = "gpt-4.1-nano"
+api_key_env = "OPENAI_API_KEY"
+
+[gepa]
+max_generations = 0
+proposals_per_generation = 1
+minibatch_size = 1
+max_total_rollouts = 4
+max_cost_usd = 0.50

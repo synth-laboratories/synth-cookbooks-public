@@ -1,0 +1,53 @@
+[run]
+run_id = "gepa-banking77-v06"
+output_dir = ".out/runs"
+seed = 0
+
+[container]
+url = "http://127.0.0.1:8765"
+command = [
+  "python3",
+  "-m",
+  "cookbook_tools.serve_compat",
+  "--target",
+  "banking77_classify",
+  "--port",
+  "8765",
+]
+startup_timeout_seconds = 45
+
+[dataset]
+train_split = "train"
+heldout_split = "test"
+train_seeds = [0, 1, 2, 3, 4, 5, 6, 7]
+heldout_seeds = [100, 101, 102, 103]
+
+[candidate]
+target_modules = ["stage2_system"]
+
+[seed_candidate]
+stage2_system = "Classify the customer banking query into exactly one Banking77 intent. Return exactly one label from the allowed label list, preserving spelling, underscores, capitalization, and punctuation."
+
+[policy]
+provider = "openai"
+model = "gpt-4.1-nano"
+api_key_env = "OPENAI_API_KEY"
+
+[proposer]
+backend = "codex_app_server"
+execution_mode = "local_process"
+timeout_seconds = 600
+model = "gpt-5.4-nano"
+reasoning_effort = "medium"
+auth_mode = "api_key"
+copy_host_auth = false
+api_key_env = "OPENAI_API_KEY"
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+
+[gepa]
+max_generations = 1
+proposals_per_generation = 2
+minibatch_size = 4
+max_total_rollouts = 64
+max_cost_usd = 5.0

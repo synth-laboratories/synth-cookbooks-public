@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cookbooks</title><style>
+:root { color-scheme: dark; --bg:#0b0b0c; --ink:#f4f1ea; --muted:#b7b2a7; --line:#ffffff1a; --accent:#e4572e; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+main { max-width: 920px; margin: 0 auto; padding: 48px 24px 96px; }
+a { color: var(--accent); text-decoration: none; }
+.kicker { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); }
+h1 { font-size: 40px; line-height: 1.1; margin: 16px 0 12px; }
+.grid { display:grid; gap:16px; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); margin-top: 32px; }
+.card, .panel { border:1px solid var(--line); border-radius: 16px; padding: 20px; }
+.muted { color: var(--muted); }
+pre { overflow:auto; background:#00000066; border:1px solid var(--line); padding:16px; border-radius:12px; font-size:12px; }
+dt { font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#ffffff66; }
+dd { margin: 8px 0 20px; }
+</style></head>
+<body><main>
+    <p class="kicker">Local preview</p>
+    <h1>Public cookbooks</h1>
+    <p class="muted">Generated from catalog/generated/pages.json. Serve with <code>python3 -m http.server --directory preview</code>.</p>
+    <div class="grid"><a class="card" href="gepa-banking77.html"><p class="kicker">gepa · banking77</p><h2>GEPA on Banking77</h2><p class="muted">Live gpt-4.1-nano heldout exact-match is 0/16. Gold replay remains 1.0 on seed 0.</p></a><a class="card" href="evals-healthbench.html"><p class="kicker">eval · healthbench</p><h2>Evals on HealthBench</h2><p class="muted">Live scaled HealthBench mean 0.527 over 8 seeds (~$0.052).</p></a><a class="card" href="mlx-sft-craftax.html"><p class="kicker">sft · craftax</p><h2>Local MLX SFT on Craftax</h2><p class="muted">Proved on FakeEngine + craftax_engine scripted fixture.</p></a><a class="card" href="remote-cispo-gsm8k.html"><p class="kicker">cispo · gsm8k</p><h2>Remote CISPO on GSM8K</h2><p class="muted">Hosted Optimizers catalog lists gepa/ohco/go-ex. CISPO is not submittable there.</p></a></div></main></body></html>

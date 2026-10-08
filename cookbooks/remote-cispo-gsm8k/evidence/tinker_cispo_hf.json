@@ -1,0 +1,61 @@
+{
+  "schema": "synth.cookbook.tinker_cispo.v1",
+  "backend": "tinker",
+  "loss_fn": "cispo",
+  "model": "Qwen/Qwen3.5-4B",
+  "baseline": 0.9375,
+  "final": 0.9375,
+  "uplift": 0.0,
+  "eval_n": 32,
+  "dataset": "openai/gsm8k",
+  "split": "test",
+  "source": "hf",
+  "history": [
+    {
+      "round": 0,
+      "train_reward": 0.9375,
+      "datums": 4,
+      "steps": 1
+    },
+    {
+      "round": 1,
+      "train_reward": 0.84375,
+      "datums": 4,
+      "steps": 2
+    },
+    {
+      "round": 2,
+      "train_reward": 0.9375,
+      "datums": 8,
+      "steps": 4
+    },
+    {
+      "round": 3,
+      "train_reward": 0.75,
+      "datums": 8,
+      "steps": 6
+    },
+    {
+      "round": 4,
+      "train_reward": 0.9375,
+      "datums": 8,
+      "steps": 8
+    },
+    {
+      "round": 5,
+      "train_reward": 0.96875,
+      "datums": 4,
+      "steps": 9
+    }
+  ],
+  "args": {
+    "eval_n": 32,
+    "train_prompts": 64,
+    "group": 4,
+    "rounds": 6,
+    "lr": 1e-05,
+    "max_tokens": 512,
+    "rank": 8,
+    "eps_high": 4.0
+  }
+}
