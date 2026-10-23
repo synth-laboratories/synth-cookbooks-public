@@ -582,6 +582,31 @@ BANKING77_PROPOSER_HINTS = {
 
 
 app = FastAPI(title="banking77-gepa-container")
+
+from synth_containers.policy_revision import (
+    PolicyAdapter, PolicyManifest, PolicyRevisionError, PolicyRevisionRegistry,
+    mount_policy_revisions,
+)
+
+
+def _prepare_policy_revision(revision_id: str, manifest: PolicyManifest, timeout_s: int) -> dict[str, Any]:
+    del timeout_s
+    fields = manifest.components.prompt_fields or {}
+    if not fields or set(fields) - {"stage2_system"}:
+        raise PolicyRevisionError("policy_prompt_field_forbidden")
+    config = manifest.components.config or {}
+    if set(config) - {"policy"}:
+        raise PolicyRevisionError("policy_configuration_unsupported")
+    _require_policy(config)
+    return {"policy_revision_id": revision_id, "harness": "prompt_program",
+            "readiness": {"kind": "validated_configuration", "model_loaded": False}}
+
+
+_POLICY_REVISIONS = PolicyRevisionRegistry({"prompt_program": PolicyAdapter(
+    frozenset({"prompt_fields", "config"}), _prepare_policy_revision
+)})
+mount_policy_revisions(app, _POLICY_REVISIONS)
+
 _ASYNC_ROLLOUTS: dict[str, dict[str, Any]] = {}
 _ASYNC_ROLLOUT_LOCK = asyncio.Lock()
 _STREAM_LOCK = asyncio.Lock()
@@ -804,6 +829,7 @@ async def health() -> dict[str, Any]:
 @app.get("/info")
 async def metadata() -> dict[str, Any]:
     return {
+        "policy_revision": _POLICY_REVISIONS.capability(),
         "runtime": {
             "runtime_id": "banking77_gepa_live",
             "name": "Banking77 GEPA (live OpenAI-compatible policy)",
@@ -1067,6 +1093,18 @@ async def taskset_tasks(request: Request) -> dict[str, Any]:
 @app.post("/rollouts")
 async def rollout(request: Request) -> dict[str, Any]:
     payload = await request.json()
+    revision_id = payload.get("policy_revision_id")
+    if revision_id:
+        if any(payload.get(key) for key in ("candidate", "candidate_overlay", "policy")):
+            raise HTTPException(status_code=422, detail="policy_inline_forbidden")
+        try:
+            manifest, binding = _POLICY_REVISIONS.resolve(revision_id)
+        except PolicyRevisionError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.code) from exc
+        payload = {**payload, **(manifest.components.config or {}),
+                   "candidate": dict(manifest.components.prompt_fields or {}),
+                   "policy_binding": binding}
+
     telemetry = (
         payload.get("telemetry") if isinstance(payload.get("telemetry"), dict) else {}
     )
@@ -1090,11 +1128,15 @@ async def rollout(request: Request) -> dict[str, Any]:
     async with _ASYNC_ROLLOUT_LOCK:
         existing = _load_rollout_record(rollout_id)
     if existing is not None:
+        if existing.get("policy_revision_id") != revision_id:
+            raise HTTPException(status_code=409, detail="policy_binding_conflict")
         return existing
     if submission_mode == "sync":
         now = _now()
         running = {
             "rollout_id": rollout_id,
+            "policy_revision_id": revision_id,
+            "policy_binding": payload.get("policy_binding"),
             "status": "running",
             "success_status": "running",
             "status_detail": "running",
@@ -1142,6 +1184,8 @@ async def rollout(request: Request) -> dict[str, Any]:
     now = _now()
     queued = {
         "rollout_id": rollout_id,
+        "policy_revision_id": revision_id,
+        "policy_binding": payload.get("policy_binding"),
         "status": "queued",
         "success_status": "pending",
         "status_detail": "queued",
@@ -1453,6 +1497,8 @@ async def _execute_rollout_payload(payload: dict[str, Any]) -> dict[str, Any]:
             ],
             "metadata": {"label": expected},
         },
+        "policy_revision_id": payload.get("policy_revision_id"),
+        "policy_binding": payload.get("policy_binding"),
         "metadata": {
             "candidate": candidate,
             "split_identity": SPLIT_IDENTITY,
@@ -1545,6 +1591,8 @@ async def _complete_async_rollout(rollout_id: str, payload: dict[str, Any]) -> N
             return
         completed = {
             **completed,
+            "policy_revision_id": payload.get("policy_revision_id"),
+            "policy_binding": payload.get("policy_binding"),
             "metadata": {
                 **dict(completed.get("metadata") or {}),
                 "submission_mode": "async",

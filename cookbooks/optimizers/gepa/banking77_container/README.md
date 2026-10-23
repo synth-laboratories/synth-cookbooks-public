@@ -161,3 +161,22 @@ It returns the standard `synth-containers` rollout payload with `reward_info`,
 
 See [`../CONTAINER_ENGINEERING.md`](../CONTAINER_ENGINEERING.md) for the shared
 quality bar, paid-run preflight, and the corresponding HealthBench 2 path.
+
+## Policy revision protocol candidate
+
+This source candidate pins the retained Containers `0.4.6.dev2026102302` wheel
+under `vendor/synth-containers/`; uv resolves it without a sibling checkout.
+The source and wheel hashes are in that directory's `provenance.json`.
+
+Metadata advertises `synth.policy-revision.v1` and the
+`prompt_program` / `next_rollout_update.v1` adapter. Publish `prompt_fields` for
+`stage2_system` plus `config.policy`, prepare the returned revision with a stable
+operation ID, then send `policy_revision_id` in `/rollouts`. The producer resolves
+and freezes the prompt before inference and retains the ID on queued/terminal
+records. Conflicting revision reuse refuses. Legacy GEPA v2 requests remain
+accepted during migration; new clients use publication and ID-only rollouts.
+
+This adapter does not advertise module demos, atomic policy sets or live swaps.
+Preparation validates configuration; it does not load model weights. Local
+fixture and cross-language HTTP checks use a stubbed predictor with zero provider
+calls and establish no Banking77 or HealthBench score improvement.

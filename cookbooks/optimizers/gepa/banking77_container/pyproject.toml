@@ -4,9 +4,12 @@ version = "0.1.0"
 description = "Public GEPA cookbook container for Banking77 (live OpenAI classifier)."
 requires-python = ">=3.11"
 dependencies = [
-  "synth-containers==0.4.2",
+  "synth-containers==0.4.6.dev2026102302",
   "fastapi>=0.110",
   "uvicorn>=0.27",
   "openai>=1.0",
   "datasets>=2.18,<3",
 ]
+
+[tool.uv.sources]
+synth-containers = { path = "vendor/synth-containers/synth_containers-0.4.6.dev2026102302-py3-none-any.whl" }
